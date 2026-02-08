@@ -1,0 +1,11 @@
+<Project Sdk="ktsu.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Humanizer.Core" />
+    <PackageReference Include="ktsu.TextFilter" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KtsuTools.Core\KtsuTools.Core.csproj" />
+  </ItemGroup>
+</Project>

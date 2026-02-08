@@ -1,0 +1,15 @@
+<Project Sdk="ktsu.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Microsoft.Build" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" />
+    <PackageReference Include="NuGet.Versioning" />
+    <PackageReference Include="NuGet.Packaging" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KtsuTools.Core\KtsuTools.Core.csproj" />
+  </ItemGroup>
+</Project>

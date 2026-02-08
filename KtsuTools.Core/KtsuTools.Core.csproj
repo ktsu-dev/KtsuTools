@@ -1,0 +1,14 @@
+<Project Sdk="ktsu.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="LibGit2Sharp" />
+    <PackageReference Include="Octokit" />
+    <PackageReference Include="Microsoft.TeamFoundationServer.Client" />
+    <PackageReference Include="ktsu.AppDataStorage" />
+    <PackageReference Include="ktsu.Extensions" />
+    <PackageReference Include="ktsu.RunCommand" />
+    <PackageReference Include="ktsu.Semantics" />
+    <PackageReference Include="TestableIO.System.IO.Abstractions" />
+  </ItemGroup>
+</Project>

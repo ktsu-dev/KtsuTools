@@ -1,0 +1,26 @@
+<Project Sdk="ktsu.Sdk">
+  <Sdk Name="MSTest.Sdk" />
+
+  <ItemGroup>
+    <PackageReference Include="Moq" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="TestableIO.System.IO.Abstractions.TestingHelpers" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KtsuTools.Core\KtsuTools.Core.csproj" />
+    <ProjectReference Include="..\KtsuTools.BuildMonitor\KtsuTools.BuildMonitor.csproj" />
+    <ProjectReference Include="..\KtsuTools.Merge\KtsuTools.Merge.csproj" />
+    <ProjectReference Include="..\KtsuTools.CodeGen\KtsuTools.CodeGen.csproj" />
+    <ProjectReference Include="..\KtsuTools.Repo\KtsuTools.Repo.csproj" />
+    <ProjectReference Include="..\KtsuTools.Packages\KtsuTools.Packages.csproj" />
+    <ProjectReference Include="..\KtsuTools.Markdown\KtsuTools.Markdown.csproj" />
+    <ProjectReference Include="..\KtsuTools.Image\KtsuTools.Image.csproj" />
+    <ProjectReference Include="..\KtsuTools.MemFrag\KtsuTools.MemFrag.csproj" />
+    <ProjectReference Include="..\KtsuTools.Machine\KtsuTools.Machine.csproj" />
+    <ProjectReference Include="..\KtsuTools.Project\KtsuTools.Project.csproj" />
+    <ProjectReference Include="..\KtsuTools.FileExplorer\KtsuTools.FileExplorer.csproj" />
+    <ProjectReference Include="..\KtsuTools.SvnMigrate\KtsuTools.SvnMigrate.csproj" />
+    <ProjectReference Include="..\KtsuTools.Sync\KtsuTools.Sync.csproj" />
+  </ItemGroup>
+</Project>

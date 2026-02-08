@@ -1,0 +1,10 @@
+<Project Sdk="ktsu.Sdk">
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="ktsu.DeepClone" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KtsuTools.Core\KtsuTools.Core.csproj" />
+  </ItemGroup>
+</Project>

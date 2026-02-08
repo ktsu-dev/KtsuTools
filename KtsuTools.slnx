@@ -1,0 +1,18 @@
+<Solution>
+  <Project Path="KtsuTools.BuildMonitor/KtsuTools.BuildMonitor.csproj" />
+  <Project Path="KtsuTools.CodeGen/KtsuTools.CodeGen.csproj" />
+  <Project Path="KtsuTools.Core/KtsuTools.Core.csproj" />
+  <Project Path="KtsuTools.FileExplorer/KtsuTools.FileExplorer.csproj" />
+  <Project Path="KtsuTools.Image/KtsuTools.Image.csproj" />
+  <Project Path="KtsuTools.Machine/KtsuTools.Machine.csproj" />
+  <Project Path="KtsuTools.Markdown/KtsuTools.Markdown.csproj" />
+  <Project Path="KtsuTools.MemFrag/KtsuTools.MemFrag.csproj" />
+  <Project Path="KtsuTools.Merge/KtsuTools.Merge.csproj" />
+  <Project Path="KtsuTools.Packages/KtsuTools.Packages.csproj" />
+  <Project Path="KtsuTools.Project/KtsuTools.Project.csproj" />
+  <Project Path="KtsuTools.Repo/KtsuTools.Repo.csproj" />
+  <Project Path="KtsuTools.SvnMigrate/KtsuTools.SvnMigrate.csproj" />
+  <Project Path="KtsuTools.Sync/KtsuTools.Sync.csproj" />
+  <Project Path="KtsuTools.Test/KtsuTools.Test.csproj" />
+  <Project Path="KtsuTools/KtsuTools.csproj" />
+</Solution>
