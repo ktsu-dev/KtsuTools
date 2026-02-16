@@ -1,4 +1,12 @@
-<Project Sdk="ktsu.Sdk">
+<Project>
+  <Sdk Name="Microsoft.NET.Sdk" />
+  <Sdk Name="ktsu.Sdk" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
   </ItemGroup>
@@ -6,4 +14,5 @@
   <ItemGroup>
     <ProjectReference Include="..\KtsuTools.Core\KtsuTools.Core.csproj" />
   </ItemGroup>
+
 </Project>

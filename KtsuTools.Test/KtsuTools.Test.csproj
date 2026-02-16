@@ -1,10 +1,17 @@
-<Project Sdk="ktsu.Sdk">
+<Project>
   <Sdk Name="MSTest.Sdk" />
+  <Sdk Name="ktsu.Sdk" />
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+    <NoWarn>$(NoWarn);KTSU0001;KTSU0002</NoWarn>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Moq" />
     <PackageReference Include="FluentAssertions" />
-    <PackageReference Include="TestableIO.System.IO.Abstractions.TestingHelpers" />
+    <PackageReference Remove="Polyfill" />
   </ItemGroup>
 
   <ItemGroup>
