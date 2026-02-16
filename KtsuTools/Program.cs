@@ -44,7 +44,7 @@ internal sealed class Program
 
 		app.Configure(config =>
 		{
-			config.SetApplicationName("ktools");
+			config.SetApplicationName("ktsu");
 			config.SetApplicationVersion("0.1.0");
 
 			config.AddCommand<BuildMonitorCommand>("build-monitor")
