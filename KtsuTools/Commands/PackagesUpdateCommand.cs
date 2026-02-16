@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.Packages;
 using Spectre.Console.Cli;
 
-public sealed class PackagesUpdateCommand : AsyncCommand<PackagesUpdateCommand.Settings>
+public sealed class PackagesUpdateCommand(PackagesService packagesService) : AsyncCommand<PackagesUpdateCommand.Settings>
 {
+	private readonly PackagesService packagesService = packagesService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--path <PATH>")]
@@ -34,9 +36,12 @@ public sealed class PackagesUpdateCommand : AsyncCommand<PackagesUpdateCommand.S
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Packages Update[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await packagesService.UpdateAsync(
+			settings.Path,
+			settings.WhatIf,
+			settings.IncludePrerelease,
+			settings.Source,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }

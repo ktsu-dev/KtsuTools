@@ -5,10 +5,11 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using System.Threading.Tasks;
+using KtsuTools.MemFrag;
 using Spectre.Console.Cli;
 
-public sealed class MemFragScanCommand : AsyncCommand<MemFragScanCommand.Settings>
+public sealed class MemFragScanCommand(MemFragService memFragService) : AsyncCommand<MemFragScanCommand.Settings>
 {
 	public sealed class Settings : CommandSettings
 	{
@@ -19,9 +20,7 @@ public sealed class MemFragScanCommand : AsyncCommand<MemFragScanCommand.Setting
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]MemFrag Scan[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await memFragService.ScanAsync(settings.ProcessId).ConfigureAwait(false);
 	}
 }

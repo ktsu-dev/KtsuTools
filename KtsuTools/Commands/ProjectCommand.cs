@@ -4,11 +4,14 @@
 
 namespace KtsuTools.Commands;
 
+using System;
 using System.ComponentModel;
-using Spectre.Console;
+using System.Threading;
+using System.Threading.Tasks;
+using KtsuTools.Project;
 using Spectre.Console.Cli;
 
-public sealed class ProjectCommand : AsyncCommand<ProjectCommand.Settings>
+public sealed class ProjectCommand(ProjectService projectService) : AsyncCommand<ProjectCommand.Settings>
 {
 	public sealed class Settings : CommandSettings
 	{
@@ -20,9 +23,15 @@ public sealed class ProjectCommand : AsyncCommand<ProjectCommand.Settings>
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Project[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+
+		using CancellationTokenSource cts = new();
+		Console.CancelKeyPress += (_, e) =>
+		{
+			e.Cancel = true;
+			cts.Cancel();
+		};
+
+		return await projectService.RunAsync(settings.Owner, cts.Token).ConfigureAwait(false);
 	}
 }

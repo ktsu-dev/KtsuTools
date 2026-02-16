@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.FileExplorer;
 using Spectre.Console.Cli;
 
-public sealed class ExplorerCommand : AsyncCommand<ExplorerCommand.Settings>
+public sealed class ExplorerCommand(FileExplorerService fileExplorerService) : AsyncCommand<ExplorerCommand.Settings>
 {
+	private readonly FileExplorerService fileExplorerService = fileExplorerService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--path <PATH>")]
@@ -30,9 +32,11 @@ public sealed class ExplorerCommand : AsyncCommand<ExplorerCommand.Settings>
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Explorer[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await fileExplorerService.RunAsync(
+			settings.StartPath,
+			settings.ShowHidden,
+			settings.ShowSizes,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }

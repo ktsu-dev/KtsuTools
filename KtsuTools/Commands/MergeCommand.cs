@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.Merge;
 using Spectre.Console.Cli;
 
-public sealed class MergeCommand : AsyncCommand<MergeCommand.Settings>
+public sealed class MergeCommand(MergeService mergeService) : AsyncCommand<MergeCommand.Settings>
 {
+	private readonly MergeService mergeService = mergeService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandArgument(0, "<directory>")]
@@ -27,9 +29,11 @@ public sealed class MergeCommand : AsyncCommand<MergeCommand.Settings>
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Merge[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await mergeService.RunMergeAsync(
+			settings.Directory,
+			settings.Filename,
+			settings.BatchName,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }

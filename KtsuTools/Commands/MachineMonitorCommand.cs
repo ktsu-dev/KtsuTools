@@ -4,11 +4,14 @@
 
 namespace KtsuTools.Commands;
 
+using System;
 using System.ComponentModel;
-using Spectre.Console;
+using System.Threading;
+using System.Threading.Tasks;
+using KtsuTools.Machine;
 using Spectre.Console.Cli;
 
-public sealed class MachineMonitorCommand : AsyncCommand<MachineMonitorCommand.Settings>
+public sealed class MachineMonitorCommand(MachineMonitorService machineMonitorService) : AsyncCommand<MachineMonitorCommand.Settings>
 {
 	public sealed class Settings : CommandSettings
 	{
@@ -20,9 +23,15 @@ public sealed class MachineMonitorCommand : AsyncCommand<MachineMonitorCommand.S
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Machine Monitor[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+
+		using CancellationTokenSource cts = new();
+		Console.CancelKeyPress += (_, e) =>
+		{
+			e.Cancel = true;
+			cts.Cancel();
+		};
+
+		return await machineMonitorService.RunDashboardAsync(settings.RefreshInterval, cts.Token).ConfigureAwait(false);
 	}
 }

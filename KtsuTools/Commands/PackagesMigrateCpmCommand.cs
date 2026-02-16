@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.Packages;
 using Spectre.Console.Cli;
 
-public sealed class PackagesMigrateCpmCommand : AsyncCommand<PackagesMigrateCpmCommand.Settings>
+public sealed class PackagesMigrateCpmCommand(PackagesService packagesService) : AsyncCommand<PackagesMigrateCpmCommand.Settings>
 {
+	private readonly PackagesService packagesService = packagesService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--path <PATH>")]
@@ -19,9 +21,9 @@ public sealed class PackagesMigrateCpmCommand : AsyncCommand<PackagesMigrateCpmC
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Packages Migrate CPM[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await packagesService.MigrateToCpmAsync(
+			settings.Path,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }

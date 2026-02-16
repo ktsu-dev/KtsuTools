@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.Repo;
 using Spectre.Console.Cli;
 
-public sealed class RepoDiscoverCommand : AsyncCommand<RepoDiscoverCommand.Settings>
+public sealed class RepoDiscoverCommand(RepoService repoService) : AsyncCommand<RepoDiscoverCommand.Settings>
 {
+	private readonly RepoService repoService = repoService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--path <PATH>")]
@@ -20,9 +22,8 @@ public sealed class RepoDiscoverCommand : AsyncCommand<RepoDiscoverCommand.Setti
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Repo Discover[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
+		Ensure.NotNull(settings);
+		await repoService.DiscoverRepositoriesAsync(settings.Path, CancellationToken.None).ConfigureAwait(false);
 		return 0;
 	}
 }

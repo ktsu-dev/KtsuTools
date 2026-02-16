@@ -4,11 +4,14 @@
 
 namespace KtsuTools.Commands;
 
+using System;
 using System.ComponentModel;
-using Spectre.Console;
+using System.Threading;
+using System.Threading.Tasks;
+using KtsuTools.BuildMonitor;
 using Spectre.Console.Cli;
 
-public sealed class BuildMonitorCommand : AsyncCommand<BuildMonitorCommand.Settings>
+public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService) : AsyncCommand<BuildMonitorCommand.Settings>
 {
 	public sealed class Settings : CommandSettings
 	{
@@ -24,9 +27,16 @@ public sealed class BuildMonitorCommand : AsyncCommand<BuildMonitorCommand.Setti
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Build Monitor[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
+		Ensure.NotNull(settings);
+
+		using CancellationTokenSource cts = new();
+		Console.CancelKeyPress += (_, e) =>
+		{
+			e.Cancel = true;
+			cts.Cancel();
+		};
+
+		await buildMonitorService.RunDashboardAsync(settings.Owner, settings.RefreshInterval, cts.Token).ConfigureAwait(false);
 		return 0;
 	}
 }

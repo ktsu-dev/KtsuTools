@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.Repo;
 using Spectre.Console.Cli;
 
-public sealed class RepoBuildCommand : AsyncCommand<RepoBuildCommand.Settings>
+public sealed class RepoBuildCommand(RepoService repoService) : AsyncCommand<RepoBuildCommand.Settings>
 {
+	private readonly RepoService repoService = repoService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--path <PATH>")]
@@ -25,9 +27,10 @@ public sealed class RepoBuildCommand : AsyncCommand<RepoBuildCommand.Settings>
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Repo Build[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await repoService.BuildAndTestAsync(
+			settings.Path,
+			settings.Parallel,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }

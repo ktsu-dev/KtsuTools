@@ -2,10 +2,20 @@
 // All rights reserved.
 // Licensed under the MIT license.
 
+using KtsuTools.BuildMonitor;
+using KtsuTools.CodeGen;
 using KtsuTools.Commands;
 using KtsuTools.Core.Services;
+using KtsuTools.FileExplorer;
 using KtsuTools.Infrastructure;
+using KtsuTools.Machine;
 using KtsuTools.Markdown;
+using KtsuTools.MemFrag;
+using KtsuTools.Merge;
+using KtsuTools.Packages;
+using KtsuTools.Project;
+using KtsuTools.Repo;
+using KtsuTools.SvnMigrate;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console.Cli;
 
@@ -15,7 +25,19 @@ internal sealed class Program
 	{
 		ServiceCollection services = new();
 		services.AddCoreServices();
+
+		// Feature services
 		services.AddSingleton<MarkdownService>();
+		services.AddSingleton<MergeService>();
+		services.AddSingleton<PackagesService>();
+		services.AddSingleton<SvnMigrateService>();
+		services.AddSingleton<FileExplorerService>();
+		services.AddSingleton<RepoService>();
+		services.AddSingleton<CodeGenService>();
+		services.AddSingleton<BuildMonitorService>();
+		services.AddSingleton<MemFragService>();
+		services.AddSingleton<MachineMonitorService>();
+		services.AddSingleton<ProjectService>();
 
 		TypeRegistrar registrar = new(services);
 		CommandApp app = new(registrar);

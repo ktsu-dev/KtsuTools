@@ -5,11 +5,13 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using Spectre.Console;
+using KtsuTools.CodeGen;
 using Spectre.Console.Cli;
 
-public sealed class CodeGenCommand : AsyncCommand<CodeGenCommand.Settings>
+public sealed class CodeGenCommand(CodeGenService codeGenService) : AsyncCommand<CodeGenCommand.Settings>
 {
+	private readonly CodeGenService codeGenService = codeGenService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--input <FILE>")]
@@ -28,9 +30,11 @@ public sealed class CodeGenCommand : AsyncCommand<CodeGenCommand.Settings>
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]Code Generation[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await codeGenService.GenerateAsync(
+			settings.InputFile,
+			settings.Language,
+			settings.OutputFile,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }

@@ -6,11 +6,13 @@ namespace KtsuTools.Commands;
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
-using Spectre.Console;
+using KtsuTools.SvnMigrate;
 using Spectre.Console.Cli;
 
-public sealed class SvnMigrateCommand : AsyncCommand<SvnMigrateCommand.Settings>
+public sealed class SvnMigrateCommand(SvnMigrateService svnMigrateService) : AsyncCommand<SvnMigrateCommand.Settings>
 {
+	private readonly SvnMigrateService svnMigrateService = svnMigrateService;
+
 	public sealed class Settings : CommandSettings
 	{
 		[CommandOption("--svn-url <URL>")]
@@ -34,9 +36,12 @@ public sealed class SvnMigrateCommand : AsyncCommand<SvnMigrateCommand.Settings>
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
-		AnsiConsole.MarkupLine("[bold]SVN Migrate[/]");
-		AnsiConsole.MarkupLine("[yellow]Not yet implemented.[/]");
-		await Task.CompletedTask.ConfigureAwait(false);
-		return 0;
+		Ensure.NotNull(settings);
+		return await svnMigrateService.MigrateAsync(
+			new Uri(settings.SvnUrl),
+			settings.TargetPath,
+			settings.AuthorsFile,
+			settings.PreserveEmptyDirs,
+			CancellationToken.None).ConfigureAwait(false);
 	}
 }
