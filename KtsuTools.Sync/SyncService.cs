@@ -7,6 +7,7 @@ namespace KtsuTools.Sync;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -354,7 +355,7 @@ public static class SyncService
 				AnsiConsole.WriteLine();
 				foreach (string dir in pushDirectories)
 				{
-					PushDirectory(dir);
+					await PushDirectoryAsync(dir).ConfigureAwait(false);
 				}
 			}
 		}
@@ -389,80 +390,50 @@ public static class SyncService
 		return pushDirectories;
 	}
 
-	private static void PushDirectory(string repoRoot)
+	private static async Task PushDirectoryAsync(string repoRoot)
 	{
 		AnsiConsole.MarkupLine($"[green]Pushing:[/] {repoRoot.EscapeMarkup()}");
-		string repoPath = Repository.Discover(repoRoot);
 
-		using Repository repo = new(repoPath);
-		try
+		AnsiConsole.MarkupLine("[dim]Pulling remote changes...[/]");
+		(int pullExit, string pullOutput, string pullError) = await RunGitAsync(repoRoot, "pull").ConfigureAwait(false);
+		if (pullExit != 0)
 		{
-			FetchAndMergeRemote(repo);
-
-			PushOptions pushOptions = new()
-			{
-				OnPushStatusError = (pushStatusErrors) =>
-					AnsiConsole.MarkupLine($"[red]Push error:[/] {pushStatusErrors.Message.EscapeMarkup()}"),
-				OnPushTransferProgress = (current, total, bytes) =>
-				{
-					AnsiConsole.MarkupLine($"[dim]Progress: {current} / {total} ({bytes} bytes)[/]");
-					return true;
-				},
-			};
-
-			repo.Network.Push(repo.Head, pushOptions);
-			AnsiConsole.MarkupLine($"[green]Successfully pushed:[/] {repoRoot.EscapeMarkup()}");
-		}
-		catch (LibGit2SharpException e)
-		{
-			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {e.Message.EscapeMarkup()}");
-		}
-	}
-
-	private static void FetchAndMergeRemote(Repository repo)
-	{
-		AnsiConsole.MarkupLine("[dim]Checking for remote changes...[/]");
-		Remote remote = repo.Network.Remotes["origin"];
-		IEnumerable<string> refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
-
-		FetchOptions fetchOptions = new();
-
-		try
-		{
-			Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, "Fetched latest changes");
-
-			Branch? trackingBranch = repo.Head.TrackedBranch;
-			if (trackingBranch is not null)
-			{
-				Signature signature = new(CommitAuthorName, CommitAuthorName, DateTimeOffset.Now);
-				MergeResult mergeResult = repo.Merge(trackingBranch, signature);
-				LogMergeResult(mergeResult);
-			}
-		}
-		catch (LibGit2SharpException ex)
-		{
-			AnsiConsole.MarkupLine($"[yellow]Warning during pull:[/] {ex.Message.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[yellow]Warning during pull:[/] {(!string.IsNullOrEmpty(pullError) ? pullError : pullOutput).EscapeMarkup()}");
 			AnsiConsole.MarkupLine("[dim]Continuing with push...[/]");
 		}
+
+		(int pushExit, string pushStdout, string pushStderr) = await RunGitAsync(repoRoot, "push").ConfigureAwait(false);
+		if (pushExit == 0)
+		{
+			AnsiConsole.MarkupLine($"[green]Successfully pushed:[/] {repoRoot.EscapeMarkup()}");
+		}
+		else
+		{
+			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {(!string.IsNullOrEmpty(pushStderr) ? pushStderr : pushStdout).EscapeMarkup()}");
+		}
 	}
 
-	private static void LogMergeResult(MergeResult mergeResult)
+	private static async Task<(int ExitCode, string Output, string Error)> RunGitAsync(string workingDirectory, string arguments)
 	{
-		switch (mergeResult.Status)
+		using Process process = new()
 		{
-			case MergeStatus.UpToDate:
-				AnsiConsole.MarkupLine("[dim]Local branch is up to date with remote.[/]");
-				break;
-			case MergeStatus.FastForward:
-				AnsiConsole.MarkupLine("[dim]Fast-forwarded local branch to remote changes.[/]");
-				break;
-			case MergeStatus.NonFastForward:
-				AnsiConsole.MarkupLine("[dim]Merged remote changes with local branch (non-fast-forward).[/]");
-				break;
-			case MergeStatus.Conflicts:
-				AnsiConsole.MarkupLine("[red]Cannot push due to merge conflicts. Please resolve manually.[/]");
-				break;
-		}
+			StartInfo = new ProcessStartInfo
+			{
+				FileName = "git",
+				Arguments = arguments,
+				WorkingDirectory = workingDirectory,
+				UseShellExecute = false,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+				CreateNoWindow = true,
+			},
+		};
+
+		process.Start();
+		string output = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+		string error = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+		await process.WaitForExitAsync().ConfigureAwait(false);
+		return (process.ExitCode, output.Trim(), error.Trim());
 	}
 
 	/// <summary>
