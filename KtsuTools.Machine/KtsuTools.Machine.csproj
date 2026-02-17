@@ -10,7 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="LibreHardwareMonitorLib" />
-    <PackageReference Include="Humanizer.Core" />
+    <PackageReference Include="Humanizer.Core" ExcludeAssets="analyzers" />
   </ItemGroup>
 
   <ItemGroup>

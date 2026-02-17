@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
-    <PackageReference Include="Humanizer.Core" />
+    <PackageReference Include="Humanizer.Core" ExcludeAssets="analyzers" />
     <PackageReference Include="ktsu.TextFilter" />
   </ItemGroup>
 
