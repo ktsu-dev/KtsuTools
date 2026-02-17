@@ -15,6 +15,8 @@ using Spectre.Console;
 /// </summary>
 public class PackagesService(IProcessService processService)
 {
+	private const string VersionAttribute = "Version";
+
 	private readonly IProcessService processService = processService;
 	private static readonly HttpClient SharedHttpClient = new();
 
@@ -148,7 +150,7 @@ public class PackagesService(IProcessService processService)
 
 		Table table = new();
 		table.AddColumn("Package");
-		table.AddColumn("Version");
+		table.AddColumn(VersionAttribute);
 		table.Border = TableBorder.Rounded;
 
 		foreach ((string packageName, string version) in allPackages.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
@@ -213,7 +215,7 @@ public class PackagesService(IProcessService processService)
 			foreach (XElement packageRef in packageRefs)
 			{
 				string? name = packageRef.Attribute("Include")?.Value;
-				string? version = packageRef.Attribute("Version")?.Value;
+				string? version = packageRef.Attribute(VersionAttribute)?.Value;
 
 				if (name is not null && version is not null)
 				{
@@ -242,7 +244,7 @@ public class PackagesService(IProcessService processService)
 				string? name = packageRef.Attribute("Include")?.Value;
 				if (string.Equals(name, packageName, StringComparison.OrdinalIgnoreCase))
 				{
-					packageRef.SetAttributeValue("Version", newVersion);
+					packageRef.SetAttributeValue(VersionAttribute, newVersion);
 				}
 			}
 
@@ -316,7 +318,7 @@ public class PackagesService(IProcessService processService)
 					packages.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
 						.Select(kvp => new XElement("PackageVersion",
 							new XAttribute("Include", kvp.Key),
-							new XAttribute("Version", kvp.Value))))));
+							new XAttribute(VersionAttribute, kvp.Value))))));
 
 		await File.WriteAllTextAsync(propsPath, doc.ToString(), ct).ConfigureAwait(false);
 	}
@@ -331,7 +333,7 @@ public class PackagesService(IProcessService processService)
 
 			foreach (XElement packageRef in packageRefs)
 			{
-				packageRef.Attribute("Version")?.Remove();
+				packageRef.Attribute(VersionAttribute)?.Remove();
 			}
 
 			await File.WriteAllTextAsync(projectFile, doc.ToString(), ct).ConfigureAwait(false);

@@ -15,21 +15,21 @@ using YamlDotNet.Serialization.NamingConventions;
 #pragma warning disable CA1002 // Do not expose generic lists - needed for AST node model
 
 /// <summary>
-/// Base class for all AST nodes.
+/// Interface for all AST nodes.
 /// </summary>
-public abstract class AstNode
+public interface IAstNode
 {
-	/// <summary>Gets or sets the node type name.</summary>
-	public abstract string NodeType { get; }
+	/// <summary>Gets the node type name.</summary>
+	public string NodeType { get; }
 }
 
 /// <summary>
 /// A function declaration AST node.
 /// </summary>
-public class FunctionDeclaration : AstNode
+public class FunctionDeclaration : IAstNode
 {
 	/// <inheritdoc/>
-	public override string NodeType => "functionDeclaration";
+	public string NodeType => "functionDeclaration";
 
 	/// <summary>Gets or sets the function name.</summary>
 	public string Name { get; set; } = string.Empty;
@@ -41,16 +41,16 @@ public class FunctionDeclaration : AstNode
 	public Collection<ParameterNode> Parameters { get; init; } = [];
 
 	/// <summary>Gets or sets the body statements.</summary>
-	public Collection<AstNode> Body { get; init; } = [];
+	public Collection<IAstNode> Body { get; init; } = [];
 }
 
 /// <summary>
 /// A parameter AST node.
 /// </summary>
-public class ParameterNode : AstNode
+public class ParameterNode : IAstNode
 {
 	/// <inheritdoc/>
-	public override string NodeType => "parameter";
+	public string NodeType => "parameter";
 
 	/// <summary>Gets or sets the parameter name.</summary>
 	public string Name { get; set; } = string.Empty;
@@ -68,10 +68,10 @@ public class ParameterNode : AstNode
 /// <summary>
 /// A variable declaration AST node.
 /// </summary>
-public class VariableDeclaration : AstNode
+public class VariableDeclaration : IAstNode
 {
 	/// <inheritdoc/>
-	public override string NodeType => "variableDeclaration";
+	public string NodeType => "variableDeclaration";
 
 	/// <summary>Gets or sets the variable name.</summary>
 	public string Name { get; set; } = string.Empty;
@@ -89,10 +89,10 @@ public class VariableDeclaration : AstNode
 /// <summary>
 /// A return statement AST node.
 /// </summary>
-public class ReturnStatement : AstNode
+public class ReturnStatement : IAstNode
 {
 	/// <inheritdoc/>
-	public override string NodeType => "returnStatement";
+	public string NodeType => "returnStatement";
 
 	/// <summary>Gets or sets the return expression.</summary>
 	public string? Expression { get; set; }
@@ -137,35 +137,42 @@ public class CSharpGenerator : ILanguageGenerator
 
 		StringBuilder sb = new();
 		string returnType = MapType(declaration.ReturnType);
-		string parameters = string.Join(", ", declaration.Parameters.Select(p =>
-		{
-			string paramType = MapType(p.Type);
-			string defaultVal = p.IsOptional && p.DefaultValue is not null
-				? $" = {p.DefaultValue}"
-				: string.Empty;
-			return $"{paramType} {p.Name}{defaultVal}";
-		}));
+		string parameters = string.Join(", ", declaration.Parameters.Select(FormatParameter));
 
 		sb.AppendLine(CultureInfo.InvariantCulture, $"public {returnType} {declaration.Name}({parameters})");
 		sb.AppendLine("{");
 
-		foreach (AstNode statement in declaration.Body)
+		foreach (IAstNode statement in declaration.Body)
 		{
-			if (statement is ReturnStatement ret)
-			{
-				sb.AppendLine(CultureInfo.InvariantCulture, $"    return {ret.Expression};");
-			}
-			else if (statement is VariableDeclaration varDecl)
-			{
-				string varType = varDecl.Type is not null ? MapType(varDecl.Type) : "var";
-				string init = varDecl.InitialValue is not null ? $" = {varDecl.InitialValue}" : string.Empty;
-				string keyword = varDecl.IsConstant ? "const " : string.Empty;
-				sb.AppendLine(CultureInfo.InvariantCulture, $"    {keyword}{varType} {varDecl.Name}{init};");
-			}
+			AppendStatement(sb, statement);
 		}
 
 		sb.AppendLine("}");
 		return sb.ToString();
+	}
+
+	private static string FormatParameter(ParameterNode p)
+	{
+		string paramType = MapType(p.Type);
+		string defaultVal = p.IsOptional && p.DefaultValue is not null
+			? $" = {p.DefaultValue}"
+			: string.Empty;
+		return $"{paramType} {p.Name}{defaultVal}";
+	}
+
+	private static void AppendStatement(StringBuilder sb, IAstNode statement)
+	{
+		if (statement is ReturnStatement ret)
+		{
+			sb.AppendLine(CultureInfo.InvariantCulture, $"    return {ret.Expression};");
+		}
+		else if (statement is VariableDeclaration varDecl)
+		{
+			string varType = varDecl.Type is not null ? MapType(varDecl.Type) : "var";
+			string init = varDecl.InitialValue is not null ? $" = {varDecl.InitialValue}" : string.Empty;
+			string keyword = varDecl.IsConstant ? "const " : string.Empty;
+			sb.AppendLine(CultureInfo.InvariantCulture, $"    {keyword}{varType} {varDecl.Name}{init};");
+		}
 	}
 
 	private static string MapType(string type) => type switch
@@ -200,15 +207,7 @@ public class PythonGenerator : ILanguageGenerator
 		Ensure.NotNull(declaration);
 
 		StringBuilder sb = new();
-		string parameters = string.Join(", ", declaration.Parameters.Select(p =>
-		{
-			string typeHint = MapType(p.Type);
-			string defaultVal = p.IsOptional && p.DefaultValue is not null
-				? $" = {p.DefaultValue}"
-				: string.Empty;
-			return $"{p.Name}: {typeHint}{defaultVal}";
-		}));
-
+		string parameters = string.Join(", ", declaration.Parameters.Select(FormatParameter));
 		string returnHint = declaration.ReturnType != "void"
 			? $" -> {MapType(declaration.ReturnType)}"
 			: string.Empty;
@@ -221,21 +220,35 @@ public class PythonGenerator : ILanguageGenerator
 		}
 		else
 		{
-			foreach (AstNode statement in declaration.Body)
+			foreach (IAstNode statement in declaration.Body)
 			{
-				if (statement is ReturnStatement ret)
-				{
-					sb.AppendLine(CultureInfo.InvariantCulture, $"    return {ret.Expression}");
-				}
-				else if (statement is VariableDeclaration varDecl)
-				{
-					string init = varDecl.InitialValue ?? "None";
-					sb.AppendLine(CultureInfo.InvariantCulture, $"    {varDecl.Name} = {init}");
-				}
+				AppendStatement(sb, statement);
 			}
 		}
 
 		return sb.ToString();
+	}
+
+	private static string FormatParameter(ParameterNode p)
+	{
+		string typeHint = MapType(p.Type);
+		string defaultVal = p.IsOptional && p.DefaultValue is not null
+			? $" = {p.DefaultValue}"
+			: string.Empty;
+		return $"{p.Name}: {typeHint}{defaultVal}";
+	}
+
+	private static void AppendStatement(StringBuilder sb, IAstNode statement)
+	{
+		if (statement is ReturnStatement ret)
+		{
+			sb.AppendLine(CultureInfo.InvariantCulture, $"    return {ret.Expression}");
+		}
+		else if (statement is VariableDeclaration varDecl)
+		{
+			string init = varDecl.InitialValue ?? "None";
+			sb.AppendLine(CultureInfo.InvariantCulture, $"    {varDecl.Name} = {init}");
+		}
 	}
 
 	private static string MapType(string type) => type switch
@@ -352,42 +365,55 @@ public class CodeGenService(ISettingsService settingsService)
 			ReturnType = GetStringValue(dict, "returnType") ?? "void",
 		};
 
-		if (dict.TryGetValue("parameters", out object? paramsObj) && paramsObj is List<object> paramsList)
-		{
-			foreach (object paramObj in paramsList)
-			{
-				if (paramObj is Dictionary<object, object> paramDict)
-				{
-					func.Parameters.Add(new ParameterNode
-					{
-						Name = GetStringValue(paramDict, "name") ?? "arg",
-						Type = GetStringValue(paramDict, "type") ?? "string",
-						IsOptional = GetBoolValue(paramDict, "isOptional"),
-						DefaultValue = GetStringValue(paramDict, "defaultValue"),
-					});
-				}
-			}
-		}
-
-		if (dict.TryGetValue("body", out object? bodyObj) && bodyObj is List<object> bodyList)
-		{
-			foreach (object stmtObj in bodyList)
-			{
-				if (stmtObj is Dictionary<object, object> stmtDict)
-				{
-					AstNode? node = ParseStatement(stmtDict);
-					if (node is not null)
-					{
-						func.Body.Add(node);
-					}
-				}
-			}
-		}
+		ParseParameters(dict, func);
+		ParseBody(dict, func);
 
 		return func;
 	}
 
-	private static AstNode? ParseStatement(Dictionary<object, object> dict)
+	private static void ParseParameters(Dictionary<object, object> dict, FunctionDeclaration func)
+	{
+		if (!dict.TryGetValue("parameters", out object? paramsObj) || paramsObj is not List<object> paramsList)
+		{
+			return;
+		}
+
+		foreach (object paramObj in paramsList)
+		{
+			if (paramObj is Dictionary<object, object> paramDict)
+			{
+				func.Parameters.Add(new ParameterNode
+				{
+					Name = GetStringValue(paramDict, "name") ?? "arg",
+					Type = GetStringValue(paramDict, "type") ?? "string",
+					IsOptional = GetBoolValue(paramDict, "isOptional"),
+					DefaultValue = GetStringValue(paramDict, "defaultValue"),
+				});
+			}
+		}
+	}
+
+	private static void ParseBody(Dictionary<object, object> dict, FunctionDeclaration func)
+	{
+		if (!dict.TryGetValue("body", out object? bodyObj) || bodyObj is not List<object> bodyList)
+		{
+			return;
+		}
+
+		foreach (object stmtObj in bodyList)
+		{
+			if (stmtObj is Dictionary<object, object> stmtDict)
+			{
+				IAstNode? node = ParseStatement(stmtDict);
+				if (node is not null)
+				{
+					func.Body.Add(node);
+				}
+			}
+		}
+	}
+
+	private static IAstNode? ParseStatement(Dictionary<object, object> dict)
 	{
 		if (dict.ContainsKey("returnStatement") && dict["returnStatement"] is Dictionary<object, object> retDict)
 		{

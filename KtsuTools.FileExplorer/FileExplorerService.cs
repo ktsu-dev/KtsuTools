@@ -76,108 +76,115 @@ public class FileExplorerService(ISettingsService settingsService)
 			AnsiConsole.Write(new Rule($"[blue]{currentPath.EscapeMarkup()}[/]").LeftJustified());
 
 			List<FileSystemEntry> entries = GetDirectoryContents(currentPath, showHidden);
+			RenderDirectoryTable(entries, showSizes);
 
-			// Display table
-			Table table = new()
-			{
-				Border = TableBorder.Rounded,
-			};
-			table.AddColumn("Name");
-
-			if (showSizes)
-			{
-				table.AddColumn(new TableColumn("Size").RightAligned());
-			}
-
-			table.AddColumn("Modified");
-
-			foreach (FileSystemEntry entry in entries)
-			{
-				string nameDisplay = entry.IsDirectory
-					? $"[blue]{entry.Name.EscapeMarkup()}/[/]"
-					: entry.Name.EscapeMarkup();
-
-				if (showSizes)
-				{
-					table.AddRow(nameDisplay, entry.FormattedSize, entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
-				}
-				else
-				{
-					table.AddRow(nameDisplay, entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
-				}
-			}
-
-			AnsiConsole.Write(table);
-			AnsiConsole.MarkupLine($"[dim]{entries.Count(e => e.IsDirectory)} dir(s), {entries.Count(e => !e.IsDirectory)} file(s)[/]");
-
-			// Build navigation choices
-			List<string> choices = [];
-			foreach (FileSystemEntry entry in entries.Where(e => e.IsDirectory))
-			{
-				choices.Add($"[DIR] {entry.Name}");
-			}
-
-			choices.Add("[..] Go up");
-
-			if (historyIndex > 0)
-			{
-				choices.Add("[<] Back");
-			}
-
-			choices.Add("[D] Select drive");
-			choices.Add("[Q] Quit");
-
-			string choice = AnsiConsole.Prompt(
-				new SelectionPrompt<string>()
-					.Title("Navigate:")
-					.PageSize(20)
-					.AddChoices(choices));
+			string choice = PromptNavigation(entries);
 
 			if (choice == "[Q] Quit")
 			{
 				break;
 			}
 
-			if (choice == "[..] Go up")
-			{
-				string? parent = Directory.GetParent(currentPath)?.FullName;
-				if (parent is not null)
-				{
-					currentPath = parent;
-					PushNavigation(currentPath);
-				}
-			}
-			else if (choice == "[<] Back")
-			{
-				if (historyIndex > 0)
-				{
-					historyIndex--;
-					currentPath = navigationHistory[historyIndex];
-				}
-			}
-			else if (choice == "[D] Select drive")
-			{
-				string? drivePath = SelectDrive();
-				if (drivePath is not null)
-				{
-					currentPath = drivePath;
-					PushNavigation(currentPath);
-				}
-			}
-			else if (choice.StartsWith("[DIR] ", StringComparison.Ordinal))
-			{
-				string dirName = choice[6..];
-				string newPath = Path.Combine(currentPath, dirName);
-				if (Directory.Exists(newPath))
-				{
-					currentPath = newPath;
-					PushNavigation(currentPath);
-				}
-			}
+			currentPath = HandleNavigationChoice(choice, currentPath);
 		}
 
 		await Task.CompletedTask.ConfigureAwait(false);
 		return 0;
+	}
+
+	private static void RenderDirectoryTable(List<FileSystemEntry> entries, bool showSizes)
+	{
+		Table table = new()
+		{
+			Border = TableBorder.Rounded,
+		};
+		table.AddColumn("Name");
+
+		if (showSizes)
+		{
+			table.AddColumn(new TableColumn("Size").RightAligned());
+		}
+
+		table.AddColumn("Modified");
+
+		foreach (FileSystemEntry entry in entries)
+		{
+			string nameDisplay = entry.IsDirectory
+				? $"[blue]{entry.Name.EscapeMarkup()}/[/]"
+				: entry.Name.EscapeMarkup();
+
+			if (showSizes)
+			{
+				table.AddRow(nameDisplay, entry.FormattedSize, entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
+			}
+			else
+			{
+				table.AddRow(nameDisplay, entry.LastWriteTime.ToString("yyyy-MM-dd HH:mm"));
+			}
+		}
+
+		AnsiConsole.Write(table);
+		AnsiConsole.MarkupLine($"[dim]{entries.Count(e => e.IsDirectory)} dir(s), {entries.Count(e => !e.IsDirectory)} file(s)[/]");
+	}
+
+	private string PromptNavigation(List<FileSystemEntry> entries)
+	{
+		List<string> choices = [.. entries.Where(e => e.IsDirectory).Select(e => $"[DIR] {e.Name}")];
+
+		choices.Add("[..] Go up");
+
+		if (historyIndex > 0)
+		{
+			choices.Add("[<] Back");
+		}
+
+		choices.Add("[D] Select drive");
+		choices.Add("[Q] Quit");
+
+		return AnsiConsole.Prompt(
+			new SelectionPrompt<string>()
+				.Title("Navigate:")
+				.PageSize(20)
+				.AddChoices(choices));
+	}
+
+	private string HandleNavigationChoice(string choice, string currentPath)
+	{
+		if (choice == "[..] Go up")
+		{
+			string? parent = Directory.GetParent(currentPath)?.FullName;
+			if (parent is not null)
+			{
+				PushNavigation(parent);
+				return parent;
+			}
+		}
+		else if (choice == "[<] Back" && historyIndex > 0)
+		{
+			historyIndex--;
+			return navigationHistory[historyIndex];
+		}
+		else if (choice == "[D] Select drive")
+		{
+			string? drivePath = SelectDrive();
+			if (drivePath is not null)
+			{
+				PushNavigation(drivePath);
+				return drivePath;
+			}
+		}
+		else if (choice.StartsWith("[DIR] ", StringComparison.Ordinal))
+		{
+			string dirName = choice[6..];
+			string newPath = Path.Combine(currentPath, dirName);
+			if (Directory.Exists(newPath))
+			{
+				PushNavigation(newPath);
+				return newPath;
+			}
+		}
+
+		return currentPath;
 	}
 
 	private void PushNavigation(string path)

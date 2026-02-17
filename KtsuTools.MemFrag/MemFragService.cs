@@ -110,6 +110,8 @@ public class MemFragService(ISettingsService settingsService)
 		return 0;
 	}
 
+	private const string DimDash = "[dim]-[/]";
+
 	private static Table BuildMemoryTable(Process process)
 	{
 		Table table = new()
@@ -131,7 +133,7 @@ public class MemFragService(ISettingsService settingsService)
 		table.AddRow(
 			"Private Memory",
 			FormatBytes(process.PrivateMemorySize64),
-			"[dim]-[/]");
+			DimDash);
 
 		table.AddRow(
 			"Virtual Memory",
@@ -146,24 +148,24 @@ public class MemFragService(ISettingsService settingsService)
 		table.AddRow(
 			"Paged System Memory",
 			FormatBytes(process.PagedSystemMemorySize64),
-			"[dim]-[/]");
+			DimDash);
 
 		table.AddRow(
 			"Non-paged System Memory",
 			FormatBytes(process.NonpagedSystemMemorySize64),
-			"[dim]-[/]");
+			DimDash);
 
 		table.AddEmptyRow();
 
 		table.AddRow(
 			"[bold]Threads[/]",
 			process.Threads.Count.ToString(CultureInfo.InvariantCulture),
-			"[dim]-[/]");
+			DimDash);
 
 		table.AddRow(
 			"[bold]Handles[/]",
 			process.HandleCount.ToString(CultureInfo.InvariantCulture),
-			"[dim]-[/]");
+			DimDash);
 
 		double fragmentationIndex = CalculateFragmentationIndex(process);
 		string fragColor = fragmentationIndex switch
@@ -177,7 +179,7 @@ public class MemFragService(ISettingsService settingsService)
 		table.AddRow(
 			"[bold]Fragmentation Index[/]",
 			$"[{fragColor}]{fragmentationIndex:P1}[/]",
-			"[dim]-[/]");
+			DimDash);
 
 		double efficiency = process.VirtualMemorySize64 > 0
 			? (double)process.WorkingSet64 / process.VirtualMemorySize64
@@ -192,7 +194,7 @@ public class MemFragService(ISettingsService settingsService)
 		table.AddRow(
 			"[bold]Memory Efficiency[/]",
 			$"[{effColor}]{efficiency:P1}[/]",
-			"[dim]-[/]");
+			DimDash);
 
 		return table;
 	}

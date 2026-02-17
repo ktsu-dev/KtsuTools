@@ -30,6 +30,8 @@ public record SolutionInfo
 /// </summary>
 public class RepoService(IGitService gitService, IProcessService processService)
 {
+	private const string DotnetCommand = "dotnet";
+
 	private readonly IGitService gitService = gitService;
 	private readonly IProcessService processService = processService;
 
@@ -118,7 +120,7 @@ public class RepoService(IGitService gitService, IProcessService processService)
 					task.Description = $"[green]Building {slnName.EscapeMarkup()}[/]";
 
 					// Build
-					ProcessResult buildResult = await processService.RunAsync("dotnet", "build --nologo -v q", slnDir, ct).ConfigureAwait(false);
+					ProcessResult buildResult = await processService.RunAsync(DotnetCommand, "build --nologo -v q", slnDir, ct).ConfigureAwait(false);
 
 					if (buildResult.ExitCode != 0)
 					{
@@ -129,7 +131,7 @@ public class RepoService(IGitService gitService, IProcessService processService)
 					}
 
 					// Test
-					ProcessResult testResult = await processService.RunAsync("dotnet", "test --nologo --no-build -v q", slnDir, ct).ConfigureAwait(false);
+					ProcessResult testResult = await processService.RunAsync(DotnetCommand, "test --nologo --no-build -v q", slnDir, ct).ConfigureAwait(false);
 
 					if (testResult.ExitCode != 0)
 					{
@@ -254,40 +256,45 @@ public class RepoService(IGitService gitService, IProcessService processService)
 
 					task.Description = $"[green]Updating {slnName.EscapeMarkup()}[/]";
 
-					// Find project files
-					string[] projectFiles = Directory.GetFiles(slnDir, "*.csproj", SearchOption.AllDirectories);
-
-					foreach (string proj in projectFiles)
-					{
-						string prereleaseArg = includePrerelease ? " --prerelease" : string.Empty;
-						string outdatedArgs = $"list \"{proj}\" package --outdated --format json{prereleaseArg}";
-
-						ProcessResult outdatedResult = await processService.RunAsync("dotnet", outdatedArgs, slnDir, ct).ConfigureAwait(false);
-
-						if (outdatedResult.ExitCode == 0)
-						{
-							// Parse outdated packages from output and update
-							foreach (string line in outdatedResult.Output)
-							{
-								if (line.Contains("resolvedVersion", StringComparison.OrdinalIgnoreCase) &&
-									line.Contains("latestVersion", StringComparison.OrdinalIgnoreCase))
-								{
-									updatedCount++;
-								}
-							}
-						}
-
-						string updateArgs = $"add \"{proj}\" package --no-restore{prereleaseArg}";
-						await processService.RunAsync("dotnet", $"restore \"{proj}\"", slnDir, ct).ConfigureAwait(false);
-					}
-
-					AnsiConsole.MarkupLine($"  [green]OK[/] {slnName.EscapeMarkup()}");
+					updatedCount += await UpdateSolutionPackagesAsync(slnDir, slnName, includePrerelease, ct).ConfigureAwait(false);
 					task.Increment(1);
 				}
 			}).ConfigureAwait(false);
 
 		AnsiConsole.MarkupLine($"[green]Done. Processed {solutionFiles.Count} solution(s).[/]");
 		return 0;
+	}
+
+	private async Task<int> UpdateSolutionPackagesAsync(string slnDir, string slnName, bool includePrerelease, CancellationToken ct)
+	{
+		string[] projectFiles = Directory.GetFiles(slnDir, "*.csproj", SearchOption.AllDirectories);
+		int updatedCount = 0;
+
+		foreach (string proj in projectFiles)
+		{
+			updatedCount += await UpdateProjectOutdatedPackagesAsync(proj, slnDir, includePrerelease, ct).ConfigureAwait(false);
+			await processService.RunAsync(DotnetCommand, $"restore \"{proj}\"", slnDir, ct).ConfigureAwait(false);
+		}
+
+		AnsiConsole.MarkupLine($"  [green]OK[/] {slnName.EscapeMarkup()}");
+		return updatedCount;
+	}
+
+	private async Task<int> UpdateProjectOutdatedPackagesAsync(string projectFile, string workingDir, bool includePrerelease, CancellationToken ct)
+	{
+		string prereleaseArg = includePrerelease ? " --prerelease" : string.Empty;
+		string outdatedArgs = $"list \"{projectFile}\" package --outdated --format json{prereleaseArg}";
+
+		ProcessResult outdatedResult = await processService.RunAsync(DotnetCommand, outdatedArgs, workingDir, ct).ConfigureAwait(false);
+
+		if (outdatedResult.ExitCode != 0)
+		{
+			return 0;
+		}
+
+		return outdatedResult.Output.Count(line =>
+			line.Contains("resolvedVersion", StringComparison.OrdinalIgnoreCase) &&
+			line.Contains("latestVersion", StringComparison.OrdinalIgnoreCase));
 	}
 
 	private static void DiscoverGitReposRecursive(string directory, ConcurrentBag<string> repos)

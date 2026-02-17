@@ -81,9 +81,11 @@ internal static partial class MarkdownLint
 		}
 		catch (JsonException)
 		{
+			// Invalid JSON config - fall through to return false
 		}
 		catch (IOException)
 		{
+			// Config file unreadable - fall through to return false
 		}
 
 		config = null;
@@ -118,12 +120,10 @@ internal static partial class MarkdownLint
 		}
 
 		int maximum = 1;
-		if (config is not null && config.TryGetValue("MD012", out JsonElement md012))
+		if (config is not null && config.TryGetValue("MD012", out JsonElement md012)
+			&& md012.ValueKind == JsonValueKind.Object && md012.TryGetProperty("maximum", out JsonElement maxProp))
 		{
-			if (md012.ValueKind == JsonValueKind.Object && md012.TryGetProperty("maximum", out JsonElement maxProp))
-			{
-				maximum = maxProp.GetInt32();
-			}
+			maximum = maxProp.GetInt32();
 		}
 
 		string[] lines = content.Split(Environment.NewLine);
@@ -160,28 +160,39 @@ internal static partial class MarkdownLint
 		string[] lines = content.Split(Environment.NewLine);
 		for (int i = 0; i < lines.Length; i++)
 		{
-			string trimmed = lines[i].TrimStart();
-			if (trimmed.StartsWith('#'))
-			{
-				int hashCount = 0;
-				while (hashCount < trimmed.Length && trimmed[hashCount] == '#')
-				{
-					hashCount++;
-				}
-
-				if (hashCount is >= 1 and <= 6)
-				{
-					string rest = trimmed[hashCount..].TrimStart();
-					if (!string.IsNullOrEmpty(rest))
-					{
-						string leading = lines[i][..(lines[i].Length - trimmed.Length)];
-						lines[i] = $"{leading}{new string('#', hashCount)} {rest}";
-					}
-				}
-			}
+			lines[i] = NormalizeHeadingLine(lines[i]);
 		}
 
 		return string.Join(Environment.NewLine, lines);
+	}
+
+	private static string NormalizeHeadingLine(string line)
+	{
+		string trimmed = line.TrimStart();
+		if (!trimmed.StartsWith('#'))
+		{
+			return line;
+		}
+
+		int hashCount = 0;
+		while (hashCount < trimmed.Length && trimmed[hashCount] == '#')
+		{
+			hashCount++;
+		}
+
+		if (hashCount is < 1 or > 6)
+		{
+			return line;
+		}
+
+		string rest = trimmed[hashCount..].TrimStart();
+		if (string.IsNullOrEmpty(rest))
+		{
+			return line;
+		}
+
+		string leading = line[..(line.Length - trimmed.Length)];
+		return $"{leading}{new string('#', hashCount)} {rest}";
 	}
 
 	private static string FixListMarkers(string content, Dictionary<string, JsonElement>? config)
@@ -191,34 +202,8 @@ internal static partial class MarkdownLint
 			return content;
 		}
 
-		string style = "dash";
-		int indent = 2;
-
-		if (config is not null)
-		{
-			if (config.TryGetValue("MD004", out JsonElement md004) && md004.ValueKind == JsonValueKind.Object)
-			{
-				if (md004.TryGetProperty("style", out JsonElement styleProp))
-				{
-					style = styleProp.GetString() ?? "dash";
-				}
-			}
-
-			if (config.TryGetValue("MD007", out JsonElement md007) && md007.ValueKind == JsonValueKind.Object)
-			{
-				if (md007.TryGetProperty("indent", out JsonElement indentProp))
-				{
-					indent = indentProp.GetInt32();
-				}
-			}
-		}
-
-		char marker = style switch
-		{
-			"asterisk" => '*',
-			"plus" => '+',
-			_ => '-',
-		};
+		char marker = GetListMarkerStyle(config);
+		int indent = GetConfigInt(config, "MD007", "indent", 2);
 
 		string[] lines = content.Split(Environment.NewLine);
 		for (int i = 0; i < lines.Length; i++)
@@ -236,6 +221,39 @@ internal static partial class MarkdownLint
 		return string.Join(Environment.NewLine, lines);
 	}
 
+	private static char GetListMarkerStyle(Dictionary<string, JsonElement>? config)
+	{
+		string style = GetConfigString(config, "MD004", "style", "dash");
+		return style switch
+		{
+			"asterisk" => '*',
+			"plus" => '+',
+			_ => '-',
+		};
+	}
+
+	private static string GetConfigString(Dictionary<string, JsonElement>? config, string rule, string property, string defaultValue)
+	{
+		if (config is not null && config.TryGetValue(rule, out JsonElement element)
+			&& element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out JsonElement prop))
+		{
+			return prop.GetString() ?? defaultValue;
+		}
+
+		return defaultValue;
+	}
+
+	private static int GetConfigInt(Dictionary<string, JsonElement>? config, string rule, string property, int defaultValue)
+	{
+		if (config is not null && config.TryGetValue(rule, out JsonElement element)
+			&& element.ValueKind == JsonValueKind.Object && element.TryGetProperty(property, out JsonElement prop))
+		{
+			return prop.GetInt32();
+		}
+
+		return defaultValue;
+	}
+
 	private static string FixTrailingWhitespace(string content, Dictionary<string, JsonElement>? config)
 	{
 		if (!IsRuleEnabled(config, "MD009"))
@@ -244,18 +262,16 @@ internal static partial class MarkdownLint
 		}
 
 		int brSpaces = 0;
-		if (config is not null && config.TryGetValue("MD009", out JsonElement md009) && md009.ValueKind == JsonValueKind.Object)
+		if (config is not null && config.TryGetValue("MD009", out JsonElement md009) && md009.ValueKind == JsonValueKind.Object
+			&& md009.TryGetProperty("br_spaces", out JsonElement brProp))
 		{
-			if (md009.TryGetProperty("br_spaces", out JsonElement brProp))
+			if (brProp.ValueKind == JsonValueKind.Number)
 			{
-				if (brProp.ValueKind == JsonValueKind.Number)
-				{
-					brSpaces = brProp.GetInt32();
-				}
-				else if (brProp.ValueKind == JsonValueKind.True)
-				{
-					brSpaces = 2;
-				}
+				brSpaces = brProp.GetInt32();
+			}
+			else if (brProp.ValueKind == JsonValueKind.True)
+			{
+				brSpaces = 2;
 			}
 		}
 

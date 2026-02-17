@@ -292,71 +292,69 @@ public class MergeService(ISettingsService settingsService)
 		foreach (DiffPlex.Model.DiffBlock block in diffResult.DiffBlocks)
 		{
 			// Add unchanged lines before this block
-			while (currentLine1 < block.DeleteStartA)
-			{
-				if (currentLine1 < lines1.Length)
-				{
-					mergedLines.Add(lines1[currentLine1]);
-				}
+			AddUnchangedLines(mergedLines, lines1, currentLine1, block.DeleteStartA);
 
-				currentLine1++;
-			}
-
-			// Show the conflicting block
-			AnsiConsole.Write(new Rule("[yellow]Conflict[/]").LeftJustified());
-
+			// Resolve the conflicting block
 			string[] deletedLines = [.. lines1.Skip(block.DeleteStartA).Take(block.DeleteCountA)];
 			string[] insertedLines = [.. lines2.Skip(block.InsertStartB).Take(block.InsertCountB)];
 
-			if (deletedLines.Length > 0)
-			{
-				AnsiConsole.MarkupLine("[red]Version 1:[/]");
-				foreach (string line in deletedLines)
-				{
-					AnsiConsole.MarkupLine($"  [red]{line.EscapeMarkup()}[/]");
-				}
-			}
-
-			if (insertedLines.Length > 0)
-			{
-				AnsiConsole.MarkupLine("[green]Version 2:[/]");
-				foreach (string line in insertedLines)
-				{
-					AnsiConsole.MarkupLine($"  [green]{line.EscapeMarkup()}[/]");
-				}
-			}
-
-			BlockChoice choice = AnsiConsole.Prompt(
-				new SelectionPrompt<BlockChoice>()
-					.Title("Choose resolution:")
-					.AddChoices([BlockChoice.UseVersion1, BlockChoice.UseVersion2, BlockChoice.UseBoth, BlockChoice.Skip]));
-
-			switch (choice)
-			{
-				case BlockChoice.UseVersion1:
-					mergedLines.AddRange(deletedLines);
-					break;
-				case BlockChoice.UseVersion2:
-					mergedLines.AddRange(insertedLines);
-					break;
-				case BlockChoice.UseBoth:
-					mergedLines.AddRange(deletedLines);
-					mergedLines.AddRange(insertedLines);
-					break;
-				case BlockChoice.Skip:
-					break;
-			}
-
+			ResolveConflictBlock(mergedLines, deletedLines, insertedLines);
 			currentLine1 = block.DeleteStartA + block.DeleteCountA;
 		}
 
 		// Add remaining unchanged lines
-		while (currentLine1 < lines1.Length)
-		{
-			mergedLines.Add(lines1[currentLine1]);
-			currentLine1++;
-		}
+		AddUnchangedLines(mergedLines, lines1, currentLine1, lines1.Length);
 
 		return string.Join('\n', mergedLines);
+	}
+
+	private static void AddUnchangedLines(List<string> mergedLines, string[] lines, int from, int to)
+	{
+		for (int i = from; i < to && i < lines.Length; i++)
+		{
+			mergedLines.Add(lines[i]);
+		}
+	}
+
+	private static void ResolveConflictBlock(List<string> mergedLines, string[] deletedLines, string[] insertedLines)
+	{
+		AnsiConsole.Write(new Rule("[yellow]Conflict[/]").LeftJustified());
+		DisplayConflictSide(deletedLines, "red", "Version 1:");
+		DisplayConflictSide(insertedLines, "green", "Version 2:");
+
+		BlockChoice choice = AnsiConsole.Prompt(
+			new SelectionPrompt<BlockChoice>()
+				.Title("Choose resolution:")
+				.AddChoices(BlockChoice.UseVersion1, BlockChoice.UseVersion2, BlockChoice.UseBoth, BlockChoice.Skip));
+
+		switch (choice)
+		{
+			case BlockChoice.UseVersion1:
+				mergedLines.AddRange(deletedLines);
+				break;
+			case BlockChoice.UseVersion2:
+				mergedLines.AddRange(insertedLines);
+				break;
+			case BlockChoice.UseBoth:
+				mergedLines.AddRange(deletedLines);
+				mergedLines.AddRange(insertedLines);
+				break;
+			case BlockChoice.Skip:
+				break;
+		}
+	}
+
+	private static void DisplayConflictSide(string[] lines, string color, string header)
+	{
+		if (lines.Length == 0)
+		{
+			return;
+		}
+
+		AnsiConsole.MarkupLine($"[{color}]{header}[/]");
+		foreach (string line in lines)
+		{
+			AnsiConsole.MarkupLine($"  [{color}]{line.EscapeMarkup()}[/]");
+		}
 	}
 }

@@ -2,6 +2,8 @@
 // All rights reserved.
 // Licensed under the MIT license.
 
+namespace KtsuTools;
+
 using KtsuTools.BuildMonitor;
 using KtsuTools.CodeGen;
 using KtsuTools.Commands;
@@ -19,7 +21,7 @@ using KtsuTools.SvnMigrate;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console.Cli;
 
-internal sealed class Program
+internal static class Program
 {
 	private static int Main(string[] args)
 	{

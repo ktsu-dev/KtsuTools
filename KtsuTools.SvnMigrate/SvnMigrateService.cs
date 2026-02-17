@@ -43,12 +43,10 @@ public class SvnMigrateService(IProcessService processService)
 				.AutoClear(false)
 				.HideCompleted(false)
 				.Columns(
-				[
 					new TaskDescriptionColumn(),
 					new ProgressBarColumn(),
 					new PercentageColumn(),
-					new SpinnerColumn(),
-				])
+					new SpinnerColumn())
 				.StartAsync(async progressContext =>
 				{
 					ProgressTask task = progressContext.AddTask("[green]Migrating SVN to Git[/]", maxValue: 100);

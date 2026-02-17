@@ -16,6 +16,8 @@ using Spectre.Console.Rendering;
 
 public class BuildMonitorService(IGitHubService gitHubService)
 {
+	private const string DimDash = "[dim]-[/]";
+
 	public async Task RunDashboardAsync(string owner, int refreshIntervalSeconds, CancellationToken ct = default)
 	{
 		if (!gitHubService.IsAuthenticated)
@@ -93,10 +95,10 @@ public class BuildMonitorService(IGitHubService gitHubService)
 					table.AddRow(
 						$"[bold]{repo.Name.EscapeMarkup()}[/]",
 						"[dim]No workflows[/]",
-						"[dim]-[/]",
-						"[dim]-[/]",
-						"[dim]-[/]",
-						"[dim]-[/]");
+						DimDash,
+						DimDash,
+						DimDash,
+						DimDash);
 					continue;
 				}
 
@@ -119,10 +121,10 @@ public class BuildMonitorService(IGitHubService gitHubService)
 				table.AddRow(
 					$"[bold]{repo.Name.EscapeMarkup()}[/]",
 					"[red]Error[/]",
-					"[dim]-[/]",
-					"[dim]-[/]",
-					"[dim]-[/]",
-					"[dim]-[/]");
+					DimDash,
+					DimDash,
+					DimDash,
+					DimDash);
 			}
 		}
 

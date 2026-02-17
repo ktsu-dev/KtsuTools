@@ -21,9 +21,9 @@ public class MarkdownService
 	/// <param name="standardizeLineEndings">Whether to standardize line endings.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>The number of files that were modified.</returns>
-#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
+#pragma warning disable CA1822, S2325 // Mark members as static - instance method required for DI injection
 	public async Task<int> CleanAsync(string directoryPath, bool applyLinting, bool standardizeLineEndings, CancellationToken ct)
-#pragma warning restore CA1822
+#pragma warning restore CA1822, S2325
 	{
 		string fullPath = Path.GetFullPath(directoryPath);
 
@@ -77,9 +77,9 @@ public class MarkdownService
 	/// <param name="directoryPath">The root directory to scan for markdown files.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>The number of files that were modified.</returns>
-#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
+#pragma warning disable CA1822, S2325 // Mark members as static - instance method required for DI injection
 	public async Task<int> LintAsync(string directoryPath, CancellationToken ct)
-#pragma warning restore CA1822
+#pragma warning restore CA1822, S2325
 	{
 		string fullPath = Path.GetFullPath(directoryPath);
 
