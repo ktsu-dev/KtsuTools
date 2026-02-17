@@ -8,6 +8,7 @@ using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Sync;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 /// <summary>
@@ -25,21 +26,30 @@ public sealed class SyncCommand : AsyncCommand<SyncCommand.Settings>
 		/// </summary>
 		[CommandOption("--path <PATH>")]
 		[Description("The root path to recursively scan")]
-		public required string Path { get; init; }
+		public string Path { get; init; } = string.Empty;
 
 		/// <summary>
 		/// Gets the filename to scan for.
 		/// </summary>
 		[CommandOption("--filename <FILENAME>")]
 		[Description("The filename to scan for")]
-		public required string Filename { get; init; }
+		public string Filename { get; init; } = string.Empty;
 	}
 
 	/// <inheritdoc/>
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+
+		string path = string.IsNullOrWhiteSpace(settings.Path)
+			? await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]").ConfigureAwait(false)
+			: settings.Path;
+
+		string filename = string.IsNullOrWhiteSpace(settings.Filename)
+			? await AnsiConsole.AskAsync<string>("[bold]Filename pattern to scan for:[/]").ConfigureAwait(false)
+			: settings.Filename;
+
 		using CancellationTokenSource cts = new();
-		return await SyncService.RunAsync(settings.Path, settings.Filename, cts.Token).ConfigureAwait(false);
+		return await SyncService.RunAsync(path, filename, cts.Token).ConfigureAwait(false);
 	}
 }
