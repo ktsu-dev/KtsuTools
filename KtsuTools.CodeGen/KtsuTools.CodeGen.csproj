@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="YamlDotNet" />
-    <PackageReference Include="ktsu.DeepClone" />
   </ItemGroup>
 
   <ItemGroup>

@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
-    <PackageReference Include="NuGet.Versioning" />
   </ItemGroup>
 
   <ItemGroup>

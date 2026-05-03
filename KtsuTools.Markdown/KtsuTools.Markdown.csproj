@@ -11,9 +11,7 @@
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="ktsu.Frontmatter" />
-    <PackageReference Include="ktsu.FuzzySearch" />
     <PackageReference Include="ktsu.Extensions" />
-    <PackageReference Include="HashDepot" />
   </ItemGroup>
 
   <ItemGroup>

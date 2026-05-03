@@ -10,7 +10,6 @@
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="DiffPlex" />
-    <PackageReference Include="TestableIO.System.IO.Abstractions" />
   </ItemGroup>
 
   <ItemGroup>
