@@ -247,7 +247,7 @@ public static class ImageService
 		});
 	}
 
-	private static Rgba32 ParseHexColor(string hex)
+	internal static Rgba32 ParseHexColor(string hex)
 	{
 		string normalized = hex.TrimStart('#');
 
