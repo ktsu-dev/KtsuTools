@@ -6,6 +6,7 @@ namespace KtsuTools.Commands;
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using KtsuTools.Core.UI;
 using KtsuTools.SvnMigrate;
 using Spectre.Console.Cli;
 
@@ -37,11 +38,12 @@ public sealed class SvnMigrateCommand(SvnMigrateService svnMigrateService) : Asy
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await svnMigrateService.MigrateAsync(
 			new Uri(settings.SvnUrl),
 			settings.TargetPath,
 			settings.AuthorsFile,
 			settings.PreserveEmptyDirs,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }

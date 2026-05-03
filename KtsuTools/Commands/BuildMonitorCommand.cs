@@ -4,11 +4,10 @@
 
 namespace KtsuTools.Commands;
 
-using System;
 using System.ComponentModel;
-using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.BuildMonitor;
+using KtsuTools.Core.UI;
 using Spectre.Console.Cli;
 
 public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService) : AsyncCommand<BuildMonitorCommand.Settings>
@@ -29,14 +28,8 @@ public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService)
 	{
 		Ensure.NotNull(settings);
 
-		using CancellationTokenSource cts = new();
-		Console.CancelKeyPress += (_, e) =>
-		{
-			e.Cancel = true;
-			cts.Cancel();
-		};
-
-		await buildMonitorService.RunDashboardAsync(settings.Owner, settings.RefreshInterval, cts.Token).ConfigureAwait(false);
+		using CtrlCScope scope = new();
+		await buildMonitorService.RunDashboardAsync(settings.Owner, settings.RefreshInterval, scope.Token).ConfigureAwait(false);
 		return 0;
 	}
 }

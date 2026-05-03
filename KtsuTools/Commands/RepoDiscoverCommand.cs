@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Repo;
 using Spectre.Console.Cli;
 
@@ -23,7 +24,8 @@ public sealed class RepoDiscoverCommand(RepoService repoService) : AsyncCommand<
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
-		await repoService.DiscoverRepositoriesAsync(settings.Path, CancellationToken.None).ConfigureAwait(false);
+		using CtrlCScope scope = new();
+		await repoService.DiscoverRepositoriesAsync(settings.Path, scope.Token).ConfigureAwait(false);
 		return 0;
 	}
 }

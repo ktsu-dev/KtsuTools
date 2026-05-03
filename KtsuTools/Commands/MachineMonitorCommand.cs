@@ -4,10 +4,9 @@
 
 namespace KtsuTools.Commands;
 
-using System;
 using System.ComponentModel;
-using System.Threading;
 using System.Threading.Tasks;
+using KtsuTools.Core.UI;
 using KtsuTools.Machine;
 using Spectre.Console.Cli;
 
@@ -25,13 +24,7 @@ public sealed class MachineMonitorCommand(MachineMonitorService machineMonitorSe
 	{
 		Ensure.NotNull(settings);
 
-		using CancellationTokenSource cts = new();
-		Console.CancelKeyPress += (_, e) =>
-		{
-			e.Cancel = true;
-			cts.Cancel();
-		};
-
-		return await machineMonitorService.RunDashboardAsync(settings.RefreshInterval, cts.Token).ConfigureAwait(false);
+		using CtrlCScope scope = new();
+		return await machineMonitorService.RunDashboardAsync(settings.RefreshInterval, scope.Token).ConfigureAwait(false);
 	}
 }

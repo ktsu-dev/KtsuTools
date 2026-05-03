@@ -9,16 +9,16 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
-using KtsuTools.Core.Services.Settings;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-public class MemFragService(ISettingsService settingsService)
+public class MemFragService
 {
+#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
 	public async Task<int> ScanAsync(int processId, CancellationToken ct = default)
+#pragma warning restore CA1822
 	{
-		_ = settingsService;
-		_ = ct;
+		ct.ThrowIfCancellationRequested();
 
 		Process process;
 		try
@@ -39,6 +39,7 @@ public class MemFragService(ISettingsService settingsService)
 			try
 			{
 				Table table = BuildMemoryTable(process);
+				ct.ThrowIfCancellationRequested();
 				AnsiConsole.Write(table);
 
 				AnsiConsole.WriteLine();
@@ -55,10 +56,10 @@ public class MemFragService(ISettingsService settingsService)
 		return 0;
 	}
 
+#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
 	public async Task<int> MonitorAsync(int processId, int refreshIntervalMs = 1000, CancellationToken ct = default)
+#pragma warning restore CA1822
 	{
-		_ = settingsService;
-
 		Process process;
 		try
 		{

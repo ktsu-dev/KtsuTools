@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Packages;
 using Spectre.Console.Cli;
 
@@ -22,8 +23,9 @@ public sealed class PackagesMigrateCpmCommand(PackagesService packagesService) :
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await packagesService.MigrateToCpmAsync(
 			settings.Path,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }

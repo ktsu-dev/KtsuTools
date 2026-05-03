@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Repo;
 using Spectre.Console.Cli;
 
@@ -28,9 +29,10 @@ public sealed class RepoBuildCommand(RepoService repoService) : AsyncCommand<Rep
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await repoService.BuildAndTestAsync(
 			settings.Path,
 			settings.Parallel,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }

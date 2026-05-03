@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Merge;
 using Spectre.Console.Cli;
 
@@ -21,19 +22,15 @@ public sealed class MergeCommand(MergeService mergeService) : AsyncCommand<Merge
 		[CommandArgument(1, "<filename>")]
 		[Description("Filename pattern to merge")]
 		public required string Filename { get; init; }
-
-		[CommandOption("--batch <NAME>")]
-		[Description("Batch name for grouping merge operations")]
-		public string? BatchName { get; init; }
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await mergeService.RunMergeAsync(
 			settings.Directory,
 			settings.Filename,
-			settings.BatchName,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }

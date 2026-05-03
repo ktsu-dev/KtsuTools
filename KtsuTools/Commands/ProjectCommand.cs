@@ -4,10 +4,9 @@
 
 namespace KtsuTools.Commands;
 
-using System;
 using System.ComponentModel;
-using System.Threading;
 using System.Threading.Tasks;
+using KtsuTools.Core.UI;
 using KtsuTools.Project;
 using Spectre.Console.Cli;
 
@@ -25,13 +24,7 @@ public sealed class ProjectCommand(ProjectService projectService) : AsyncCommand
 	{
 		Ensure.NotNull(settings);
 
-		using CancellationTokenSource cts = new();
-		Console.CancelKeyPress += (_, e) =>
-		{
-			e.Cancel = true;
-			cts.Cancel();
-		};
-
-		return await projectService.RunAsync(settings.Owner, cts.Token).ConfigureAwait(false);
+		using CtrlCScope scope = new();
+		return await projectService.RunAsync(settings.Owner, scope.Token).ConfigureAwait(false);
 	}
 }

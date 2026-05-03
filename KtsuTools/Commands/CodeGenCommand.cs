@@ -6,6 +6,7 @@ namespace KtsuTools.Commands;
 
 using System.ComponentModel;
 using KtsuTools.CodeGen;
+using KtsuTools.Core.UI;
 using Spectre.Console.Cli;
 
 public sealed class CodeGenCommand(CodeGenService codeGenService) : AsyncCommand<CodeGenCommand.Settings>
@@ -31,10 +32,11 @@ public sealed class CodeGenCommand(CodeGenService codeGenService) : AsyncCommand
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await codeGenService.GenerateAsync(
 			settings.InputFile,
 			settings.Language,
 			settings.OutputFile,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }

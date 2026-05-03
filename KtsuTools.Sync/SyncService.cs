@@ -7,7 +7,6 @@ namespace KtsuTools.Sync;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -19,6 +18,8 @@ using System.Threading.Tasks;
 using ktsu.Extensions;
 using ktsu.Semantics.Paths;
 
+using KtsuTools.Core.Services.Process;
+
 using LibGit2Sharp;
 
 using Spectre.Console;
@@ -26,8 +27,10 @@ using Spectre.Console;
 /// <summary>
 /// Service that synchronizes file contents across multiple repositories.
 /// </summary>
-public static class SyncService
+public class SyncService(IProcessService processService)
 {
+	private readonly IProcessService processService = processService;
+
 	private const string CommitAuthorName = "KtsuTools";
 	private const string GitDirSuffixWindows = ".git\\";
 	private const string GitDirSuffixUnix = ".git/";
@@ -39,7 +42,7 @@ public static class SyncService
 	/// <param name="filename">The filename pattern to scan for.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public static async Task<int> RunAsync(string path, string filename, CancellationToken ct = default)
+	public async Task<int> RunAsync(string path, string filename, CancellationToken ct = default)
 	{
 		ct.ThrowIfCancellationRequested();
 
@@ -73,7 +76,7 @@ public static class SyncService
 
 		await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, path).ConfigureAwait(false);
 
-		await PushToRemoteAsync(commitDirectories, path).ConfigureAwait(false);
+		await PushToRemoteAsync(commitDirectories, path, ct).ConfigureAwait(false);
 
 		return 0;
 	}
@@ -341,21 +344,22 @@ public static class SyncService
 		}
 	}
 
-	private static async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path)
+	private async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path, CancellationToken ct)
 	{
 		Collection<string> pushDirectories = FindPushableDirectories(commitDirectories, path);
 
 		if (pushDirectories.Count > 0)
 		{
 			AnsiConsole.WriteLine();
-			bool confirmed = await AnsiConsole.ConfirmAsync("Push changes to remote?", defaultValue: false).ConfigureAwait(false);
+			bool confirmed = await AnsiConsole.ConfirmAsync("Push changes to remote?", defaultValue: false, cancellationToken: ct).ConfigureAwait(false);
 
 			if (confirmed)
 			{
 				AnsiConsole.WriteLine();
 				foreach (string dir in pushDirectories)
 				{
-					await PushDirectoryAsync(dir).ConfigureAwait(false);
+					ct.ThrowIfCancellationRequested();
+					await PushDirectoryAsync(dir, ct).ConfigureAwait(false);
 				}
 			}
 		}
@@ -390,50 +394,29 @@ public static class SyncService
 		return pushDirectories;
 	}
 
-	private static async Task PushDirectoryAsync(string repoRoot)
+	private async Task PushDirectoryAsync(string repoRoot, CancellationToken ct)
 	{
 		AnsiConsole.MarkupLine($"[green]Pushing:[/] {repoRoot.EscapeMarkup()}");
 
 		AnsiConsole.MarkupLine("[dim]Pulling remote changes...[/]");
-		(int pullExit, string pullOutput, string pullError) = await RunGitAsync(repoRoot, "pull").ConfigureAwait(false);
-		if (pullExit != 0)
+		ProcessResult pull = await processService.RunAsync("git", "pull", repoRoot, ct).ConfigureAwait(false);
+		if (pull.ExitCode != 0)
 		{
-			AnsiConsole.MarkupLine($"[yellow]Warning during pull:[/] {(!string.IsNullOrEmpty(pullError) ? pullError : pullOutput).EscapeMarkup()}");
+			string pullMessage = pull.Errors.Count > 0 ? string.Join('\n', pull.Errors) : string.Join('\n', pull.Output);
+			AnsiConsole.MarkupLine($"[yellow]Warning during pull:[/] {pullMessage.EscapeMarkup()}");
 			AnsiConsole.MarkupLine("[dim]Continuing with push...[/]");
 		}
 
-		(int pushExit, string pushStdout, string pushStderr) = await RunGitAsync(repoRoot, "push").ConfigureAwait(false);
-		if (pushExit == 0)
+		ProcessResult push = await processService.RunAsync("git", "push", repoRoot, ct).ConfigureAwait(false);
+		if (push.ExitCode == 0)
 		{
 			AnsiConsole.MarkupLine($"[green]Successfully pushed:[/] {repoRoot.EscapeMarkup()}");
 		}
 		else
 		{
-			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {(!string.IsNullOrEmpty(pushStderr) ? pushStderr : pushStdout).EscapeMarkup()}");
+			string pushMessage = push.Errors.Count > 0 ? string.Join('\n', push.Errors) : string.Join('\n', push.Output);
+			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {pushMessage.EscapeMarkup()}");
 		}
-	}
-
-	private static async Task<(int ExitCode, string Output, string Error)> RunGitAsync(string workingDirectory, string arguments)
-	{
-		using Process process = new()
-		{
-			StartInfo = new ProcessStartInfo
-			{
-				FileName = "git",
-				Arguments = arguments,
-				WorkingDirectory = workingDirectory,
-				UseShellExecute = false,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-				CreateNoWindow = true,
-			},
-		};
-
-		process.Start();
-		string output = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-		string error = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-		await process.WaitForExitAsync().ConfigureAwait(false);
-		return (process.ExitCode, output.Trim(), error.Trim());
 	}
 
 	/// <summary>

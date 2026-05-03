@@ -4,7 +4,6 @@
 
 namespace KtsuTools.FileExplorer;
 
-using KtsuTools.Core.Services.Settings;
 using Spectre.Console;
 
 /// <summary>
@@ -45,9 +44,8 @@ public record FileSystemEntry
 /// <summary>
 /// TUI file explorer service.
 /// </summary>
-public class FileExplorerService(ISettingsService settingsService)
+public class FileExplorerService
 {
-	private readonly ISettingsService settingsService = settingsService;
 	private readonly List<string> navigationHistory = [];
 	private int historyIndex = -1;
 
@@ -58,7 +56,6 @@ public class FileExplorerService(ISettingsService settingsService)
 	public async Task<int> RunAsync(string startPath = ".", bool showHidden = false, bool showSizes = true, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
-		_ = settingsService;
 		string currentPath = Path.GetFullPath(startPath);
 
 		if (!Directory.Exists(currentPath))

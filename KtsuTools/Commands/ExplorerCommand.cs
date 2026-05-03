@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.FileExplorer;
 using Spectre.Console.Cli;
 
@@ -33,10 +34,11 @@ public sealed class ExplorerCommand(FileExplorerService fileExplorerService) : A
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await fileExplorerService.RunAsync(
 			settings.StartPath,
 			settings.ShowHidden,
 			settings.ShowSizes,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }

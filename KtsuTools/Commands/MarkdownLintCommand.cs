@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Markdown;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -25,9 +26,10 @@ public sealed class MarkdownLintCommand(MarkdownService markdownService) : Async
 		Ensure.NotNull(settings);
 		AnsiConsole.MarkupLine("[bold]Markdown Lint[/]");
 
+		using CtrlCScope scope = new();
 		int modifiedCount = await markdownService.LintAsync(
 			settings.Path,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 
 		AnsiConsole.MarkupLine($"[bold green]Done.[/] {modifiedCount} file(s) linted.");
 		return 0;

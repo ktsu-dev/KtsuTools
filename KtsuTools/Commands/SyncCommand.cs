@@ -5,8 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
-using System.Threading;
 using System.Threading.Tasks;
+using KtsuTools.Core.UI;
 using KtsuTools.Sync;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -14,8 +14,10 @@ using Spectre.Console.Cli;
 /// <summary>
 /// Command that synchronizes file contents across repositories.
 /// </summary>
-public sealed class SyncCommand : AsyncCommand<SyncCommand.Settings>
+public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncCommand.Settings>
 {
+	private readonly SyncService syncService = syncService;
+
 	/// <summary>
 	/// Settings for the sync command.
 	/// </summary>
@@ -49,7 +51,7 @@ public sealed class SyncCommand : AsyncCommand<SyncCommand.Settings>
 			? await AnsiConsole.AskAsync<string>("[bold]Filename pattern to scan for:[/]").ConfigureAwait(false)
 			: settings.Filename;
 
-		using CancellationTokenSource cts = new();
-		return await SyncService.RunAsync(path, filename, cts.Token).ConfigureAwait(false);
+		using CtrlCScope scope = new();
+		return await syncService.RunAsync(path, filename, scope.Token).ConfigureAwait(false);
 	}
 }

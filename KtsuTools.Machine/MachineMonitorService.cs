@@ -10,17 +10,16 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using KtsuTools.Core.Services.Settings;
 using LibreHardwareMonitor.Hardware;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-public class MachineMonitorService(ISettingsService settingsService)
+public class MachineMonitorService
 {
+#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
 	public async Task<int> RunDashboardAsync(int refreshIntervalMs = 1000, CancellationToken ct = default)
+#pragma warning restore CA1822
 	{
-		_ = settingsService;
-
 		Computer computer = new()
 		{
 			IsCpuEnabled = true,

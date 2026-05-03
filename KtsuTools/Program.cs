@@ -18,6 +18,7 @@ using KtsuTools.Packages;
 using KtsuTools.Project;
 using KtsuTools.Repo;
 using KtsuTools.SvnMigrate;
+using KtsuTools.Sync;
 using Microsoft.Extensions.DependencyInjection;
 using Spectre.Console.Cli;
 
@@ -40,6 +41,7 @@ internal static class Program
 		services.AddSingleton<MemFragService>();
 		services.AddSingleton<MachineMonitorService>();
 		services.AddSingleton<ProjectService>();
+		services.AddSingleton<SyncService>();
 
 		TypeRegistrar registrar = new(services);
 		CommandApp app = new(registrar);

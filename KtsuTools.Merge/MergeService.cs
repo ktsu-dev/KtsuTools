@@ -10,7 +10,6 @@ using System.Text;
 using DiffPlex;
 using DiffPlex.DiffBuilder;
 using DiffPlex.DiffBuilder.Model;
-using KtsuTools.Core.Services.Settings;
 using Spectre.Console;
 
 /// <summary>
@@ -44,17 +43,15 @@ public enum BlockChoice
 /// <summary>
 /// Service for N-way iterative file merging with interactive conflict resolution.
 /// </summary>
-public class MergeService(ISettingsService settingsService)
+public class MergeService
 {
-	private readonly ISettingsService settingsService = settingsService;
-
 	/// <summary>
 	/// Runs the merge operation for files matching a pattern in a directory.
 	/// </summary>
-	public async Task<int> RunMergeAsync(string directory, string filename, string? batchName = null, CancellationToken ct = default)
+#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
+	public async Task<int> RunMergeAsync(string directory, string filename, CancellationToken ct = default)
+#pragma warning restore CA1822
 	{
-		_ = settingsService;
-		_ = batchName;
 		Ensure.NotNull(directory);
 		Ensure.NotNull(filename);
 

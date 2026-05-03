@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Image;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -42,13 +43,14 @@ public sealed class ImageProcessCommand : AsyncCommand<ImageProcessCommand.Setti
 		Ensure.NotNull(settings);
 		AnsiConsole.MarkupLine("[bold]Image Process[/]");
 
+		using CtrlCScope scope = new();
 		int processed = await ImageService.ProcessAsync(
 			settings.InputPath,
 			settings.OutputPath,
 			settings.Color,
 			settings.Size,
 			settings.Padding,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 
 		return processed > 0 ? 0 : 1;
 	}

@@ -7,7 +7,6 @@ namespace KtsuTools.CodeGen;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
-using KtsuTools.Core.Services.Settings;
 using Spectre.Console;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -265,10 +264,8 @@ public class PythonGenerator : ILanguageGenerator
 /// <summary>
 /// Service for generating code from YAML AST definitions.
 /// </summary>
-public class CodeGenService(ISettingsService settingsService)
+public class CodeGenService
 {
-	private readonly ISettingsService settingsService = settingsService;
-
 	private static readonly Dictionary<string, ILanguageGenerator> Generators = new(StringComparer.OrdinalIgnoreCase)
 	{
 		["csharp"] = new CSharpGenerator(),
@@ -278,9 +275,10 @@ public class CodeGenService(ISettingsService settingsService)
 	/// <summary>
 	/// Generates code from a YAML AST definition file.
 	/// </summary>
+#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
 	public async Task<int> GenerateAsync(string inputFile, string language, string? outputFile = null, CancellationToken ct = default)
+#pragma warning restore CA1822
 	{
-		_ = settingsService;
 		Ensure.NotNull(inputFile);
 		Ensure.NotNull(language);
 

@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Markdown;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -35,11 +36,12 @@ public sealed class MarkdownCleanCommand(MarkdownService markdownService) : Asyn
 		Ensure.NotNull(settings);
 		AnsiConsole.MarkupLine("[bold]Markdown Clean[/]");
 
+		using CtrlCScope scope = new();
 		int modifiedCount = await markdownService.CleanAsync(
 			settings.Path,
 			settings.ApplyLinting,
 			settings.StandardizeLineEndings,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 
 		AnsiConsole.MarkupLine($"[bold green]Done.[/] {modifiedCount} file(s) modified.");
 		return 0;

@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using KtsuTools.Core.UI;
 using KtsuTools.Packages;
 using Spectre.Console.Cli;
 
@@ -37,11 +38,12 @@ public sealed class PackagesUpdateCommand(PackagesService packagesService) : Asy
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
 	{
 		Ensure.NotNull(settings);
+		using CtrlCScope scope = new();
 		return await packagesService.UpdateAsync(
 			settings.Path,
 			settings.WhatIf,
 			settings.IncludePrerelease,
 			settings.Source,
-			CancellationToken.None).ConfigureAwait(false);
+			scope.Token).ConfigureAwait(false);
 	}
 }
