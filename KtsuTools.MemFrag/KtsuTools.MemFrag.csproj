@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="ktsu.IntervalAction" />
   </ItemGroup>
 
   <ItemGroup>

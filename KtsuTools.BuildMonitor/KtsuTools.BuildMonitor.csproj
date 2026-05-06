@@ -11,6 +11,7 @@
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Humanizer.Core" ExcludeAssets="analyzers" />
     <PackageReference Include="ktsu.TextFilter" />
+    <PackageReference Include="ktsu.IntervalAction" />
   </ItemGroup>
 
   <ItemGroup>
