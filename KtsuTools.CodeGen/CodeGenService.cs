@@ -285,6 +285,7 @@ public class CodeGenService
 	public async Task<int> GenerateAsync(AbsoluteFilePath inputFile, string language, AbsoluteFilePath? outputFile = null, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
+		Ensure.NotNull(inputFile);
 		Ensure.NotNull(language);
 
 		string fullPath = inputFile.ToString();

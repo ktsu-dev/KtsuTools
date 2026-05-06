@@ -57,6 +57,7 @@ public class MergeService
 	public async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
+		Ensure.NotNull(directory);
 		Ensure.NotNull(filename);
 
 		string fullPath = directory.ToString();
