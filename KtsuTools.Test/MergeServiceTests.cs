@@ -5,6 +5,7 @@
 namespace KtsuTools.Test;
 
 using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Merge;
 
 [TestClass]
@@ -15,7 +16,8 @@ public class MergeServiceTests
 	{
 		MergeService service = new();
 		string missing = Path.Combine(Path.GetTempPath(), $"ktsu_missing_{Guid.NewGuid():N}");
-		int result = await service.RunMergeAsync(missing, "*.txt").ConfigureAwait(false);
+		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+		int result = await service.RunMergeAsync(missingPath, "*.txt").ConfigureAwait(false);
 		Assert.AreEqual(1, result);
 	}
 
@@ -28,7 +30,8 @@ public class MergeServiceTests
 		{
 			await File.WriteAllTextAsync(Path.Combine(root, "only.txt"), "hello").ConfigureAwait(false);
 			MergeService service = new();
-			int result = await service.RunMergeAsync(root, "only.txt").ConfigureAwait(false);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+			int result = await service.RunMergeAsync(rootPath, "only.txt").ConfigureAwait(false);
 			Assert.AreEqual(0, result, "Expected success exit code when there's nothing to merge.");
 		}
 		finally
@@ -50,7 +53,8 @@ public class MergeServiceTests
 			await File.WriteAllTextAsync(Path.Combine(subA, "shared.txt"), "same content").ConfigureAwait(false);
 			await File.WriteAllTextAsync(Path.Combine(subB, "shared.txt"), "same content").ConfigureAwait(false);
 			MergeService service = new();
-			int result = await service.RunMergeAsync(root, "shared.txt").ConfigureAwait(false);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+			int result = await service.RunMergeAsync(rootPath, "shared.txt").ConfigureAwait(false);
 			Assert.AreEqual(0, result, "Identical files should hash into one group and exit cleanly.");
 		}
 		finally

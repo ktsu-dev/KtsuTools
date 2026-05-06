@@ -4,7 +4,10 @@
 
 namespace KtsuTools.Commands;
 
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Threading.Tasks;
 using KtsuTools.Core.UI;
 using KtsuTools.Sync;
@@ -31,11 +34,18 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 		public string Path { get; init; } = string.Empty;
 
 		/// <summary>
-		/// Gets the filename to scan for.
+		/// Gets the filename patterns to scan for. May be specified multiple times or comma-separated.
 		/// </summary>
 		[CommandOption("--filename <FILENAME>")]
-		[Description("The filename to scan for")]
-		public string Filename { get; init; } = string.Empty;
+		[Description("Filename pattern to scan for. Repeat the flag or pass a comma-separated list to sync several files in one run.")]
+		public string[] Filename { get; init; } = [];
+
+		/// <summary>
+		/// Gets a value indicating whether to push without prompting when all unpushed commits were authored by KtsuTools.
+		/// </summary>
+		[CommandOption("--auto-push")]
+		[Description("Push without prompting when every unpushed commit on a repo was authored by KtsuTools.")]
+		public bool AutoPush { get; init; }
 	}
 
 	/// <inheritdoc/>
@@ -47,11 +57,21 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 			? await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]").ConfigureAwait(false)
 			: settings.Path;
 
-		string filename = string.IsNullOrWhiteSpace(settings.Filename)
-			? await AnsiConsole.AskAsync<string>("[bold]Filename pattern to scan for:[/]").ConfigureAwait(false)
-			: settings.Filename;
+		List<string> filenames = ExpandFilenames(settings.Filename);
+		if (filenames.Count == 0)
+		{
+			string entered = await AnsiConsole.AskAsync<string>("[bold]Filename pattern(s) to scan for (comma-separated):[/]").ConfigureAwait(false);
+			filenames = ExpandFilenames([entered]);
+		}
 
 		using CtrlCScope scope = new();
-		return await syncService.RunAsync(path, filename, scope.Token).ConfigureAwait(false);
+		return await syncService.RunAsync(path, filenames, settings.AutoPush, scope.Token).ConfigureAwait(false);
 	}
+
+	private static List<string> ExpandFilenames(IEnumerable<string> raw) =>
+		[.. raw
+			.Where(v => v is not null)
+			.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			.Where(v => !string.IsNullOrWhiteSpace(v))
+			.Distinct(StringComparer.Ordinal)];
 }

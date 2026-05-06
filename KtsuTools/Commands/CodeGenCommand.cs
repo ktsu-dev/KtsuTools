@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.CodeGen;
 using KtsuTools.Core.UI;
 using Spectre.Console.Cli;
@@ -33,10 +35,14 @@ public sealed class CodeGenCommand(CodeGenService codeGenService) : AsyncCommand
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteFilePath inputFile = AbsoluteFilePath.Create<AbsoluteFilePath>(Path.GetFullPath(settings.InputFile));
+		AbsoluteFilePath? outputFile = settings.OutputFile is null
+			? null
+			: AbsoluteFilePath.Create<AbsoluteFilePath>(Path.GetFullPath(settings.OutputFile));
 		return await codeGenService.GenerateAsync(
-			settings.InputFile,
+			inputFile,
 			settings.Language,
-			settings.OutputFile,
+			outputFile,
 			scope.Token).ConfigureAwait(false);
 	}
 }

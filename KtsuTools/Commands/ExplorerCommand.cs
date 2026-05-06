@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.FileExplorer;
 using Spectre.Console.Cli;
@@ -35,8 +37,9 @@ public sealed class ExplorerCommand(FileExplorerService fileExplorerService) : A
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath startPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.StartPath));
 		return await fileExplorerService.RunAsync(
-			settings.StartPath,
+			startPath,
 			settings.ShowHidden,
 			settings.ShowSizes,
 			scope.Token).ConfigureAwait(false);
