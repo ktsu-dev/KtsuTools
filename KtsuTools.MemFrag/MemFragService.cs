@@ -103,7 +103,7 @@ public class MemFragService
 
 					Tick();
 
-					using IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
+					IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
 					{
 						ActionInterval = interval,
 						PollingInterval = interval,

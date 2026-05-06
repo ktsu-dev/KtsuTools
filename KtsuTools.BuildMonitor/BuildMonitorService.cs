@@ -58,7 +58,7 @@ public class BuildMonitorService(IGitHubService gitHubService)
 
 				Tick();
 
-				using IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
+				IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
 				{
 					ActionInterval = interval,
 					PollingInterval = interval,
