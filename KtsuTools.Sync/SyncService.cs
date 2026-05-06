@@ -42,7 +42,18 @@ public class SyncService(IProcessService processService)
 	/// <param name="filename">The filename pattern to scan for.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public async Task<int> RunAsync(string path, string filename, CancellationToken ct = default)
+	public Task<int> RunAsync(string path, string filename, CancellationToken ct = default) =>
+		RunAsync(path, [filename], autoPush: false, ct);
+
+	/// <summary>
+	/// Runs the sync operation for the specified path and one or more filename patterns.
+	/// </summary>
+	/// <param name="path">The root path to scan recursively.</param>
+	/// <param name="filenames">One or more filename patterns to scan for.</param>
+	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
+	public async Task<int> RunAsync(string path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default)
 	{
 		ct.ThrowIfCancellationRequested();
 
@@ -52,13 +63,34 @@ public class SyncService(IProcessService processService)
 			return 1;
 		}
 
-		AnsiConsole.MarkupLine($"[bold]Scanning for:[/] {filename.EscapeMarkup()}");
+		List<string> patterns = [.. filenames
+			.Select(f => f?.Trim() ?? string.Empty)
+			.Where(f => !string.IsNullOrEmpty(f))
+			.Distinct(StringComparer.Ordinal)];
+
+		if (patterns.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[red]No filename patterns provided.[/]");
+			return 1;
+		}
+
+		AnsiConsole.MarkupLine($"[bold]Scanning for:[/] {string.Join(", ", patterns).EscapeMarkup()}");
 		AnsiConsole.MarkupLine($"[bold]In:[/] {path.EscapeMarkup()}");
 		AnsiConsole.WriteLine();
 
-		Collection<string> fileEnumeration = Directory.EnumerateFiles(path, filename, SearchOption.AllDirectories)
-			.Where(f => !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(f).AbsoluteDirectoryPath))
-			.ToCollection();
+		HashSet<string> seen = new(StringComparer.Ordinal);
+		Collection<string> fileEnumeration = [];
+		foreach (string pattern in patterns)
+		{
+			foreach (string file in Directory.EnumerateFiles(path, pattern, SearchOption.AllDirectories)
+				.Where(f => !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(f).AbsoluteDirectoryPath)))
+			{
+				if (seen.Add(file))
+				{
+					fileEnumeration.Add(file);
+				}
+			}
+		}
 
 		IEnumerable<string> uniqueFilenames = fileEnumeration.Select(Path.GetFileName).Distinct()!;
 		AnsiConsole.MarkupLine($"[bold]Found matches:[/] {string.Join(", ", uniqueFilenames).EscapeMarkup()}");
@@ -76,7 +108,7 @@ public class SyncService(IProcessService processService)
 
 		await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, path).ConfigureAwait(false);
 
-		await PushToRemoteAsync(commitDirectories, path, ct).ConfigureAwait(false);
+		await PushToRemoteAsync(commitDirectories, path, autoPush, ct).ConfigureAwait(false);
 
 		return 0;
 	}
@@ -344,24 +376,37 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path, CancellationToken ct)
+	private async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path, bool autoPush, CancellationToken ct)
 	{
 		Collection<string> pushDirectories = FindPushableDirectories(commitDirectories, path);
 
-		if (pushDirectories.Count > 0)
+		if (pushDirectories.Count == 0)
 		{
-			AnsiConsole.WriteLine();
-			bool confirmed = await AnsiConsole.ConfirmAsync("Push changes to remote?", defaultValue: false, cancellationToken: ct).ConfigureAwait(false);
+			return;
+		}
 
-			if (confirmed)
-			{
-				AnsiConsole.WriteLine();
-				foreach (string dir in pushDirectories)
-				{
-					ct.ThrowIfCancellationRequested();
-					await PushDirectoryAsync(dir, ct).ConfigureAwait(false);
-				}
-			}
+		AnsiConsole.WriteLine();
+		bool confirmed;
+		if (autoPush)
+		{
+			AnsiConsole.MarkupLine("[dim]--auto-push enabled; all unpushed commits are by KtsuTools, pushing without prompting.[/]");
+			confirmed = true;
+		}
+		else
+		{
+			confirmed = await AnsiConsole.ConfirmAsync("Push changes to remote?", defaultValue: false, cancellationToken: ct).ConfigureAwait(false);
+		}
+
+		if (!confirmed)
+		{
+			return;
+		}
+
+		AnsiConsole.WriteLine();
+		foreach (string dir in pushDirectories)
+		{
+			ct.ThrowIfCancellationRequested();
+			await PushDirectoryAsync(dir, ct).ConfigureAwait(false);
 		}
 	}
 
@@ -403,8 +448,10 @@ public class SyncService(IProcessService processService)
 		if (pull.ExitCode != 0)
 		{
 			string pullMessage = pull.Errors.Count > 0 ? string.Join('\n', pull.Errors) : string.Join('\n', pull.Output);
-			AnsiConsole.MarkupLine($"[yellow]Warning during pull:[/] {pullMessage.EscapeMarkup()}");
-			AnsiConsole.MarkupLine("[dim]Continuing with push...[/]");
+			AnsiConsole.MarkupLine($"[red]Pull failed for:[/] {repoRoot.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[red]{pullMessage.EscapeMarkup()}[/]");
+			AnsiConsole.MarkupLine("[yellow]Skipping push to avoid non-fast-forward; resolve conflicts manually.[/]");
+			return;
 		}
 
 		ProcessResult push = await processService.RunAsync("git", "push", repoRoot, ct).ConfigureAwait(false);

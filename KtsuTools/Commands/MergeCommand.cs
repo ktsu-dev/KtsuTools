@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Merge;
 using Spectre.Console.Cli;
@@ -28,8 +30,9 @@ public sealed class MergeCommand(MergeService mergeService) : AsyncCommand<Merge
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath directory = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Directory));
 		return await mergeService.RunMergeAsync(
-			settings.Directory,
+			directory,
 			settings.Filename,
 			scope.Token).ConfigureAwait(false);
 	}

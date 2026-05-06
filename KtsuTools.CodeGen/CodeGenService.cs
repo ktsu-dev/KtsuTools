@@ -7,6 +7,7 @@ namespace KtsuTools.CodeGen;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Text;
+using ktsu.Semantics.Paths;
 using Spectre.Console;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -275,14 +276,18 @@ public class CodeGenService
 	/// <summary>
 	/// Generates code from a YAML AST definition file.
 	/// </summary>
+	/// <param name="inputFile">Absolute path to the YAML AST input file.</param>
+	/// <param name="language">Target language identifier (e.g. "csharp", "python").</param>
+	/// <param name="outputFile">Optional absolute path to write generated code to. If null, writes to console.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
-	public async Task<int> GenerateAsync(string inputFile, string language, string? outputFile = null, CancellationToken ct = default)
+	public async Task<int> GenerateAsync(AbsoluteFilePath inputFile, string language, AbsoluteFilePath? outputFile = null, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
-		Ensure.NotNull(inputFile);
 		Ensure.NotNull(language);
 
-		string fullPath = Path.GetFullPath(inputFile);
+		string fullPath = inputFile.ToString();
 
 		if (!File.Exists(fullPath))
 		{
@@ -316,7 +321,7 @@ public class CodeGenService
 		// Output
 		if (outputFile is not null)
 		{
-			string outputPath = Path.GetFullPath(outputFile);
+			string outputPath = outputFile.ToString();
 			await File.WriteAllTextAsync(outputPath, generatedCode, ct).ConfigureAwait(false);
 			AnsiConsole.MarkupLine($"[green]Generated code written to: {outputPath.EscapeMarkup()}[/]");
 		}

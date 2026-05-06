@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="ktsu.Semantics.Paths" />
   </ItemGroup>
 
   <ItemGroup>

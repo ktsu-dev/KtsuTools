@@ -10,6 +10,7 @@ using System.Text;
 using DiffPlex;
 using DiffPlex.DiffBuilder;
 using DiffPlex.DiffBuilder.Model;
+using ktsu.Semantics.Paths;
 using Spectre.Console;
 
 /// <summary>
@@ -48,14 +49,17 @@ public class MergeService
 	/// <summary>
 	/// Runs the merge operation for files matching a pattern in a directory.
 	/// </summary>
+	/// <param name="directory">Absolute root directory under which to search.</param>
+	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
-	public async Task<int> RunMergeAsync(string directory, string filename, CancellationToken ct = default)
+	public async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
-		Ensure.NotNull(directory);
 		Ensure.NotNull(filename);
 
-		string fullPath = Path.GetFullPath(directory);
+		string fullPath = directory.ToString();
 
 		if (!Directory.Exists(fullPath))
 		{

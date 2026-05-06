@@ -4,6 +4,7 @@
 
 namespace KtsuTools.FileExplorer;
 
+using ktsu.Semantics.Paths;
 using Spectre.Console;
 
 /// <summary>
@@ -52,11 +53,16 @@ public class FileExplorerService
 	/// <summary>
 	/// Runs the interactive file explorer TUI.
 	/// </summary>
+	/// <param name="startPath">Absolute starting directory.</param>
+	/// <param name="showHidden">Whether to show hidden entries.</param>
+	/// <param name="showSizes">Whether to show file sizes.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
-	public async Task<int> RunAsync(string startPath = ".", bool showHidden = false, bool showSizes = true, CancellationToken ct = default)
+	public async Task<int> RunAsync(AbsoluteDirectoryPath startPath, bool showHidden = false, bool showSizes = true, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
-		string currentPath = Path.GetFullPath(startPath);
+		string currentPath = startPath.ToString();
 
 		if (!Directory.Exists(currentPath))
 		{
