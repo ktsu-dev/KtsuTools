@@ -4,7 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Spectre.Console -->
-    <PackageVersion Include="Spectre.Console" Version="0.50.0" />
+    <PackageVersion Include="Spectre.Console" Version="0.55.2" />
     <PackageVersion Include="Spectre.Console.Cli" Version="0.50.0" />
     <PackageVersion Include="Spectre.Console.Json" Version="0.50.0" />
     <PackageVersion Include="Spectre.Console.Testing" Version="0.50.0" />
