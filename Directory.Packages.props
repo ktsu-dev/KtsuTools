@@ -19,7 +19,7 @@
     <PackageVersion Include="Microsoft.TeamFoundationServer.Client" Version="19.225.1" />
 
     <!-- Diff and Merge -->
-    <PackageVersion Include="DiffPlex" Version="1.8.0" />
+    <PackageVersion Include="DiffPlex" Version="1.9.0" />
 
     <!-- Image Processing -->
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
