@@ -1,1 +1,1 @@
-cli tools developer-tools build-monitor merge codegen packages markdown image
+ktsu tools;cli tools;developer tools;unified cli;tool suite;dotnet global tool;dotnet;csharp
