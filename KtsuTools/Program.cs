@@ -32,6 +32,7 @@ internal static class Program
 		// Feature services
 		services.AddSingleton<MarkdownService>();
 		services.AddSingleton<MergeService>();
+		services.AddSingleton<MergeBatchService>();
 		services.AddSingleton<PackagesService>();
 		services.AddSingleton<SvnMigrateService>();
 		services.AddSingleton<FileExplorerService>();
@@ -57,7 +58,29 @@ internal static class Program
 
 			config.AddCommand<MergeCommand>("merge")
 				.WithDescription("N-way iterative file merge with interactive conflict resolution")
-				.WithExample("merge", "./repos", "*.yml");
+				.WithExample("merge", "./repos", "*.yml")
+				.WithExample("merge", "--batch", "editorconfig-sync");
+
+			config.AddBranch("merge-batch", batch =>
+			{
+				batch.SetDescription("Manage saved merge batches");
+
+				batch.AddCommand<MergeBatchSaveCommand>("save")
+					.WithDescription("Save a named batch of merge inputs")
+					.WithExample("merge-batch", "save", "editorconfig-sync", "./repos", ".editorconfig");
+
+				batch.AddCommand<MergeBatchListCommand>("list")
+					.WithDescription("List all saved merge batches")
+					.WithExample("merge-batch", "list");
+
+				batch.AddCommand<MergeBatchShowCommand>("show")
+					.WithDescription("Show details for a saved batch")
+					.WithExample("merge-batch", "show", "editorconfig-sync");
+
+				batch.AddCommand<MergeBatchDeleteCommand>("delete")
+					.WithDescription("Delete a saved batch")
+					.WithExample("merge-batch", "delete", "editorconfig-sync");
+			});
 
 			config.AddCommand<CodeGenCommand>("codegen")
 				.WithDescription("Generate code from AST/YAML definitions")
