@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using ktsu.IntervalAction;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
@@ -78,33 +79,46 @@ public class MemFragService
 			AnsiConsole.WriteLine();
 
 			IRenderable initial = new Text("Loading...");
+			Process processCapture = process;
 			await AnsiConsole.Live(initial)
 				.AutoClear(true)
 				.StartAsync(async ctx =>
 				{
-					while (!ct.IsCancellationRequested)
+					using CancellationTokenSource exitedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+					TimeSpan interval = TimeSpan.FromMilliseconds(refreshIntervalMs);
+
+					void Tick()
 					{
 						try
 						{
-							process.Refresh();
-							Table table = BuildMemoryTable(process);
-							ctx.UpdateTarget(table);
+							processCapture.Refresh();
+							ctx.UpdateTarget(BuildMemoryTable(processCapture));
 						}
 						catch (InvalidOperationException)
 						{
 							ctx.UpdateTarget(new Markup("[red]Process has exited.[/]"));
-							break;
-						}
-
-						try
-						{
-							await Task.Delay(refreshIntervalMs, ct).ConfigureAwait(false);
-						}
-						catch (OperationCanceledException)
-						{
-							break;
+							exitedCts.Cancel();
 						}
 					}
+
+					Tick();
+
+					IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
+					{
+						ActionInterval = interval,
+						PollingInterval = interval,
+						Action = Tick,
+					});
+
+					try
+					{
+						await Task.Delay(Timeout.InfiniteTimeSpan, exitedCts.Token).ConfigureAwait(false);
+					}
+					catch (OperationCanceledException)
+					{
+					}
+
+					ticker.Stop();
 				}).ConfigureAwait(false);
 		}
 

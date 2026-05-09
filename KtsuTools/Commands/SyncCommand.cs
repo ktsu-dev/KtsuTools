@@ -38,7 +38,9 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 		/// </summary>
 		[CommandOption("--filename <FILENAME>")]
 		[Description("Filename pattern to scan for. Repeat the flag or pass a comma-separated list to sync several files in one run.")]
+#pragma warning disable CA1819 // Properties should not return arrays - Spectre.Console.Cli binds multi-value options via T[] only.
 		public string[] Filename { get; init; } = [];
+#pragma warning restore CA1819
 
 		/// <summary>
 		/// Gets a value indicating whether to push without prompting when all unpushed commits were authored by KtsuTools.

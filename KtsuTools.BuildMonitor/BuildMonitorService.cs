@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Humanizer;
+using ktsu.IntervalAction;
 using KtsuTools.Core.Services.GitHub;
 using Spectre.Console;
 using Spectre.Console.Rendering;
@@ -37,31 +38,42 @@ public class BuildMonitorService(IGitHubService gitHubService)
 			.AutoClear(true)
 			.StartAsync(async ctx =>
 			{
-				while (!ct.IsCancellationRequested)
+				TimeSpan interval = TimeSpan.FromSeconds(refreshIntervalSeconds);
+
+				void Tick()
 				{
 					try
 					{
-						Table table = await BuildDashboardTableAsync(owner, ct).ConfigureAwait(false);
+						Table table = BuildDashboardTableAsync(owner, ct).GetAwaiter().GetResult();
 						ctx.UpdateTarget(table);
 					}
 					catch (OperationCanceledException)
 					{
-						break;
 					}
 					catch (HttpRequestException ex)
 					{
 						ctx.UpdateTarget(new Markup($"[red]API Error: {ex.Message.EscapeMarkup()}[/]"));
 					}
-
-					try
-					{
-						await Task.Delay(TimeSpan.FromSeconds(refreshIntervalSeconds), ct).ConfigureAwait(false);
-					}
-					catch (OperationCanceledException)
-					{
-						break;
-					}
 				}
+
+				Tick();
+
+				IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
+				{
+					ActionInterval = interval,
+					PollingInterval = interval,
+					Action = Tick,
+				});
+
+				try
+				{
+					await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+				}
+				catch (OperationCanceledException)
+				{
+				}
+
+				ticker.Stop();
 			}).ConfigureAwait(false);
 	}
 

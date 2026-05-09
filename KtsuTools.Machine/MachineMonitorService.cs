@@ -10,6 +10,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using ktsu.IntervalAction;
 using LibreHardwareMonitor.Hardware;
 using Spectre.Console;
 using Spectre.Console.Rendering;
@@ -48,31 +49,33 @@ public class MachineMonitorService
 			AnsiConsole.WriteLine();
 
 			IRenderable initial = new Text("Loading hardware sensors...");
+			Computer computerCapture = computer;
 			await AnsiConsole.Live(initial)
 				.AutoClear(true)
 				.StartAsync(async ctx =>
 				{
-					while (!ct.IsCancellationRequested)
-					{
-						try
-						{
-							Table dashboard = BuildDashboard(computer);
-							ctx.UpdateTarget(dashboard);
-						}
-						catch (OperationCanceledException)
-						{
-							break;
-						}
+					TimeSpan interval = TimeSpan.FromMilliseconds(refreshIntervalMs);
 
-						try
-						{
-							await Task.Delay(refreshIntervalMs, ct).ConfigureAwait(false);
-						}
-						catch (OperationCanceledException)
-						{
-							break;
-						}
+					void Tick() => ctx.UpdateTarget(BuildDashboard(computerCapture));
+
+					Tick();
+
+					IntervalAction ticker = IntervalAction.Start(new IntervalActionOptions
+					{
+						ActionInterval = interval,
+						PollingInterval = interval,
+						Action = Tick,
+					});
+
+					try
+					{
+						await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
 					}
+					catch (OperationCanceledException)
+					{
+					}
+
+					ticker.Stop();
 				}).ConfigureAwait(false);
 		}
 		finally

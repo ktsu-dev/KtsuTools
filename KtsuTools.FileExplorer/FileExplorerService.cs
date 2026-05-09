@@ -62,6 +62,8 @@ public class FileExplorerService
 	public async Task<int> RunAsync(AbsoluteDirectoryPath startPath, bool showHidden = false, bool showSizes = true, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
+		Ensure.NotNull(startPath);
+
 		string currentPath = startPath.ToString();
 
 		if (!Directory.Exists(currentPath))
