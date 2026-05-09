@@ -7,6 +7,8 @@ namespace KtsuTools.Image;
 using System.Globalization;
 using System.IO;
 
+using ktsu.Semantics.Paths;
+
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
@@ -31,17 +33,22 @@ public static class ImageService
 	/// <param name="padding">Padding in pixels added around the content. Must be less than size / 2.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>The number of successfully processed files.</returns>
-	public static async Task<int> ProcessAsync(string inputPath, string outputPath, string color = "#FFFFFF", int size = 128, int padding = 0, CancellationToken ct = default)
+	public static async Task<int> ProcessAsync(AbsoluteDirectoryPath inputPath, AbsoluteDirectoryPath outputPath, string color = "#FFFFFF", int size = 128, int padding = 0, CancellationToken ct = default)
 	{
+		Ensure.NotNull(inputPath);
+		Ensure.NotNull(outputPath);
 		Ensure.NotNull(color);
 
-		if (!ValidateArguments(inputPath, outputPath, size, padding))
+		string inputDir = inputPath.ToString();
+		string outputDir = outputPath.ToString();
+
+		if (!ValidateArguments(inputDir, outputDir, size, padding))
 		{
 			return 0;
 		}
 
 		Rgba32 targetColor = ParseHexColor(color);
-		string[] files = Directory.GetFiles(inputPath);
+		string[] files = Directory.GetFiles(inputDir);
 		int processedCount = 0;
 
 		await AnsiConsole.Progress()
@@ -58,7 +65,7 @@ public static class ImageService
 				foreach (string file in files)
 				{
 					ct.ThrowIfCancellationRequested();
-					bool succeeded = ProcessFileWithErrorHandling(file, outputPath, targetColor, size, padding);
+					bool succeeded = ProcessFileWithErrorHandling(file, outputDir, targetColor, size, padding);
 
 					if (succeeded)
 					{

@@ -7,6 +7,7 @@ namespace KtsuTools.Markdown;
 using Spectre.Console;
 
 using ktsu.Frontmatter;
+using ktsu.Semantics.Paths;
 
 /// <summary>
 /// Service for cleaning and linting markdown files.
@@ -22,10 +23,11 @@ public class MarkdownService
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>The number of files that were modified.</returns>
 #pragma warning disable CA1822, S2325 // Mark members as static - instance method required for DI injection
-	public async Task<int> CleanAsync(string directoryPath, bool applyLinting, bool standardizeLineEndings, CancellationToken ct)
+	public async Task<int> CleanAsync(AbsoluteDirectoryPath directoryPath, bool applyLinting, bool standardizeLineEndings, CancellationToken ct)
 #pragma warning restore CA1822, S2325
 	{
-		string fullPath = Path.GetFullPath(directoryPath);
+		Ensure.NotNull(directoryPath);
+		string fullPath = directoryPath.ToString();
 
 		if (!Directory.Exists(fullPath))
 		{
@@ -78,10 +80,11 @@ public class MarkdownService
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>The number of files that were modified.</returns>
 #pragma warning disable CA1822, S2325 // Mark members as static - instance method required for DI injection
-	public async Task<int> LintAsync(string directoryPath, CancellationToken ct)
+	public async Task<int> LintAsync(AbsoluteDirectoryPath directoryPath, CancellationToken ct)
 #pragma warning restore CA1822, S2325
 	{
-		string fullPath = Path.GetFullPath(directoryPath);
+		Ensure.NotNull(directoryPath);
+		string fullPath = directoryPath.ToString();
 
 		if (!Directory.Exists(fullPath))
 		{

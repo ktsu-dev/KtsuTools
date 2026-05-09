@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Repo;
 using Spectre.Console.Cli;
@@ -25,8 +27,9 @@ public sealed class RepoPullCommand(RepoService repoService) : AsyncCommand<Repo
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 		return await repoService.PullAllAsync(
-			settings.Path,
+			path,
 			scope.Token).ConfigureAwait(false);
 	}
 }

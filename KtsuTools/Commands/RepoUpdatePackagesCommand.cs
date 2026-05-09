@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Repo;
 using Spectre.Console.Cli;
@@ -30,8 +32,9 @@ public sealed class RepoUpdatePackagesCommand(RepoService repoService) : AsyncCo
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 		return await repoService.UpdatePackagesAsync(
-			settings.Path,
+			path,
 			settings.IncludePrerelease,
 			scope.Token).ConfigureAwait(false);
 	}

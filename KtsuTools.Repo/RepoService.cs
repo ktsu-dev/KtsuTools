@@ -6,6 +6,7 @@ namespace KtsuTools.Repo;
 
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
 using Spectre.Console;
@@ -38,12 +39,12 @@ public class RepoService(IGitService gitService, IProcessService processService)
 	/// <summary>
 	/// Discovers git repositories in the given directory.
 	/// </summary>
-	public async Task<IReadOnlyList<string>> DiscoverRepositoriesAsync(string path, CancellationToken ct = default)
+	public async Task<IReadOnlyList<string>> DiscoverRepositoriesAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)
 	{
 		_ = gitService;
 		Ensure.NotNull(path);
 
-		string fullPath = Path.GetFullPath(path);
+		string fullPath = path.ToString();
 
 		if (!Directory.Exists(fullPath))
 		{
@@ -85,12 +86,12 @@ public class RepoService(IGitService gitService, IProcessService processService)
 	/// <summary>
 	/// Builds and tests all solutions found in repositories under the given path.
 	/// </summary>
-	public async Task<int> BuildAndTestAsync(string path, bool parallel = false, CancellationToken ct = default)
+	public async Task<int> BuildAndTestAsync(AbsoluteDirectoryPath path, bool parallel = false, CancellationToken ct = default)
 	{
 		_ = parallel;
 		Ensure.NotNull(path);
 
-		string fullPath = Path.GetFullPath(path);
+		string fullPath = path.ToString();
 		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
 
 		if (solutionFiles.Count == 0)
@@ -157,12 +158,12 @@ public class RepoService(IGitService gitService, IProcessService processService)
 	/// <summary>
 	/// Pulls all repositories under the given path.
 	/// </summary>
-	public async Task<int> PullAllAsync(string path, CancellationToken ct = default)
+	public async Task<int> PullAllAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)
 	{
 		_ = gitService;
 		Ensure.NotNull(path);
 
-		string fullPath = Path.GetFullPath(path);
+		string fullPath = path.ToString();
 		ConcurrentBag<string> repos = [];
 		DiscoverGitReposRecursive(fullPath, repos);
 
@@ -223,11 +224,11 @@ public class RepoService(IGitService gitService, IProcessService processService)
 	/// <summary>
 	/// Updates NuGet packages in all projects under the given path.
 	/// </summary>
-	public async Task<int> UpdatePackagesAsync(string path, bool includePrerelease = false, CancellationToken ct = default)
+	public async Task<int> UpdatePackagesAsync(AbsoluteDirectoryPath path, bool includePrerelease = false, CancellationToken ct = default)
 	{
 		Ensure.NotNull(path);
 
-		string fullPath = Path.GetFullPath(path);
+		string fullPath = path.ToString();
 		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
 
 		if (solutionFiles.Count == 0)

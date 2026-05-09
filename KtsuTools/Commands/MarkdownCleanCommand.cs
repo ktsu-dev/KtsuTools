@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Markdown;
 using Spectre.Console;
@@ -37,8 +39,9 @@ public sealed class MarkdownCleanCommand(MarkdownService markdownService) : Asyn
 		AnsiConsole.MarkupLine("[bold]Markdown Clean[/]");
 
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 		int modifiedCount = await markdownService.CleanAsync(
-			settings.Path,
+			path,
 			settings.ApplyLinting,
 			settings.StandardizeLineEndings,
 			scope.Token).ConfigureAwait(false);

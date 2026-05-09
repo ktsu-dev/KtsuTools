@@ -7,8 +7,10 @@ namespace KtsuTools.Commands;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Sync;
 using Spectre.Console;
@@ -67,7 +69,8 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 		}
 
 		using CtrlCScope scope = new();
-		return await syncService.RunAsync(path, filenames, settings.AutoPush, scope.Token).ConfigureAwait(false);
+		AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(path));
+		return await syncService.RunAsync(rootPath, filenames, settings.AutoPush, scope.Token).ConfigureAwait(false);
 	}
 
 	private static List<string> ExpandFilenames(IEnumerable<string> raw) =>

@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Image;
 using Spectre.Console;
@@ -44,9 +46,11 @@ public sealed class ImageProcessCommand : AsyncCommand<ImageProcessCommand.Setti
 		AnsiConsole.MarkupLine("[bold]Image Process[/]");
 
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath inputPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.InputPath));
+		AbsoluteDirectoryPath outputPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.OutputPath));
 		int processed = await ImageService.ProcessAsync(
-			settings.InputPath,
-			settings.OutputPath,
+			inputPath,
+			outputPath,
 			settings.Color,
 			settings.Size,
 			settings.Padding,

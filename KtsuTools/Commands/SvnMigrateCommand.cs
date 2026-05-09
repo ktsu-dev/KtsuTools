@@ -6,6 +6,8 @@ namespace KtsuTools.Commands;
 
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.SvnMigrate;
 using Spectre.Console.Cli;
@@ -39,10 +41,14 @@ public sealed class SvnMigrateCommand(SvnMigrateService svnMigrateService) : Asy
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath targetPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.TargetPath));
+		AbsoluteFilePath? authorsFile = string.IsNullOrWhiteSpace(settings.AuthorsFile)
+			? null
+			: AbsoluteFilePath.Create<AbsoluteFilePath>(Path.GetFullPath(settings.AuthorsFile));
 		return await svnMigrateService.MigrateAsync(
 			new Uri(settings.SvnUrl),
-			settings.TargetPath,
-			settings.AuthorsFile,
+			targetPath,
+			authorsFile,
 			settings.PreserveEmptyDirs,
 			scope.Token).ConfigureAwait(false);
 	}
