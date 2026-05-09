@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Packages;
 using Spectre.Console.Cli;
@@ -39,8 +41,21 @@ public sealed class PackagesUpdateCommand(PackagesService packagesService) : Asy
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		string fullPath = Path.GetFullPath(settings.Path);
+		if (File.Exists(fullPath))
+		{
+			AbsoluteFilePath filePath = AbsoluteFilePath.Create<AbsoluteFilePath>(fullPath);
+			return await packagesService.UpdateAsync(
+				filePath,
+				settings.WhatIf,
+				settings.IncludePrerelease,
+				settings.Source,
+				scope.Token).ConfigureAwait(false);
+		}
+
+		AbsoluteDirectoryPath dirPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(fullPath);
 		return await packagesService.UpdateAsync(
-			settings.Path,
+			dirPath,
 			settings.WhatIf,
 			settings.IncludePrerelease,
 			settings.Source,

@@ -7,6 +7,7 @@ namespace KtsuTools.Packages;
 using System.Net.Http;
 using System.Text.Json;
 using System.Xml.Linq;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Process;
 using Spectre.Console;
 
@@ -21,14 +22,26 @@ public class PackagesService(IProcessService processService)
 	private static readonly HttpClient SharedHttpClient = new();
 
 	/// <summary>
-	/// Updates NuGet packages in projects at the specified path.
+	/// Updates NuGet packages in all .csproj files under the specified directory.
 	/// </summary>
-	public async Task<int> UpdateAsync(string path, bool whatIf = false, bool includePrerelease = false, string source = "nuget", CancellationToken ct = default)
+	public Task<int> UpdateAsync(AbsoluteDirectoryPath path, bool whatIf = false, bool includePrerelease = false, string source = "nuget", CancellationToken ct = default)
+	{
+		Ensure.NotNull(path);
+		return UpdateInternalAsync(path.ToString(), whatIf, includePrerelease, source, ct);
+	}
+
+	/// <summary>
+	/// Updates NuGet packages in a single .csproj file.
+	/// </summary>
+	public Task<int> UpdateAsync(AbsoluteFilePath path, bool whatIf = false, bool includePrerelease = false, string source = "nuget", CancellationToken ct = default)
+	{
+		Ensure.NotNull(path);
+		return UpdateInternalAsync(path.ToString(), whatIf, includePrerelease, source, ct);
+	}
+
+	private async Task<int> UpdateInternalAsync(string fullPath, bool whatIf, bool includePrerelease, string source, CancellationToken ct)
 	{
 		_ = processService;
-		Ensure.NotNull(path);
-
-		string fullPath = Path.GetFullPath(path);
 
 		if (!Directory.Exists(fullPath) && !File.Exists(fullPath))
 		{
@@ -77,12 +90,12 @@ public class PackagesService(IProcessService processService)
 	/// <summary>
 	/// Migrates projects to Central Package Management.
 	/// </summary>
-	public async Task<int> MigrateToCpmAsync(string path, CancellationToken ct = default)
+	public async Task<int> MigrateToCpmAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)
 	{
 		_ = processService;
 		Ensure.NotNull(path);
 
-		string fullPath = Path.GetFullPath(path);
+		string fullPath = path.ToString();
 
 		if (!Directory.Exists(fullPath))
 		{

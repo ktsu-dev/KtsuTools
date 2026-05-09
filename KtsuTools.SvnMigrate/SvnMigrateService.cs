@@ -4,6 +4,7 @@
 
 namespace KtsuTools.SvnMigrate;
 
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Process;
 using Spectre.Console;
 
@@ -17,15 +18,16 @@ public class SvnMigrateService(IProcessService processService)
 	/// <summary>
 	/// Migrates an SVN repository to Git.
 	/// </summary>
-	public async Task<int> MigrateAsync(Uri svnUrl, string targetPath, string? authorsFile = null, bool preserveEmptyDirs = true, CancellationToken ct = default)
+	public async Task<int> MigrateAsync(Uri svnUrl, AbsoluteDirectoryPath targetPath, AbsoluteFilePath? authorsFile = null, bool preserveEmptyDirs = true, CancellationToken ct = default)
 	{
 		Ensure.NotNull(svnUrl);
 		Ensure.NotNull(targetPath);
 
-		string gitRepoPath = Path.GetFullPath(targetPath);
+		string gitRepoPath = targetPath.ToString();
+		string? authorsFilePath = authorsFile?.ToString();
 
 		// Validate prerequisites
-		List<string> errors = await ValidateAsync(svnUrl, gitRepoPath, authorsFile, ct).ConfigureAwait(false);
+		List<string> errors = await ValidateAsync(svnUrl, gitRepoPath, authorsFilePath, ct).ConfigureAwait(false);
 		if (errors.Count > 0)
 		{
 			foreach (string error in errors)
@@ -53,7 +55,7 @@ public class SvnMigrateService(IProcessService processService)
 
 					// Phase 1: Clone SVN repository
 					task.Description = "[green]Cloning SVN repository with git-svn...[/]";
-					await CloneSvnRepositoryAsync(svnUrl.ToString(), gitRepoPath, authorsFile, preserveEmptyDirs, ct).ConfigureAwait(false);
+					await CloneSvnRepositoryAsync(svnUrl.ToString(), gitRepoPath, authorsFilePath, preserveEmptyDirs, ct).ConfigureAwait(false);
 					task.Value = 50;
 
 					// Phase 2: Cleanup references

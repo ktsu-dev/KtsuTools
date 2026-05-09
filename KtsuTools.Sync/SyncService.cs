@@ -42,7 +42,7 @@ public class SyncService(IProcessService processService)
 	/// <param name="filename">The filename pattern to scan for.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public Task<int> RunAsync(string path, string filename, CancellationToken ct = default) =>
+	public Task<int> RunAsync(AbsoluteDirectoryPath path, string filename, CancellationToken ct = default) =>
 		RunAsync(path, [filename], autoPush: false, ct);
 
 	/// <summary>
@@ -53,13 +53,16 @@ public class SyncService(IProcessService processService)
 	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public async Task<int> RunAsync(string path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default)
+	public async Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default)
 	{
+		Ensure.NotNull(path);
 		ct.ThrowIfCancellationRequested();
 
-		if (!Directory.Exists(path))
+		string pathString = path.ToString();
+
+		if (!Directory.Exists(pathString))
 		{
-			AnsiConsole.MarkupLine($"[red]Path does not exist: {path.EscapeMarkup()}[/]");
+			AnsiConsole.MarkupLine($"[red]Path does not exist: {pathString.EscapeMarkup()}[/]");
 			return 1;
 		}
 
@@ -75,14 +78,14 @@ public class SyncService(IProcessService processService)
 		}
 
 		AnsiConsole.MarkupLine($"[bold]Scanning for:[/] {string.Join(", ", patterns).EscapeMarkup()}");
-		AnsiConsole.MarkupLine($"[bold]In:[/] {path.EscapeMarkup()}");
+		AnsiConsole.MarkupLine($"[bold]In:[/] {pathString.EscapeMarkup()}");
 		AnsiConsole.WriteLine();
 
 		HashSet<string> seen = new(StringComparer.Ordinal);
 		Collection<string> fileEnumeration = [];
 		foreach (string pattern in patterns)
 		{
-			foreach (string file in Directory.EnumerateFiles(path, pattern, SearchOption.AllDirectories)
+			foreach (string file in Directory.EnumerateFiles(pathString, pattern, SearchOption.AllDirectories)
 				.Where(f => !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(f).AbsoluteDirectoryPath)))
 			{
 				if (seen.Add(file))
@@ -103,12 +106,12 @@ public class SyncService(IProcessService processService)
 		foreach (string uniqueFilename in uniqueFilenames)
 		{
 			ct.ThrowIfCancellationRequested();
-			await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, path, commitDirectories, ct).ConfigureAwait(false);
+			await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, pathString, commitDirectories, ct).ConfigureAwait(false);
 		}
 
-		await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, path).ConfigureAwait(false);
+		await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, pathString).ConfigureAwait(false);
 
-		await PushToRemoteAsync(commitDirectories, path, autoPush, ct).ConfigureAwait(false);
+		await PushToRemoteAsync(commitDirectories, pathString, autoPush, ct).ConfigureAwait(false);
 
 		return 0;
 	}

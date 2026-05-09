@@ -11,6 +11,7 @@
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="SixLabors.ImageSharp" />
     <PackageReference Include="ktsu.Extensions" />
+    <PackageReference Include="ktsu.Semantics.Paths" />
   </ItemGroup>
 
   <ItemGroup>

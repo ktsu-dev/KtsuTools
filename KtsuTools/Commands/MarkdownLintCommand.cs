@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Markdown;
 using Spectre.Console;
@@ -27,8 +29,9 @@ public sealed class MarkdownLintCommand(MarkdownService markdownService) : Async
 		AnsiConsole.MarkupLine("[bold]Markdown Lint[/]");
 
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 		int modifiedCount = await markdownService.LintAsync(
-			settings.Path,
+			path,
 			scope.Token).ConfigureAwait(false);
 
 		AnsiConsole.MarkupLine($"[bold green]Done.[/] {modifiedCount} file(s) linted.");

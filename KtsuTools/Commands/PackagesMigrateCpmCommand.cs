@@ -5,6 +5,8 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Packages;
 using Spectre.Console.Cli;
@@ -24,8 +26,9 @@ public sealed class PackagesMigrateCpmCommand(PackagesService packagesService) :
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
+		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 		return await packagesService.MigrateToCpmAsync(
-			settings.Path,
+			path,
 			scope.Token).ConfigureAwait(false);
 	}
 }

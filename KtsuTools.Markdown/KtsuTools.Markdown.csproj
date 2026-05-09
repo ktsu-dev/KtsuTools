@@ -12,6 +12,7 @@
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="ktsu.Frontmatter" />
     <PackageReference Include="ktsu.Extensions" />
+    <PackageReference Include="ktsu.Semantics.Paths" />
   </ItemGroup>
 
   <ItemGroup>

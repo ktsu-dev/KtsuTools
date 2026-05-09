@@ -5,6 +5,7 @@
 namespace KtsuTools.Test;
 
 using System.IO;
+using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Repo;
@@ -18,7 +19,8 @@ public class RepoServiceTests
 	{
 		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
 		string missing = Path.Combine(Path.GetTempPath(), $"ktsu_missing_{Guid.NewGuid():N}");
-		IReadOnlyList<string> result = await service.DiscoverRepositoriesAsync(missing).ConfigureAwait(false);
+		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+		IReadOnlyList<string> result = await service.DiscoverRepositoriesAsync(missingPath).ConfigureAwait(false);
 		Assert.AreEqual(0, result.Count);
 	}
 
@@ -35,7 +37,8 @@ public class RepoServiceTests
 		try
 		{
 			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
-			IReadOnlyList<string> result = await service.DiscoverRepositoriesAsync(root).ConfigureAwait(false);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+			IReadOnlyList<string> result = await service.DiscoverRepositoriesAsync(rootPath).ConfigureAwait(false);
 			Assert.AreEqual(2, result.Count, "Should find exactly the two .git directories.");
 			CollectionAssert.AreEquivalent(
 				new[] { repoA, repoB },
