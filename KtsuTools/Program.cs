@@ -34,6 +34,7 @@ internal static class Program
 		services.AddSingleton<MarkdownService>();
 		services.AddSingleton<MergeService>();
 		services.AddSingleton<MergeBatchService>();
+		services.AddSingleton<MergeHistoryService>();
 		services.AddSingleton<PackagesService>();
 		services.AddSingleton<SvnMigrateService>();
 		services.AddSingleton<FileExplorerService>();
@@ -83,6 +84,11 @@ internal static class Program
 					.WithDescription("Delete a saved batch")
 					.WithExample("merge-batch", "delete", "editorconfig-sync");
 			});
+
+			config.AddCommand<MergeHistoryCommand>("merge-history")
+				.WithDescription("Show recent ktsu merge runs (most-recent first); --clear truncates")
+				.WithExample("merge-history")
+				.WithExample("merge-history", "--clear");
 
 			config.AddCommand<CodeGenCommand>("codegen")
 				.WithDescription("Generate code from AST/YAML definitions")
