@@ -31,6 +31,11 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 		[Description("Run a saved batch by name (use 'merge-batch save' to create one)")]
 		public string? BatchName { get; init; }
 
+		[CommandOption("--diff-style <STYLE>")]
+		[Description("How to render conflict diffs: side-by-side (default) or git")]
+		[DefaultValue("side-by-side")]
+		public string DiffStyle { get; init; } = "side-by-side";
+
 		public override ValidationResult Validate()
 		{
 			bool hasDirectory = !string.IsNullOrWhiteSpace(Directory);
@@ -54,6 +59,11 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 				return ValidationResult.Error("Provide either <directory> <filename> or --batch <name>.");
 			}
 
+			if (!DiffStyleParser.TryParse(DiffStyle, out _))
+			{
+				return ValidationResult.Error($"Unknown --diff-style '{DiffStyle}'. Expected 'side-by-side' or 'git'.");
+			}
+
 			return ValidationResult.Success();
 		}
 	}
@@ -65,6 +75,7 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 
 		string directoryArg;
 		string filenameArg;
+		DiffStyle diffStyle;
 
 		if (!string.IsNullOrWhiteSpace(settings.BatchName))
 		{
@@ -77,18 +88,28 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 
 			directoryArg = entry.Directory;
 			filenameArg = entry.Filename;
+
+			// Batch's saved DiffStyle wins when present; otherwise fall back to the flag (or its default).
+			if (!DiffStyleParser.TryParse(entry.DiffStyle ?? settings.DiffStyle, out diffStyle))
+			{
+				AnsiConsole.MarkupLine($"[red]Error: batch '{settings.BatchName.EscapeMarkup()}' has unknown DiffStyle '{(entry.DiffStyle ?? string.Empty).EscapeMarkup()}'.[/]");
+				return 1;
+			}
+
 			AnsiConsole.MarkupLine($"[dim]Running batch '{settings.BatchName.EscapeMarkup()}': {directoryArg.EscapeMarkup()} / {filenameArg.EscapeMarkup()}[/]");
 		}
 		else
 		{
 			directoryArg = settings.Directory!;
 			filenameArg = settings.Filename!;
+			DiffStyleParser.TryParse(settings.DiffStyle, out diffStyle);
 		}
 
 		AbsoluteDirectoryPath directory = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(directoryArg));
 		return await mergeService.RunMergeAsync(
 			directory,
 			filenameArg,
+			diffStyle,
 			scope.Token).ConfigureAwait(false);
 	}
 }

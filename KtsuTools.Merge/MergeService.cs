@@ -42,6 +42,18 @@ public enum BlockChoice
 }
 
 /// <summary>
+/// Diff rendering style for conflict display.
+/// </summary>
+public enum DiffStyle
+{
+	/// <summary>DiffPlex side-by-side renderer (default; preserves prior behaviour).</summary>
+	SideBySide,
+
+	/// <summary>Git-style unified diff via DiffPlex UnifiedDiffBuilder.</summary>
+	Git,
+}
+
+/// <summary>
 /// Service for N-way iterative file merging with interactive conflict resolution.
 /// </summary>
 public class MergeService
@@ -51,10 +63,11 @@ public class MergeService
 	/// </summary>
 	/// <param name="directory">Absolute root directory under which to search.</param>
 	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="diffStyle">How to render conflict diffs.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
-	public async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, CancellationToken ct = default)
+	public async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, DiffStyle diffStyle = DiffStyle.SideBySide, CancellationToken ct = default)
 #pragma warning restore CA1822
 	{
 		Ensure.NotNull(directory);
@@ -113,7 +126,7 @@ public class MergeService
 			string content2 = await File.ReadAllTextAsync(bestPair.FilePath2, ct).ConfigureAwait(false);
 
 			// Show diff
-			ShowDiff(content1, content2, bestPair.FilePath1, bestPair.FilePath2);
+			ShowDiff(content1, content2, bestPair.FilePath1, bestPair.FilePath2, diffStyle);
 
 			// Interactive merge
 			string mergedContent = InteractiveMerge(content1, content2);
@@ -235,15 +248,34 @@ public class MergeService
 		return Math.Max(0.0, (double)unchangedLines / totalLines);
 	}
 
-	private static void ShowDiff(string content1, string content2, string path1, string path2)
+	private const int DiffLineCap = 50;
+
+	private static void ShowDiff(string content1, string content2, string path1, string path2, DiffStyle style)
+	{
+		AnsiConsole.MarkupLine($"[dim]--- {Path.GetFileName(path1).EscapeMarkup()}[/]");
+		AnsiConsole.MarkupLine($"[dim]+++ {Path.GetFileName(path2).EscapeMarkup()}[/]");
+
+		switch (style)
+		{
+			case DiffStyle.Git:
+				ShowUnifiedDiff(content1, content2);
+				break;
+			case DiffStyle.SideBySide:
+			default:
+				ShowSideBySideDiff(content1, content2);
+				break;
+		}
+
+		AnsiConsole.WriteLine();
+	}
+
+	private static void ShowSideBySideDiff(string content1, string content2)
 	{
 		SideBySideDiffBuilder diffBuilder = new(new Differ());
 		SideBySideDiffModel diff = diffBuilder.BuildDiffModel(content1, content2);
 
-		AnsiConsole.MarkupLine($"[dim]--- {Path.GetFileName(path1).EscapeMarkup()}[/]");
-		AnsiConsole.MarkupLine($"[dim]+++ {Path.GetFileName(path2).EscapeMarkup()}[/]");
-
-		int maxLines = Math.Min(50, Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count));
+		int total = Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count);
+		int maxLines = Math.Min(DiffLineCap, total);
 
 		for (int i = 0; i < maxLines; i++)
 		{
@@ -268,12 +300,46 @@ public class MergeService
 			}
 		}
 
-		if (Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count) > maxLines)
+		if (total > maxLines)
 		{
 			AnsiConsole.MarkupLine("[dim]... (truncated)[/]");
 		}
+	}
 
-		AnsiConsole.WriteLine();
+	private static void ShowUnifiedDiff(string content1, string content2)
+	{
+		DiffPaneModel diff = InlineDiffBuilder.Diff(content1, content2);
+
+		int rendered = 0;
+		foreach (DiffPiece line in diff.Lines)
+		{
+			if (rendered >= DiffLineCap)
+			{
+				AnsiConsole.MarkupLine("[dim]... (truncated)[/]");
+				return;
+			}
+
+			string text = line.Text?.EscapeMarkup() ?? string.Empty;
+			switch (line.Type)
+			{
+				case ChangeType.Inserted:
+					AnsiConsole.MarkupLine($"[green]+{text}[/]");
+					break;
+				case ChangeType.Deleted:
+					AnsiConsole.MarkupLine($"[red]-{text}[/]");
+					break;
+				case ChangeType.Modified:
+					AnsiConsole.MarkupLine($"[red]-{text}[/]");
+					break;
+				case ChangeType.Unchanged:
+					AnsiConsole.MarkupLine($"[dim] {text}[/]");
+					break;
+				case ChangeType.Imaginary:
+					continue;
+			}
+
+			rendered++;
+		}
 	}
 
 	private static string InteractiveMerge(string content1, string content2)
