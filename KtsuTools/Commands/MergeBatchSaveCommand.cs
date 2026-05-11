@@ -29,8 +29,18 @@ public sealed class MergeBatchSaveCommand(MergeBatchService batchService) : Asyn
 		public required string Filename { get; init; }
 
 		[CommandOption("--diff-style <STYLE>")]
-		[Description("Diff style to use when running this batch (reserved for future use)")]
+		[Description("Diff style to apply when this batch is run: side-by-side (default) or git")]
 		public string? DiffStyle { get; init; }
+
+		public override ValidationResult Validate()
+		{
+			if (DiffStyle is not null && !DiffStyleParser.TryParse(DiffStyle, out _))
+			{
+				return ValidationResult.Error($"Unknown --diff-style '{DiffStyle}'. Expected 'side-by-side' or 'git'.");
+			}
+
+			return ValidationResult.Success();
+		}
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
@@ -38,11 +48,17 @@ public sealed class MergeBatchSaveCommand(MergeBatchService batchService) : Asyn
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
 
+		string? canonicalDiffStyle = null;
+		if (settings.DiffStyle is not null && DiffStyleParser.TryParse(settings.DiffStyle, out DiffStyle parsed))
+		{
+			canonicalDiffStyle = DiffStyleParser.ToCanonicalString(parsed);
+		}
+
 		MergeBatchEntry entry = new()
 		{
 			Directory = settings.Directory,
 			Filename = settings.Filename,
-			DiffStyle = settings.DiffStyle,
+			DiffStyle = canonicalDiffStyle,
 		};
 
 		await batchService.SaveAsync(settings.Name, entry, scope.Token).ConfigureAwait(false);

@@ -26,6 +26,7 @@
     <ProjectReference Include="..\KtsuTools.MemFrag\KtsuTools.MemFrag.csproj" />
     <ProjectReference Include="..\KtsuTools.Machine\KtsuTools.Machine.csproj" />
     <ProjectReference Include="..\KtsuTools.Project\KtsuTools.Project.csproj" />
+    <ProjectReference Include="..\KtsuTools.FileDedupe\KtsuTools.FileDedupe.csproj" />
     <ProjectReference Include="..\KtsuTools.FileExplorer\KtsuTools.FileExplorer.csproj" />
     <ProjectReference Include="..\KtsuTools.SvnMigrate\KtsuTools.SvnMigrate.csproj" />
     <ProjectReference Include="..\KtsuTools.Sync\KtsuTools.Sync.csproj" />

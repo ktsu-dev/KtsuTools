@@ -8,6 +8,7 @@ using KtsuTools.BuildMonitor;
 using KtsuTools.CodeGen;
 using KtsuTools.Commands;
 using KtsuTools.Core.Services;
+using KtsuTools.FileDedupe;
 using KtsuTools.FileExplorer;
 using KtsuTools.Infrastructure;
 using KtsuTools.Machine;
@@ -43,6 +44,7 @@ internal static class Program
 		services.AddSingleton<MachineMonitorService>();
 		services.AddSingleton<ProjectService>();
 		services.AddSingleton<SyncService>();
+		services.AddSingleton<FileDedupeService>();
 
 		TypeRegistrar registrar = new(services);
 		CommandApp app = new(registrar);
@@ -169,6 +171,27 @@ internal static class Program
 			config.AddCommand<SyncCommand>("sync")
 				.WithDescription("Synchronize file contents across repositories")
 				.WithExample("sync", "--path", "c:/dev/ktsu-dev", "--filename", ".editorconfig");
+
+			config.AddBranch("dedup", dedup =>
+			{
+				dedup.SetDescription("Find and remove duplicate files (shortest filename wins)");
+
+				dedup.AddCommand<DedupScanCommand>("scan")
+					.WithDescription("Display duplicate-content file groups")
+					.WithExample("dedup", "scan", "--path", ".");
+
+				dedup.AddCommand<DedupDryRunCommand>("dry-run")
+					.WithDescription("Preview which files would be deleted")
+					.WithExample("dedup", "dry-run", "--path", ".");
+
+				dedup.AddCommand<DedupDeleteCommand>("dedupe")
+					.WithDescription("Delete redundant duplicate files (prompts for confirmation)")
+					.WithExample("dedup", "dedupe", "--path", ".");
+
+				dedup.AddCommand<DedupStatsCommand>("stats")
+					.WithDescription("Show duplicate totals, wasted bytes, and breakdown by extension")
+					.WithExample("dedup", "stats", "--path", ".");
+			});
 		});
 
 		return app.Run(args);

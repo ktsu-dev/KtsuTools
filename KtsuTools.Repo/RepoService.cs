@@ -88,7 +88,6 @@ public class RepoService(IGitService gitService, IProcessService processService)
 	/// </summary>
 	public async Task<int> BuildAndTestAsync(AbsoluteDirectoryPath path, bool parallel = false, CancellationToken ct = default)
 	{
-		_ = parallel;
 		Ensure.NotNull(path);
 
 		string fullPath = path.ToString();
@@ -102,7 +101,8 @@ public class RepoService(IGitService gitService, IProcessService processService)
 
 		AnsiConsole.MarkupLine($"[blue]Found {solutionFiles.Count} solution(s).[/]");
 
-		int failCount = 0;
+		ConcurrentBag<string> failedSolutions = [];
+		object consoleLock = new();
 
 		await AnsiConsole.Progress()
 			.AutoClear(false)
@@ -111,48 +111,95 @@ public class RepoService(IGitService gitService, IProcessService processService)
 			{
 				ProgressTask task = progressContext.AddTask("[green]Building and testing[/]", maxValue: solutionFiles.Count);
 
-				foreach (string sln in solutionFiles)
+				if (parallel)
 				{
-					ct.ThrowIfCancellationRequested();
+					// dotnet build already uses multiple cores internally; half of ProcessorCount keeps us from thrashing.
+					int dop = Math.Max(1, Environment.ProcessorCount / 2);
+					ParallelOptions options = new() { CancellationToken = ct, MaxDegreeOfParallelism = dop };
 
-					string slnDir = Path.GetDirectoryName(sln) ?? fullPath;
-					string slnName = Path.GetFileNameWithoutExtension(sln);
-
-					task.Description = $"[green]Building {slnName.EscapeMarkup()}[/]";
-
-					// Build
-					ProcessResult buildResult = await processService.RunAsync(DotnetCommand, "build --nologo -v q", slnDir, ct).ConfigureAwait(false);
-
-					if (buildResult.ExitCode != 0)
+					await Parallel.ForEachAsync(solutionFiles, options, async (sln, token) =>
 					{
-						AnsiConsole.MarkupLine($"  [red]FAIL[/] {slnName.EscapeMarkup()} - build failed");
-						failCount++;
-						task.Increment(1);
-						continue;
-					}
-
-					// Test
-					ProcessResult testResult = await processService.RunAsync(DotnetCommand, "test --nologo --no-build -v q", slnDir, ct).ConfigureAwait(false);
-
-					if (testResult.ExitCode != 0)
+						await BuildAndTestSolutionAsync(sln, fullPath, task, consoleLock, failedSolutions, token).ConfigureAwait(false);
+					}).ConfigureAwait(false);
+				}
+				else
+				{
+					foreach (string sln in solutionFiles)
 					{
-						AnsiConsole.MarkupLine($"  [yellow]WARN[/] {slnName.EscapeMarkup()} - build OK, tests failed");
-						failCount++;
+						ct.ThrowIfCancellationRequested();
+						await BuildAndTestSolutionAsync(sln, fullPath, task, consoleLock, failedSolutions, ct).ConfigureAwait(false);
 					}
-					else
-					{
-						AnsiConsole.MarkupLine($"  [green]OK[/]   {slnName.EscapeMarkup()}");
-					}
-
-					task.Increment(1);
 				}
 			}).ConfigureAwait(false);
 
-		AnsiConsole.MarkupLine(failCount > 0
-			? $"[yellow]Done. {failCount} solution(s) had failures.[/]"
-			: "[green]Done. All solutions built and tested successfully.[/]");
+		int failCount = failedSolutions.Count;
+
+		if (failCount > 0)
+		{
+			AnsiConsole.MarkupLine($"[yellow]Done. {failCount} solution(s) had failures:[/]");
+			foreach (string name in failedSolutions.OrderBy(s => s, StringComparer.OrdinalIgnoreCase))
+			{
+				AnsiConsole.MarkupLine($"  [red]-[/] {name.EscapeMarkup()}");
+			}
+		}
+		else
+		{
+			AnsiConsole.MarkupLine("[green]Done. All solutions built and tested successfully.[/]");
+		}
 
 		return failCount > 0 ? 1 : 0;
+	}
+
+	private async Task BuildAndTestSolutionAsync(
+		string sln,
+		string fullPath,
+		ProgressTask task,
+		object consoleLock,
+		ConcurrentBag<string> failedSolutions,
+		CancellationToken ct)
+	{
+		string slnDir = Path.GetDirectoryName(sln) ?? fullPath;
+		string slnName = Path.GetFileNameWithoutExtension(sln);
+
+		lock (consoleLock)
+		{
+			task.Description = $"[green]Building {slnName.EscapeMarkup()}[/]";
+		}
+
+		ProcessResult buildResult = await processService.RunAsync(DotnetCommand, "build --nologo -v q", slnDir, ct).ConfigureAwait(false);
+
+		if (buildResult.ExitCode != 0)
+		{
+			lock (consoleLock)
+			{
+				AnsiConsole.MarkupLine($"  [red]FAIL[/] {slnName.EscapeMarkup()} - build failed");
+				task.Increment(1);
+			}
+
+			failedSolutions.Add(slnName);
+			return;
+		}
+
+		ProcessResult testResult = await processService.RunAsync(DotnetCommand, "test --nologo --no-build -v q", slnDir, ct).ConfigureAwait(false);
+
+		lock (consoleLock)
+		{
+			if (testResult.ExitCode != 0)
+			{
+				AnsiConsole.MarkupLine($"  [yellow]WARN[/] {slnName.EscapeMarkup()} - build OK, tests failed");
+			}
+			else
+			{
+				AnsiConsole.MarkupLine($"  [green]OK[/]   {slnName.EscapeMarkup()}");
+			}
+
+			task.Increment(1);
+		}
+
+		if (testResult.ExitCode != 0)
+		{
+			failedSolutions.Add(slnName);
+		}
 	}
 
 	/// <summary>

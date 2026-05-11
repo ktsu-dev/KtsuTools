@@ -62,4 +62,38 @@ public class MergeServiceTests
 			Directory.Delete(root, recursive: true);
 		}
 	}
+
+	[TestMethod]
+	public void DiffStyleParserAcceptsCanonicalNames()
+	{
+		Assert.IsTrue(DiffStyleParser.TryParse("side-by-side", out DiffStyle side));
+		Assert.AreEqual(DiffStyle.SideBySide, side);
+
+		Assert.IsTrue(DiffStyleParser.TryParse("git", out DiffStyle git));
+		Assert.AreEqual(DiffStyle.Git, git);
+	}
+
+	[TestMethod]
+	public void DiffStyleParserDefaultsForNullOrEmpty()
+	{
+		Assert.IsTrue(DiffStyleParser.TryParse(null, out DiffStyle a));
+		Assert.AreEqual(DiffStyle.SideBySide, a);
+
+		Assert.IsTrue(DiffStyleParser.TryParse("  ", out DiffStyle b));
+		Assert.AreEqual(DiffStyle.SideBySide, b);
+	}
+
+	[TestMethod]
+	public void DiffStyleParserRejectsUnknownValues()
+	{
+		Assert.IsFalse(DiffStyleParser.TryParse("rainbow", out DiffStyle _));
+		Assert.IsFalse(DiffStyleParser.TryParse("ColoredDeluxe", out DiffStyle _));
+	}
+
+	[TestMethod]
+	public void DiffStyleParserRoundTripsCanonicalForm()
+	{
+		Assert.AreEqual("side-by-side", DiffStyleParser.ToCanonicalString(DiffStyle.SideBySide));
+		Assert.AreEqual("git", DiffStyleParser.ToCanonicalString(DiffStyle.Git));
+	}
 }
