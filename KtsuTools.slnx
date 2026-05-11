@@ -2,6 +2,7 @@
   <Project Path="KtsuTools.BuildMonitor/KtsuTools.BuildMonitor.csproj" />
   <Project Path="KtsuTools.CodeGen/KtsuTools.CodeGen.csproj" />
   <Project Path="KtsuTools.Core/KtsuTools.Core.csproj" />
+  <Project Path="KtsuTools.FileDedupe/KtsuTools.FileDedupe.csproj" />
   <Project Path="KtsuTools.FileExplorer/KtsuTools.FileExplorer.csproj" />
   <Project Path="KtsuTools.Image/KtsuTools.Image.csproj" />
   <Project Path="KtsuTools.Machine/KtsuTools.Machine.csproj" />
