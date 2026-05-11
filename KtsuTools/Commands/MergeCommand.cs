@@ -4,6 +4,7 @@
 
 namespace KtsuTools.Commands;
 
+using System;
 using System.ComponentModel;
 using System.IO;
 using ktsu.Semantics.Paths;
@@ -12,10 +13,11 @@ using KtsuTools.Merge;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-public sealed class MergeCommand(MergeService mergeService, MergeBatchService batchService) : AsyncCommand<MergeCommand.Settings>
+public sealed class MergeCommand(MergeService mergeService, MergeBatchService batchService, MergeHistoryService historyService) : AsyncCommand<MergeCommand.Settings>
 {
 	private readonly MergeService mergeService = mergeService;
 	private readonly MergeBatchService batchService = batchService;
+	private readonly MergeHistoryService historyService = historyService;
 
 	public sealed class Settings : CommandSettings
 	{
@@ -106,10 +108,29 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 		}
 
 		AbsoluteDirectoryPath directory = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(directoryArg));
-		return await mergeService.RunMergeAsync(
+		int exitCode = await mergeService.RunMergeAsync(
 			directory,
 			filenameArg,
 			diffStyle,
 			scope.Token).ConfigureAwait(false);
+
+		bool isBatch = !string.IsNullOrWhiteSpace(settings.BatchName);
+		// Direct invocations record every run; batch dispatches only record on success
+		// (a failed batch usually means the saved config is stale, not user input worth recalling).
+		if (!isBatch || exitCode == 0)
+		{
+			MergeHistoryEntry historyEntry = new()
+			{
+				Timestamp = DateTimeOffset.UtcNow,
+				Directory = directoryArg,
+				Filename = filenameArg,
+				DiffStyle = DiffStyleParser.ToCanonicalString(diffStyle),
+				BatchName = isBatch ? settings.BatchName : null,
+				ExitCode = exitCode,
+			};
+			await historyService.RecordAsync(historyEntry, scope.Token).ConfigureAwait(false);
+		}
+
+		return exitCode;
 	}
 }

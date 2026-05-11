@@ -4,7 +4,6 @@
 
 namespace KtsuTools.Core.Services;
 
-using KtsuTools.Core.Services.Credentials;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.GitHub;
 using KtsuTools.Core.Services.Process;
@@ -19,7 +18,6 @@ public static class DependencyInjection
 		services.AddSingleton<IGitHubService, GitHubService>();
 		services.AddSingleton<IProcessService, ProcessService>();
 		services.AddSingleton<ISettingsService, SettingsService>();
-		services.AddSingleton<ICredentialService, CredentialService>();
 
 		return services;
 	}

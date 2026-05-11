@@ -43,6 +43,7 @@
     <PackageVersion Include="ktsu.Frontmatter" Version="1.2.10" />
     <PackageVersion Include="ktsu.TextFilter" Version="1.5.9" />
     <PackageVersion Include="ktsu.Semantics.Paths" Version="1.0.21" />
+    <PackageVersion Include="ktsu.CredentialCache" Version="1.2.3" />
 
     <!-- SDK-required packages -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.203" />
