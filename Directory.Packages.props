@@ -11,7 +11,7 @@
 
     <!-- Microsoft.Extensions -->
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.7" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.8" />
 
     <!-- Git and GitHub -->
     <PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
@@ -46,8 +46,8 @@
     <PackageVersion Include="ktsu.CredentialCache" Version="1.2.3" />
 
     <!-- SDK-required packages -->
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.203" />
-    <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.203" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.300" />
+    <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.300" />
     <PackageVersion Include="Polyfill" Version="10.5.1" />
 
     <!-- File System Abstractions -->
