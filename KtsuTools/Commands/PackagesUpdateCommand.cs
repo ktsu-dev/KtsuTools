@@ -37,7 +37,7 @@ public sealed class PackagesUpdateCommand(PackagesService packagesService) : Asy
 		public string Source { get; init; } = "nuget";
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();

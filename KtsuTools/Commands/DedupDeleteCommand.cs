@@ -28,7 +28,7 @@ public sealed class DedupDeleteCommand(FileDedupeService dedupeService) : AsyncC
 		public bool AssumeYes { get; init; }
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
@@ -48,7 +48,7 @@ public sealed class DedupDeleteCommand(FileDedupeService dedupeService) : AsyncC
 
 		if (!settings.AssumeYes)
 		{
-			bool ok = AnsiConsole.Confirm("Proceed with deletion?", defaultValue: false);
+			bool ok = await AnsiConsole.ConfirmAsync("Proceed with deletion?", defaultValue: false, scope.Token).ConfigureAwait(false);
 			if (!ok)
 			{
 				AnsiConsole.MarkupLine("[dim]Cancelled.[/]");

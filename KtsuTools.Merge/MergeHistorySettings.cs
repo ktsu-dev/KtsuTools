@@ -5,7 +5,7 @@
 namespace KtsuTools.Merge;
 
 using System;
-using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using ktsu.AppDataStorage;
 
 public sealed record MergeHistoryEntry
@@ -20,5 +20,5 @@ public sealed record MergeHistoryEntry
 
 public class MergeHistorySettings : AppData<MergeHistorySettings>
 {
-	public List<MergeHistoryEntry> Entries { get; init; } = [];
+	public Collection<MergeHistoryEntry> Entries { get; init; } = [];
 }

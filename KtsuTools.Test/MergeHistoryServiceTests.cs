@@ -63,8 +63,8 @@ public class MergeHistoryServiceTests
 		Assert.AreEqual(MergeHistoryService.MaxEntries, store.Entries.Count, "Store is capped at MaxEntries.");
 
 		// The original first entry (i=0) should have been evicted.
-		Assert.IsFalse(store.Entries.Exists(e => e.Timestamp == t0), "Oldest entry was evicted.");
-		Assert.IsTrue(store.Entries.Exists(e => e.Timestamp == t0.AddSeconds(MergeHistoryService.MaxEntries)),
+		Assert.IsFalse(store.Entries.Any(e => e.Timestamp == t0), "Oldest entry was evicted.");
+		Assert.IsTrue(store.Entries.Any(e => e.Timestamp == t0.AddSeconds(MergeHistoryService.MaxEntries)),
 			"Newest entry is retained.");
 	}
 

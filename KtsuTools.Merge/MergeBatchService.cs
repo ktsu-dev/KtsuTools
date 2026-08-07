@@ -23,6 +23,7 @@ public class MergeBatchService(ISettingsService settingsService)
 	{
 		Ensure.NotNull(name);
 		Ensure.NotNull(entry);
+		ct.ThrowIfCancellationRequested();
 		MergeBatchSettings store = GetStore();
 		store.Batches[name] = entry;
 		await _settings.SaveAsync(store).ConfigureAwait(false);
@@ -31,6 +32,7 @@ public class MergeBatchService(ISettingsService settingsService)
 	public async Task<bool> DeleteAsync(string name, CancellationToken ct = default)
 	{
 		Ensure.NotNull(name);
+		ct.ThrowIfCancellationRequested();
 		MergeBatchSettings store = GetStore();
 		if (!store.Batches.Remove(name))
 		{

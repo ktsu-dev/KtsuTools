@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Spectre.Console.Ansi" />
     <PackageReference Include="LibreHardwareMonitorLib" />
     <PackageReference Include="Humanizer.Core" ExcludeAssets="analyzers" />
     <PackageReference Include="ktsu.IntervalAction" />

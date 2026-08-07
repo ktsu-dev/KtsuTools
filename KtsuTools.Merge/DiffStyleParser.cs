@@ -4,8 +4,6 @@
 
 namespace KtsuTools.Merge;
 
-using System;
-
 /// <summary>
 /// Maps the string form of <see cref="DiffStyle"/> used in CLI flags and persisted batch
 /// configs (e.g. "side-by-side", "git") to the enum and back.

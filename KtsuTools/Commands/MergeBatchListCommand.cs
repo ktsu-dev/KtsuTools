@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.Collections.Generic;
+using System.Threading;
 using KtsuTools.Merge;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -17,7 +18,7 @@ public sealed class MergeBatchListCommand(MergeBatchService batchService) : Comm
 	{
 	}
 
-	public override int Execute(CommandContext context, Settings settings)
+	protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		IReadOnlyDictionary<string, MergeBatchEntry> batches = batchService.List();
 

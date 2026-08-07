@@ -4,7 +4,6 @@
 
 namespace KtsuTools.Merge;
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -28,6 +27,7 @@ public class MergeHistoryService(ISettingsService settingsService)
 	public async Task RecordAsync(MergeHistoryEntry entry, CancellationToken ct = default)
 	{
 		Ensure.NotNull(entry);
+		ct.ThrowIfCancellationRequested();
 		MergeHistorySettings store = GetStore();
 		store.Entries.Add(entry);
 
@@ -43,6 +43,7 @@ public class MergeHistoryService(ISettingsService settingsService)
 
 	public async Task ClearAsync(CancellationToken ct = default)
 	{
+		ct.ThrowIfCancellationRequested();
 		MergeHistorySettings store = GetStore();
 		if (store.Entries.Count == 0)
 		{
