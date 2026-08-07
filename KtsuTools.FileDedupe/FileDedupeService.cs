@@ -70,26 +70,7 @@ public class FileDedupeService
 		await Parallel.ForEachAsync(
 			files,
 			new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount },
-			async (file, token) =>
-			{
-				try
-				{
-					await using FileStream stream = File.OpenRead(file);
-					byte[] hashBytes = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
-					string hash = Convert.ToHexString(hashBytes);
-					long size = new FileInfo(file).Length;
-
-					ConcurrentBag<(string Path, long Size)> bag = byHash.GetOrAdd(hash, _ => []);
-					bag.Add((file, size));
-				}
-				catch (IOException)
-				{
-					// Skip unreadable files (locked, deleted mid-scan, etc.).
-				}
-				catch (UnauthorizedAccessException)
-				{
-				}
-			}).ConfigureAwait(false);
+			(file, token) => HashFileIntoAsync(file, byHash, token)).ConfigureAwait(false);
 
 		List<DuplicateGroup> groups = [];
 		List<string> keepers = [];
@@ -114,6 +95,37 @@ public class FileDedupeService
 		}
 
 		return new DedupePlan(groups, keepers, removals);
+	}
+
+	/// <summary>
+	/// Hashes a single file and records it under its SHA256. Files that cannot be read
+	/// (locked, deleted mid-scan, access denied) are skipped rather than failing the scan.
+	/// </summary>
+	private static async ValueTask HashFileIntoAsync(
+		string file,
+		ConcurrentDictionary<string, ConcurrentBag<(string Path, long Size)>> byHash,
+		CancellationToken ct)
+	{
+		try
+		{
+			FileStream stream = File.OpenRead(file);
+			await using (stream.ConfigureAwait(false))
+			{
+				byte[] hashBytes = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
+				string hash = Convert.ToHexString(hashBytes);
+				long size = new FileInfo(file).Length;
+
+				ConcurrentBag<(string Path, long Size)> bag = byHash.GetOrAdd(hash, _ => []);
+				bag.Add((file, size));
+			}
+		}
+		catch (IOException)
+		{
+			// Skip unreadable files (locked, deleted mid-scan, etc.).
+		}
+		catch (UnauthorizedAccessException)
+		{
+		}
 	}
 
 #pragma warning disable CA1822

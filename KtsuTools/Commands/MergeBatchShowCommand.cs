@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.Threading;
 using KtsuTools.Merge;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -20,7 +21,7 @@ public sealed class MergeBatchShowCommand(MergeBatchService batchService) : Comm
 		public required string Name { get; init; }
 	}
 
-	public override int Execute(CommandContext context, Settings settings)
+	protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		MergeBatchEntry? entry = batchService.Get(settings.Name);

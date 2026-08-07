@@ -23,7 +23,7 @@ public sealed class RepoPullCommand(RepoService repoService) : AsyncCommand<Repo
 		public string Path { get; init; } = "c:/dev/ktsu-dev";
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();

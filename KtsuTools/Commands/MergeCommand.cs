@@ -70,7 +70,7 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 		}
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
@@ -104,7 +104,13 @@ public sealed class MergeCommand(MergeService mergeService, MergeBatchService ba
 		{
 			directoryArg = settings.Directory!;
 			filenameArg = settings.Filename!;
-			DiffStyleParser.TryParse(settings.DiffStyle, out diffStyle);
+
+			// Settings.Validate already rejects unknown styles, so this is belt-and-braces.
+			if (!DiffStyleParser.TryParse(settings.DiffStyle, out diffStyle))
+			{
+				AnsiConsole.MarkupLine($"[red]Error: unknown --diff-style '{settings.DiffStyle.EscapeMarkup()}'. Expected 'side-by-side' or 'git'.[/]");
+				return 1;
+			}
 		}
 
 		AbsoluteDirectoryPath directory = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(directoryArg));

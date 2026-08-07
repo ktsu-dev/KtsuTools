@@ -9,7 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Spectre.Console.Ansi" />
     <PackageReference Include="ktsu.Semantics.Paths" />
+    <PackageReference Include="ktsu.Semantics.Strings" />
   </ItemGroup>
 
   <ItemGroup>

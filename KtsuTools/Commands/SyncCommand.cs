@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
@@ -53,18 +54,18 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 	}
 
 	/// <inheritdoc/>
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 
 		string path = string.IsNullOrWhiteSpace(settings.Path)
-			? await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]").ConfigureAwait(false)
+			? await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]", cancellationToken).ConfigureAwait(false)
 			: settings.Path;
 
 		List<string> filenames = ExpandFilenames(settings.Filename);
 		if (filenames.Count == 0)
 		{
-			string entered = await AnsiConsole.AskAsync<string>("[bold]Filename pattern(s) to scan for (comma-separated):[/]").ConfigureAwait(false);
+			string entered = await AnsiConsole.AskAsync<string>("[bold]Filename pattern(s) to scan for (comma-separated):[/]", cancellationToken).ConfigureAwait(false);
 			filenames = ExpandFilenames([entered]);
 		}
 

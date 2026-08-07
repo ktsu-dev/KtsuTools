@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Core.UI;
 using KtsuTools.Project;
@@ -20,7 +21,7 @@ public sealed class ProjectCommand(ProjectService projectService) : AsyncCommand
 		public string Owner { get; init; } = "ktsu-dev";
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 

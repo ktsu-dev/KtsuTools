@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Core.UI;
 using KtsuTools.MemFrag;
@@ -24,7 +25,7 @@ public sealed class MemFragMonitorCommand(MemFragService memFragService) : Async
 		public int RefreshInterval { get; init; }
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 

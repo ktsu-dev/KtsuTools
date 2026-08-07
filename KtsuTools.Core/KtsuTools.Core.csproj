@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Spectre.Console.Ansi" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="LibGit2Sharp" />
     <PackageReference Include="Octokit" />

@@ -118,9 +118,8 @@ public class RepoService(IGitService gitService, IProcessService processService)
 					ParallelOptions options = new() { CancellationToken = ct, MaxDegreeOfParallelism = dop };
 
 					await Parallel.ForEachAsync(solutionFiles, options, async (sln, token) =>
-					{
-						await BuildAndTestSolutionAsync(sln, fullPath, task, consoleLock, failedSolutions, token).ConfigureAwait(false);
-					}).ConfigureAwait(false);
+						await BuildAndTestSolutionAsync(sln, fullPath, task, consoleLock, failedSolutions, token).ConfigureAwait(false))
+						.ConfigureAwait(false);
 				}
 				else
 				{

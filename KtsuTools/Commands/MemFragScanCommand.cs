@@ -5,6 +5,7 @@
 namespace KtsuTools.Commands;
 
 using System.ComponentModel;
+using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.MemFrag;
 using Spectre.Console.Cli;
@@ -18,9 +19,9 @@ public sealed class MemFragScanCommand(MemFragService memFragService) : AsyncCom
 		public required int ProcessId { get; init; }
 	}
 
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
+	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
-		return await memFragService.ScanAsync(settings.ProcessId).ConfigureAwait(false);
+		return await memFragService.ScanAsync(settings.ProcessId, cancellationToken).ConfigureAwait(false);
 	}
 }
