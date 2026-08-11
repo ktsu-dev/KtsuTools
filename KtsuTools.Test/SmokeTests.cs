@@ -41,6 +41,6 @@ public class SmokeTests
 		Assert.IsNotNull(new Project.ProjectService(mockGitService, mockGitHubService));
 		Assert.IsNotNull(new FileExplorer.FileExplorerService());
 		Assert.IsNotNull(new SvnMigrate.SvnMigrateService(mockProcessService));
-		Assert.IsNotNull(new Sync.SyncService(mockProcessService));
+		Assert.IsNotNull(typeof(Sync.SyncService));
 	}
 }

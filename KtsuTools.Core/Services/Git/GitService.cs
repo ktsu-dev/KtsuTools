@@ -6,114 +6,82 @@ namespace KtsuTools.Core.Services.Git;
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using LibGit2Sharp;
 
 public class GitService : IGitService
 {
-	public Task<bool> PullAsync(string repoPath, CancellationToken ct = default) =>
-		Task.Run(() =>
+	public async Task<bool> PullAsync(string repoPath, CancellationToken ct = default)
+	{
+		GitResult result = await GitCli.RunInAsync(repoPath, ct, "pull").ConfigureAwait(false);
+		return result.Succeeded;
+	}
+
+	public async Task<bool> CommitAsync(string repoPath, string message, CancellationToken ct = default)
+	{
+		GitResult staged = await GitCli.RunInAsync(repoPath, ct, "add", "--all").ConfigureAwait(false);
+		if (!staged.Succeeded)
 		{
-			try
-			{
-				using Repository repo = new(repoPath);
-				Signature signature = repo.Config.BuildSignature(DateTimeOffset.Now);
-				PullOptions options = new()
-				{
-					FetchOptions = new FetchOptions(),
-				};
-				Commands.Pull(repo, signature, options);
-				return true;
-			}
-			catch (LibGit2SharpException)
-			{
-				return false;
-			}
-		}, ct);
+			return false;
+		}
 
-	public Task<bool> CommitAsync(string repoPath, string message, CancellationToken ct = default) =>
-		Task.Run(() =>
+		// git exits non-zero when there is nothing staged, which matches the previous behaviour of
+		// reporting failure for an empty commit.
+		GitResult committed = await GitCli.RunInAsync(repoPath, ct, "commit", "-m", message).ConfigureAwait(false);
+		return committed.Succeeded;
+	}
+
+	public async Task<bool> PushAsync(string repoPath, CancellationToken ct = default)
+	{
+		// HEAD rather than a branch name so a detached head fails loudly instead of pushing the
+		// wrong ref, and origin explicitly because that is the remote the previous version used.
+		GitResult result = await GitCli.RunInAsync(repoPath, ct, "push", "origin", "HEAD").ConfigureAwait(false);
+		return result.Succeeded;
+	}
+
+	public async Task<IReadOnlyList<string>> GetStatusAsync(string repoPath, CancellationToken ct = default)
+	{
+		GitResult result = await GitCli.RunInAsync(repoPath, ct, "status", "--porcelain").ConfigureAwait(false);
+		if (!result.Succeeded)
 		{
-			try
-			{
-				using Repository repo = new(repoPath);
-				Commands.Stage(repo, "*");
-				Signature signature = repo.Config.BuildSignature(DateTimeOffset.Now);
-				repo.Commit(message, signature, signature);
-				return true;
-			}
-			catch (LibGit2SharpException)
-			{
-				return false;
-			}
-		}, ct);
+			return [];
+		}
 
-	public Task<bool> PushAsync(string repoPath, CancellationToken ct = default) =>
-		Task.Run(() =>
+		List<string> entries = [];
+		foreach (string line in result.OutputLines)
 		{
-			try
+			// Porcelain v1 is a two character status code, a space, then the path.
+			if (line.Length > 3)
 			{
-				using Repository repo = new(repoPath);
-				Remote? remote = repo.Network.Remotes["origin"];
-				if (remote is null)
-				{
-					return false;
-				}
-
-				Branch branch = repo.Head;
-				repo.Network.Push(remote, branch.CanonicalName, new PushOptions());
-				return true;
+				entries.Add($"{line[..2].Trim()}: {line[3..]}");
 			}
-			catch (LibGit2SharpException)
-			{
-				return false;
-			}
-		}, ct);
+		}
 
-	public Task<IReadOnlyList<string>> GetStatusAsync(string repoPath, CancellationToken ct = default) =>
-		Task.Run<IReadOnlyList<string>>(() =>
+		return entries;
+	}
+
+	public async Task<string> GetCurrentBranchAsync(string repoPath, CancellationToken ct = default)
+	{
+		GitResult result = await GitCli.RunInAsync(repoPath, ct, "rev-parse", "--abbrev-ref", "HEAD").ConfigureAwait(false);
+		return result.Succeeded ? result.OutputText : string.Empty;
+	}
+
+	public async Task<bool> CloneAsync(Uri url, string targetPath, CancellationToken ct = default)
+	{
+		Ensure.NotNull(url);
+
+		GitResult result = await GitCli.RunAsync(["clone", url.AbsoluteUri, targetPath], ct).ConfigureAwait(false);
+		return result.Succeeded;
+	}
+
+	public async Task<bool> IsRepositoryAsync(string path, CancellationToken ct = default)
+	{
+		if (!Directory.Exists(path))
 		{
-			try
-			{
-				using Repository repo = new(repoPath);
-				return [.. repo.RetrieveStatus().Select(e => $"{e.State}: {e.FilePath}")];
-			}
-			catch (LibGit2SharpException)
-			{
-				return [];
-			}
-		}, ct);
+			return false;
+		}
 
-	public Task<string> GetCurrentBranchAsync(string repoPath, CancellationToken ct = default) =>
-		Task.Run(() =>
-		{
-			try
-			{
-				using Repository repo = new(repoPath);
-				return repo.Head.FriendlyName;
-			}
-			catch (LibGit2SharpException)
-			{
-				return string.Empty;
-			}
-		}, ct);
-
-	public Task<bool> CloneAsync(Uri url, string targetPath, CancellationToken ct = default) =>
-		Task.Run(() =>
-		{
-			try
-			{
-				Repository.Clone(url.AbsoluteUri, targetPath);
-				return true;
-			}
-			catch (LibGit2SharpException)
-			{
-				return false;
-			}
-		}, ct);
-
-	public Task<bool> IsRepositoryAsync(string path, CancellationToken ct = default) =>
-		Task.Run(() => Repository.IsValid(path), ct);
+		GitResult result = await GitCli.RunInAsync(path, ct, "rev-parse", "--is-inside-work-tree").ConfigureAwait(false);
+		return result.Succeeded && result.OutputText.Equals("true", StringComparison.OrdinalIgnoreCase);
+	}
 }

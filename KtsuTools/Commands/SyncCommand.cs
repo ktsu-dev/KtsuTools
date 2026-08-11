@@ -20,9 +20,8 @@ using Spectre.Console.Cli;
 /// <summary>
 /// Command that synchronizes file contents across repositories.
 /// </summary>
-public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncCommand.Settings>
+public sealed class SyncCommand : AsyncCommand<SyncCommand.Settings>
 {
-	private readonly SyncService syncService = syncService;
 
 	/// <summary>
 	/// Settings for the sync command.
@@ -71,7 +70,7 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 
 		using CtrlCScope scope = new();
 		AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(path));
-		return await syncService.RunAsync(rootPath, filenames, settings.AutoPush, scope.Token).ConfigureAwait(false);
+		return await SyncService.RunAsync(rootPath, filenames, settings.AutoPush, scope.Token).ConfigureAwait(false);
 	}
 
 	private static List<string> ExpandFilenames(IEnumerable<string> raw) =>

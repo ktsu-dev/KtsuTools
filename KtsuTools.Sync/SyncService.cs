@@ -18,22 +18,16 @@ using System.Threading.Tasks;
 using ktsu.Extensions;
 using ktsu.Semantics.Paths;
 
-using KtsuTools.Core.Services.Process;
-
-using LibGit2Sharp;
+using KtsuTools.Core.Services.Git;
 
 using Spectre.Console;
 
 /// <summary>
 /// Service that synchronizes file contents across multiple repositories.
 /// </summary>
-public class SyncService(IProcessService processService)
+public static class SyncService
 {
-	private readonly IProcessService processService = processService;
-
 	private const string CommitAuthorName = "KtsuTools";
-	private const string GitDirSuffixWindows = ".git\\";
-	private const string GitDirSuffixUnix = ".git/";
 
 	/// <summary>
 	/// Runs the sync operation for the specified path and filename.
@@ -42,7 +36,7 @@ public class SyncService(IProcessService processService)
 	/// <param name="filename">The filename pattern to scan for.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public Task<int> RunAsync(AbsoluteDirectoryPath path, string filename, CancellationToken ct = default) =>
+	public static Task<int> RunAsync(AbsoluteDirectoryPath path, string filename, CancellationToken ct = default) =>
 		RunAsync(path, [filename], autoPush: false, ct);
 
 	/// <summary>
@@ -53,7 +47,7 @@ public class SyncService(IProcessService processService)
 	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public async Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default)
+	public static async Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default)
 	{
 		Ensure.NotNull(path);
 		ct.ThrowIfCancellationRequested();
@@ -284,15 +278,6 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private static bool IsGitRepoPath(string repoPath) =>
-		repoPath.EndsWith(GitDirSuffixWindows, StringComparison.Ordinal)
-		|| repoPath.EndsWith(GitDirSuffixUnix, StringComparison.Ordinal);
-
-	private static string StripGitSuffix(string repoPath) =>
-		repoPath
-			.Replace(GitDirSuffixWindows, "", StringComparison.Ordinal)
-			.Replace(GitDirSuffixUnix, "", StringComparison.Ordinal);
-
 	private static async Task CommitChangedFilesAsync(
 		HashSet<string> commitDirectories,
 		HashSet<string> expandedFilesToSync,
@@ -300,7 +285,7 @@ public class SyncService(IProcessService processService)
 	{
 		AnsiConsole.WriteLine();
 
-		Collection<string> commitFiles = FindChangedFiles(commitDirectories, expandedFilesToSync, path);
+		Collection<string> commitFiles = await FindChangedFilesAsync(commitDirectories, expandedFilesToSync, path).ConfigureAwait(false);
 
 		if (commitFiles.Count > 0)
 		{
@@ -312,13 +297,13 @@ public class SyncService(IProcessService processService)
 				AnsiConsole.WriteLine();
 				foreach (string filePath in commitFiles)
 				{
-					CommitFile(filePath);
+					await CommitFileAsync(filePath).ConfigureAwait(false);
 				}
 			}
 		}
 	}
 
-	private static Collection<string> FindChangedFiles(
+	private static async Task<Collection<string>> FindChangedFilesAsync(
 		HashSet<string> commitDirectories,
 		HashSet<string> expandedFilesToSync,
 		string path)
@@ -328,18 +313,23 @@ public class SyncService(IProcessService processService)
 		foreach (string dir in commitDirectories)
 		{
 			string directoryPath = Path.Combine(path, dir);
-			string repoPath = Repository.Discover(directoryPath);
-			if (repoPath is null || !IsGitRepoPath(repoPath))
+			string repoRoot = await GitCli.DiscoverRootAsync(directoryPath).ConfigureAwait(false);
+			if (string.IsNullOrEmpty(repoRoot))
 			{
 				continue;
 			}
 
-			using Repository repo = new(repoPath);
 			foreach (string uniqueFilename in expandedFilesToSync)
 			{
 				string filePath = Path.Combine(directoryPath, uniqueFilename);
-				FileStatus fileStatus = repo.RetrieveStatus(filePath);
-				if (fileStatus is FileStatus.ModifiedInWorkdir or FileStatus.NewInWorkdir)
+
+				// --porcelain prints nothing for a path that matches HEAD, so any output at all
+				// means the file is either modified or untracked.
+				GitResult status = await GitCli
+					.RunInAsync(repoRoot, CancellationToken.None, "status", "--porcelain", "--", filePath)
+					.ConfigureAwait(false);
+
+				if (status.Succeeded && status.OutputText.Length > 0)
 				{
 					commitFiles.Add(filePath);
 					AnsiConsole.MarkupLine($"[yellow]{filePath.EscapeMarkup()}[/] has outstanding changes");
@@ -350,38 +340,63 @@ public class SyncService(IProcessService processService)
 		return commitFiles;
 	}
 
-	private static void CommitFile(string filePath)
+	private static async Task CommitFileAsync(string filePath)
 	{
 		AnsiConsole.MarkupLine($"[green]Committing:[/] {filePath.EscapeMarkup()}");
-		string repoPath = Repository.Discover(filePath);
-		if (string.IsNullOrEmpty(repoPath))
+
+		string repoRoot = await GitCli.DiscoverRootAsync(filePath).ConfigureAwait(false);
+		if (string.IsNullOrEmpty(repoRoot))
 		{
 			return;
 		}
 
-		using Repository repo = new(repoPath);
-		string repoRoot = StripGitSuffix(repoPath);
-		string relativeFilePath = filePath.Replace(repoRoot, "", StringComparison.Ordinal);
-		repo.Index.Add(relativeFilePath);
-		repo.Index.Write();
-		try
+		// Staging through git, rather than writing the index directly, is what lets the clean
+		// filter run. Without it a file covered by an LFS pattern is committed as raw bytes
+		// instead of a pointer, which is how binary assets ended up in history unmanaged.
+		GitResult staged = await GitCli
+			.RunInAsync(repoRoot, CancellationToken.None, "add", "--", filePath)
+			.ConfigureAwait(false);
+
+		if (!staged.Succeeded)
 		{
-			Signature signature = new(CommitAuthorName, CommitAuthorName, DateTimeOffset.Now);
-			_ = repo.Commit($"Sync {relativeFilePath}", signature, signature);
+			AnsiConsole.MarkupLine($"[red]Failed to stage:[/] {filePath.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[red]{staged.FailureText.EscapeMarkup()}[/]");
+			return;
 		}
-		catch (EmptyCommitException)
+
+		string relativeFilePath = Path.GetRelativePath(repoRoot, filePath);
+
+		// The identity is supplied per invocation so the commit is attributed to the tool without
+		// depending on, or disturbing, whatever the repository has configured.
+		GitResult committed = await GitCli
+			.RunInAsync(
+				repoRoot,
+				CancellationToken.None,
+				"-c", $"user.name={CommitAuthorName}",
+				"-c", $"user.email={CommitAuthorName}",
+				"commit",
+				"-m", $"Sync {relativeFilePath}",
+				"--", filePath)
+			.ConfigureAwait(false);
+
+		if (!committed.Succeeded && !IsNothingToCommit(committed))
 		{
-			// No changes to commit
-		}
-		catch (UnmergedIndexEntriesException)
-		{
-			AnsiConsole.MarkupLine($"[red]Unmerged entries in:[/] {filePath.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[red]Failed to commit:[/] {filePath.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[red]{committed.FailureText.EscapeMarkup()}[/]");
 		}
 	}
 
-	private async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path, bool autoPush, CancellationToken ct)
+	/// <summary>
+	/// Distinguishes the ordinary case of the file already matching HEAD, which git reports with a
+	/// non-zero exit code, from a genuine commit failure.
+	/// </summary>
+	private static bool IsNothingToCommit(GitResult result) =>
+		result.Output.Contains("nothing to commit", StringComparison.OrdinalIgnoreCase)
+		|| result.Output.Contains("nothing added to commit", StringComparison.OrdinalIgnoreCase);
+
+	private static async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path, bool autoPush, CancellationToken ct)
 	{
-		Collection<string> pushDirectories = FindPushableDirectories(commitDirectories, path);
+		Collection<string> pushDirectories = await FindPushableDirectoriesAsync(commitDirectories, path).ConfigureAwait(false);
 
 		if (pushDirectories.Count == 0)
 		{
@@ -413,26 +428,41 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private static Collection<string> FindPushableDirectories(HashSet<string> commitDirectories, string path)
+	private static async Task<Collection<string>> FindPushableDirectoriesAsync(HashSet<string> commitDirectories, string path)
 	{
 		Collection<string> pushDirectories = [];
-		IEnumerable<string> commitRepos = commitDirectories
-			.Select(f => Repository.Discover(Path.Combine(path, f)))
-			.Where(r => !string.IsNullOrEmpty(r) && IsGitRepoPath(r))
-			.Distinct();
+		HashSet<string> seenRoots = [];
 
-		foreach (string repoPath in commitRepos)
+		foreach (string dir in commitDirectories)
 		{
-			using Repository repo = new(repoPath);
-			string repoRoot = StripGitSuffix(repoPath);
-			Branch localBranch = repo.Branches[repo.Head.FriendlyName];
-			int aheadBy = localBranch?.TrackingDetails.AheadBy ?? 0;
+			string repoRoot = await GitCli.DiscoverRootAsync(Path.Combine(path, dir)).ConfigureAwait(false);
+			if (string.IsNullOrEmpty(repoRoot) || !seenRoots.Add(repoRoot))
+			{
+				continue;
+			}
 
-			bool canPush = repo.Head.Commits
-				.Take(aheadBy)
-				.All(commit => commit.Author.Name == CommitAuthorName);
+			// @{u} is the configured upstream. Without one, rev-list fails and there is nothing
+			// meaningful to push, so treat that as zero commits ahead.
+			GitResult ahead = await GitCli
+				.RunInAsync(repoRoot, CancellationToken.None, "rev-list", "--count", "@{u}..HEAD")
+				.ConfigureAwait(false);
 
-			if (aheadBy > 0 && canPush)
+			if (!ahead.Succeeded || !int.TryParse(ahead.OutputText, out int aheadBy) || aheadBy == 0)
+			{
+				continue;
+			}
+
+			// Only push when every unpushed commit is one this tool made, so a user's own work is
+			// never pushed on their behalf.
+			GitResult authors = await GitCli
+				.RunInAsync(repoRoot, CancellationToken.None, "log", "--format=%an", $"-{aheadBy}", "HEAD")
+				.ConfigureAwait(false);
+
+			bool canPush = authors.Succeeded
+				&& authors.OutputLines.Count == aheadBy
+				&& authors.OutputLines.All(author => author == CommitAuthorName);
+
+			if (canPush)
 			{
 				pushDirectories.Add(repoRoot);
 				AnsiConsole.MarkupLine($"[cyan]{repoRoot.EscapeMarkup()}[/] can be pushed automatically");
@@ -442,30 +472,30 @@ public class SyncService(IProcessService processService)
 		return pushDirectories;
 	}
 
-	private async Task PushDirectoryAsync(string repoRoot, CancellationToken ct)
+	private static async Task PushDirectoryAsync(string repoRoot, CancellationToken ct)
 	{
 		AnsiConsole.MarkupLine($"[green]Pushing:[/] {repoRoot.EscapeMarkup()}");
 
 		AnsiConsole.MarkupLine("[dim]Pulling remote changes...[/]");
-		ProcessResult pull = await processService.RunAsync("git", "pull", repoRoot, ct).ConfigureAwait(false);
-		if (pull.ExitCode != 0)
+		GitResult pull = await GitCli.RunInAsync(repoRoot, ct, "pull").ConfigureAwait(false);
+		if (!pull.Succeeded)
 		{
-			string pullMessage = pull.Errors.Count > 0 ? string.Join('\n', pull.Errors) : string.Join('\n', pull.Output);
 			AnsiConsole.MarkupLine($"[red]Pull failed for:[/] {repoRoot.EscapeMarkup()}");
-			AnsiConsole.MarkupLine($"[red]{pullMessage.EscapeMarkup()}[/]");
+			AnsiConsole.MarkupLine($"[red]{pull.FailureText.EscapeMarkup()}[/]");
 			AnsiConsole.MarkupLine("[yellow]Skipping push to avoid non-fast-forward; resolve conflicts manually.[/]");
 			return;
 		}
 
-		ProcessResult push = await processService.RunAsync("git", "push", repoRoot, ct).ConfigureAwait(false);
-		if (push.ExitCode == 0)
+		// Pushing through git runs the LFS pre-push hook, which is what uploads the objects that
+		// the committed pointers refer to. A library push would leave those pointers dangling.
+		GitResult push = await GitCli.RunInAsync(repoRoot, ct, "push").ConfigureAwait(false);
+		if (push.Succeeded)
 		{
 			AnsiConsole.MarkupLine($"[green]Successfully pushed:[/] {repoRoot.EscapeMarkup()}");
 		}
 		else
 		{
-			string pushMessage = push.Errors.Count > 0 ? string.Join('\n', push.Errors) : string.Join('\n', push.Output);
-			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {pushMessage.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {push.FailureText.EscapeMarkup()}");
 		}
 	}
 
