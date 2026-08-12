@@ -1,3 +1,9 @@
+## v1.0.1 (patch)
+
+Changes since v1.0.0:
+
+- Bump the ktsu group with 16 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
+
 ## v1.0.0 (major)
 
 - Update copyright headers to reflect 2023-2026 ktsu-dev contributors across all relevant files ([@matt-edmondson](https://github.com/matt-edmondson))
