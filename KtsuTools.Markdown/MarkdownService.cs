@@ -4,10 +4,9 @@
 
 namespace KtsuTools.Markdown;
 
-using Spectre.Console;
-
 using ktsu.Frontmatter;
 using ktsu.Semantics.Paths;
+using Spectre.Console;
 
 /// <summary>
 /// Service for cleaning and linting markdown files.
