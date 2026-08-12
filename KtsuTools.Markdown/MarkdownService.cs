@@ -1,13 +1,10 @@
-// Copyright (c) ktsu.dev
-// All rights reserved.
-// Licensed under the MIT license.
+// Copyright (c) 2023-2026 ktsu-dev contributors
 
 namespace KtsuTools.Markdown;
 
-using Spectre.Console;
-
 using ktsu.Frontmatter;
 using ktsu.Semantics.Paths;
+using Spectre.Console;
 
 /// <summary>
 /// Service for cleaning and linting markdown files.

@@ -1,3 +1,8 @@
+// Copyright (c) 2023-2026 ktsu-dev contributors
+
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("ktsu.KtsuTools.Test")]
 // Copyright (c) ktsu.dev
 // All rights reserved.
 // Licensed under the MIT license.
