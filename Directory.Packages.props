@@ -36,7 +36,7 @@
     <!-- SDK-required packages -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.400" />
     <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.400" />
-    <PackageVersion Include="Polyfill" Version="11.0.2" />
+    <PackageVersion Include="Polyfill" Version="11.2.0" />
     <!-- Testing -->
     <!-- MSTest.TestAdapter, MSTest.TestFramework and Microsoft.Testing.Extensions.CodeCoverage
          are supplied by MSTest.Sdk (pinned in global.json). Declaring them here as well makes
