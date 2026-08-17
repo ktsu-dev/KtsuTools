@@ -1,6 +1,7 @@
-## v1.0.1 (patch)
+## v1.0.2 (patch)
 
-Changes since v1.0.0:
+Changes since v1.0.1:
 
-- Fix NU1605 package downgrade: bump ktsu.Semantics.Paths/Strings to 2.9.3 for AppDataStorage compatibility [patch] ([@matt-edmondson](https://github.com/matt-edmondson))
+- Bump the microsoft group with 1 update ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- Bump the ktsu group with 4 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
