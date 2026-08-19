@@ -1,1 +1,1 @@
-ktsu tools;cli tools;developer tools;unified cli;tool suite;dotnet global tool;dotnet;csharp
+ktsu tools;cli tools;developer tools;unified cli;tool suite;dotnet global tool;spectre console;cross repository;batch operations;file deduplication;package management;build monitor;code generation;modular monolith;dotnet;csharp
