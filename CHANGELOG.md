@@ -2,7 +2,10 @@
 
 Changes since v1.0.2:
 
-- Bump the ktsu group with 6 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- chore: store icon.png in LFS as .gitattributes declares ([@matt-edmondson](https://github.com/matt-edmondson))
+- docs: scope build badge to the default branch ([@matt-edmondson](https://github.com/matt-edmondson))
+- docs: broaden TAGS.md for better topic coverage ([@matt-edmondson](https://github.com/matt-edmondson))
+- docs: correct README, DESCRIPTION and TAGS metadata ([@matt-edmondson](https://github.com/matt-edmondson))
 
 ## v1.0.2 (patch)
 
