@@ -133,6 +133,18 @@ public class RepoGitTests
 	}
 
 	[TestMethod]
+	public async Task RunGitAsyncWritesBothStdoutAndStderrFromEachRepository()
+	{
+		using TempTree tree = TempTree.WithRepos("repo-a");
+
+		RecordingProcessService fake = new(output: ["on stdout"], errors: ["on stderr"]);
+		int exit = await CreateService(fake).RunGitAsync(tree.Root, ["status"], color: false).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit, "Output on stderr is not by itself a failure; git uses it for ordinary messages.");
+		Assert.AreEqual(1, fake.Calls.Count);
+	}
+
+	[TestMethod]
 	public async Task RunGitAsyncTreatsGitFileAsRepository()
 	{
 		using TempTree tree = TempTree.Empty();
@@ -151,7 +163,10 @@ public class RepoGitTests
 	private static RepoService CreateService(IProcessService processService) =>
 		new(new Mock<IGitService>().Object, processService);
 
-	private sealed class RecordingProcessService(Func<string, int>? exitCodeForWorkingDirectory = null) : IProcessService
+	private sealed class RecordingProcessService(
+		Func<string, int>? exitCodeForWorkingDirectory = null,
+		IReadOnlyList<string>? output = null,
+		IReadOnlyList<string>? errors = null) : IProcessService
 	{
 		public List<(string Command, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
 
@@ -169,7 +184,7 @@ public class RepoGitTests
 				? exitCodeForWorkingDirectory(workingDirectory)
 				: 0;
 
-			return Task.FromResult(new ProcessResult(exit, [], []));
+			return Task.FromResult(new ProcessResult(exit, output ?? [], errors ?? []));
 		}
 	}
 
