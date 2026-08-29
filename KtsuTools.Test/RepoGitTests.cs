@@ -18,7 +18,7 @@ public class RepoGitTests
 	[TestMethod]
 	public async Task RunGitAsyncRunsOncePerRepositoryInItsOwnDirectory()
 	{
-		using TempTree tree = TempTree.WithRepos("repo-a", Path.Combine("nested", "repo-b"));
+		using TempTree tree = TempTree.WithRepos("repo-a", Path.Join("nested", "repo-b"));
 		tree.CreatePlainDirectory("not-a-repo");
 
 		RecordingProcessService fake = new();
@@ -85,7 +85,7 @@ public class RepoGitTests
 	public async Task RunGitAsyncRunsOnlyOnRootWhenRootIsItselfARepository()
 	{
 		using TempTree tree = TempTree.WithRepos("repo-a");
-		Directory.CreateDirectory(Path.Combine(tree.RootDirectory, ".git"));
+		Directory.CreateDirectory(Path.Join(tree.RootDirectory, ".git"));
 
 		RecordingProcessService fake = new();
 		await CreateService(fake).RunGitAsync(tree.Root, ["status"], color: false).ConfigureAwait(false);
@@ -122,7 +122,7 @@ public class RepoGitTests
 	[TestMethod]
 	public async Task RunGitAsyncReturnsNonZeroWhenDirectoryMissing()
 	{
-		string missing = Path.Combine(Path.GetTempPath(), $"ktsu_missing_{Guid.NewGuid():N}");
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_missing_{Guid.NewGuid():N}");
 		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
 
 		RecordingProcessService fake = new();
@@ -139,7 +139,7 @@ public class RepoGitTests
 		string worktree = tree.CreatePlainDirectory("worktree");
 
 		// Worktrees and submodules store .git as a file pointing at the real git directory.
-		await File.WriteAllTextAsync(Path.Combine(worktree, ".git"), "gitdir: ../real/.git").ConfigureAwait(false);
+		await File.WriteAllTextAsync(Path.Join(worktree, ".git"), "gitdir: ../real/.git").ConfigureAwait(false);
 
 		RecordingProcessService fake = new();
 		await CreateService(fake).RunGitAsync(tree.Root, ["status"], color: false).ConfigureAwait(false);
@@ -183,7 +183,7 @@ public class RepoGitTests
 
 		public static TempTree Empty()
 		{
-			string root = Path.Combine(Path.GetTempPath(), $"ktsu_git_{Guid.NewGuid():N}");
+			string root = Path.Join(Path.GetTempPath(), $"ktsu_git_{Guid.NewGuid():N}");
 			Directory.CreateDirectory(root);
 			return new TempTree(root);
 		}
@@ -193,7 +193,7 @@ public class RepoGitTests
 			TempTree tree = Empty();
 			foreach (string relative in relativePaths)
 			{
-				Directory.CreateDirectory(Path.Combine(tree.RootDirectory, relative, ".git"));
+				Directory.CreateDirectory(Path.Join(tree.RootDirectory, relative, ".git"));
 			}
 
 			return tree;
@@ -201,13 +201,13 @@ public class RepoGitTests
 
 		public string CreatePlainDirectory(string relative)
 		{
-			string full = Path.Combine(RootDirectory, relative);
+			string full = Path.Join(RootDirectory, relative);
 			Directory.CreateDirectory(full);
 			return full;
 		}
 
 		public string At(params string[] segments) =>
-			Path.Combine([RootDirectory, .. segments]);
+			Path.Join([RootDirectory, .. segments]);
 
 		public void Dispose()
 		{
