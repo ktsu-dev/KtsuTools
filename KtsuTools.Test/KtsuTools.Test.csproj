@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\KtsuTools\KtsuTools.csproj" />
     <ProjectReference Include="..\KtsuTools.Core\KtsuTools.Core.csproj" />
     <ProjectReference Include="..\KtsuTools.BuildMonitor\KtsuTools.BuildMonitor.csproj" />
     <ProjectReference Include="..\KtsuTools.Merge\KtsuTools.Merge.csproj" />

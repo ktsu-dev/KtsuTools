@@ -54,6 +54,32 @@ public class RepoServiceTests
 	}
 
 	[TestMethod]
+	public async Task PullAllAsyncPullsEveryRepositoryAndReportsFailures()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_pull_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "good", ".git"));
+		Directory.CreateDirectory(Path.Join(root, "bad", ".git"));
+		try
+		{
+			RecordingPullProcessService fake = new(failInDirNamed: "bad");
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.PullAllAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(1, exit, "A failed pull should surface in the aggregate exit code.");
+			Assert.AreEqual(2, fake.Calls.Count, "Both repositories should be pulled.");
+			Assert.IsTrue(
+				fake.Calls.All(c => c.Command == "git" && c.Arguments.StartsWith("pull", StringComparison.Ordinal)),
+				"Each repository should be pulled with git pull.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
 	public async Task BuildAndTestAsyncParallelAggregatesExitCodes()
 	{
 		string root = Path.Combine(Path.GetTempPath(), $"ktsu_par_{Guid.NewGuid():N}");
@@ -117,6 +143,26 @@ public class RepoServiceTests
 		finally
 		{
 			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	private sealed class RecordingPullProcessService(string failInDirNamed) : IProcessService
+	{
+		public List<(string Command, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
+			RunAsync(command, arguments, workingDirectory, null, ct);
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default)
+		{
+			Calls.Add((command, arguments, workingDirectory));
+
+			bool fails = workingDirectory is not null &&
+				string.Equals(Path.GetFileName(workingDirectory), failInDirNamed, StringComparison.OrdinalIgnoreCase);
+
+			return Task.FromResult(fails
+				? new ProcessResult(1, [], ["fatal: could not read from remote repository"])
+				: new ProcessResult(0, [], []));
 		}
 	}
 

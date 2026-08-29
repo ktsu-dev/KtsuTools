@@ -35,10 +35,22 @@ ktools <command> [options]
 Run `ktools --help` for the full command list, or `ktools <command> --help` for a specific
 command's options.
 
+`ktools git` runs one git command in every repository beneath a directory, so the directory
+itself doesn't have to be a repository. Repositories are never descended into, so pointing it at
+a repository runs the command only there.
+
+```bash
+ktools git status                      # every repo under the current directory
+ktools git --path c:/dev -- fetch --prune
+```
+
+Flags belong after a `--` separator, otherwise `ktools` claims them as its own options.
+
 ## Command Groups
 
 | Group | Module | What it does |
 | --- | --- | --- |
+| `git` | `KtsuTools.Repo` | Run one git command in every repository under a directory |
 | `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `pull`, `list`, `update` |
 | `packages` | `KtsuTools.Packages` | NuGet package maintenance — `update-packages`, `migrate-cpm` |
 | `dedup` | `KtsuTools.FileDedupe` | Duplicate file detection and removal — `scan`, `dry-run`, `dedupe`, `stats` |
