@@ -14,6 +14,7 @@ using System.Collections.ObjectModel;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
+using KtsuTools.Core.UI;
 using Spectre.Console;
 
 /// <summary>
@@ -37,6 +38,7 @@ public record SolutionInfo
 public class RepoService(IGitService gitService, IProcessService processService)
 {
 	private const string DotnetCommand = "dotnet";
+	private const string GitCommand = "git";
 
 	private readonly IGitService gitService = gitService;
 	private readonly IProcessService processService = processService;
@@ -244,7 +246,7 @@ public class RepoService(IGitService gitService, IProcessService processService)
 					string repoName = Path.GetFileName(repo);
 					task.Description = $"[green]Pulling {repoName.EscapeMarkup()}[/]";
 
-					ProcessResult result = await processService.RunAsync("git", "pull --all --autostash", repo, ct).ConfigureAwait(false);
+					ProcessResult result = await processService.RunAsync(GitCommand, "pull --all --autostash", repo, ct).ConfigureAwait(false);
 
 					bool hasError = result.Errors.Any(line =>
 						line.Contains("error:", StringComparison.OrdinalIgnoreCase) ||
@@ -270,6 +272,136 @@ public class RepoService(IGitService gitService, IProcessService processService)
 			: "[green]Done. All repositories pulled successfully.[/]");
 
 		return failCount > 0 ? 1 : 0;
+	}
+
+	/// <summary>
+	/// Runs a git command in every repository found under the given path, writing each repository's
+	/// output verbatim beneath a header.
+	/// </summary>
+	/// <param name="path">
+	/// Directory to search. Repositories are found recursively, and a repository is never descended
+	/// into, so a path that is itself a repository runs the command only there.
+	/// </param>
+	/// <param name="args">
+	/// The git command line, already split into arguments, such as <c>["fetch", "--prune"]</c>.
+	/// Arguments containing spaces are quoted before they reach git.
+	/// </param>
+	/// <param name="color">
+	/// When true, forces git to colorize even though its output is redirected. Pass false for output
+	/// that will be piped or diffed.
+	/// </param>
+	/// <param name="ct">Cancels before the next repository starts. The repository in flight finishes.</param>
+	/// <returns>Zero when every repository exited zero, otherwise one.</returns>
+	/// <remarks>
+	/// Repositories run one at a time so that each block of output stays under its own header. A
+	/// repository that fails does not stop the ones after it.
+	/// </remarks>
+	public async Task<int> RunGitAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> args, bool color = true, CancellationToken ct = default)
+	{
+		_ = gitService;
+		Ensure.NotNull(path);
+		Ensure.NotNull(args);
+
+		if (args.Count == 0)
+		{
+			ErrorDisplay.ShowError("Specify a git command, for example: ktsu git status");
+			return 1;
+		}
+
+		string fullPath = path.ToString();
+
+		if (!Directory.Exists(fullPath))
+		{
+			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+			return 1;
+		}
+
+		ConcurrentBag<string> repos = [];
+		DiscoverGitReposRecursive(fullPath, repos);
+
+		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
+
+		if (sortedRepos.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
+			return 0;
+		}
+
+		string arguments = BuildGitArguments(args, color);
+		int failCount = 0;
+
+		foreach (string repo in sortedRepos)
+		{
+			ct.ThrowIfCancellationRequested();
+
+			ProcessResult result = await processService.RunAsync(GitCommand, arguments, repo, ct).ConfigureAwait(false);
+			WriteRepoOutput(Path.GetFileName(repo), result);
+
+			if (result.ExitCode != 0)
+			{
+				failCount++;
+			}
+		}
+
+		WriteRunSummary(sortedRepos.Count, failCount);
+
+		return failCount > 0 ? 1 : 0;
+	}
+
+	private static string BuildGitArguments(IReadOnlyList<string> args, bool color)
+	{
+		List<string> parts = [];
+
+		if (color)
+		{
+			// git only honours -c before the subcommand, and color.ui=always is what makes it
+			// colorize despite stdout being redirected into ProcessResult.
+			parts.Add("-c");
+			parts.Add("color.ui=always");
+		}
+
+		parts.AddRange(args);
+
+		return string.Join(' ', parts.Select(QuoteIfNeeded));
+	}
+
+	private static string QuoteIfNeeded(string arg)
+	{
+		bool needsQuotes = arg.Length == 0 || arg.Any(char.IsWhiteSpace) || arg.Contains('"', StringComparison.Ordinal);
+
+		return needsQuotes
+			? $"\"{arg.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+			: arg;
+	}
+
+	private static void WriteRepoOutput(string repoName, ProcessResult result)
+	{
+		string color = result.ExitCode == 0 ? "blue" : "red";
+		AnsiConsole.Write(new Rule($"[{color}]{repoName.EscapeMarkup()}[/]").LeftJustified());
+
+		// git's output goes straight to stdout rather than through AnsiConsole, which would strip the
+		// ANSI sequences we asked git for and try to parse any [square brackets] in a branch name,
+		// file path, or commit message as Spectre markup.
+		bool wroteAnything = false;
+
+		foreach (string line in result.Output.Concat(result.Errors))
+		{
+			Console.Out.WriteLine(line);
+			wroteAnything = true;
+		}
+
+		if (!wroteAnything)
+		{
+			AnsiConsole.MarkupLine("[dim](no output)[/]");
+		}
+	}
+
+	private static void WriteRunSummary(int repoCount, int failCount)
+	{
+		AnsiConsole.Write(new Rule().LeftJustified());
+
+		string color = failCount > 0 ? "yellow" : "green";
+		AnsiConsole.MarkupLine($"[{color}]{repoCount} repos · {repoCount - failCount} ok · {failCount} failed[/]");
 	}
 
 	/// <summary>
@@ -354,7 +486,10 @@ public class RepoService(IGitService gitService, IProcessService processService)
 		try
 		{
 			string gitDir = Path.Combine(directory, ".git");
-			if (Directory.Exists(gitDir))
+
+			// Worktrees and submodules store .git as a file holding a gitdir: pointer, so checking
+			// only for a directory would silently skip them.
+			if (Directory.Exists(gitDir) || File.Exists(gitDir))
 			{
 				repos.Add(directory);
 				return; // Don't recurse into git repos
