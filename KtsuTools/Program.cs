@@ -92,6 +92,11 @@ internal static class Program
 				.WithDescription("Generate code from AST/YAML definitions")
 				.WithExample("codegen", "--input", "ast.yaml", "--lang", "python");
 
+			config.AddCommand<GitCommand>("git")
+				.WithDescription("Run a git command in every repository under a directory")
+				.WithExample("git", "status")
+				.WithExample("git", "--", "fetch", "--prune");
+
 			config.AddBranch("repo", repo =>
 			{
 				repo.SetDescription("Batch operations across multiple repositories");
