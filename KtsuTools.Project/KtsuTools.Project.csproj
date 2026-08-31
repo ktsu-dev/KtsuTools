@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ktsu.Semantics.Paths" />
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Spectre.Console.Ansi" />
     <PackageReference Include="DiffPlex" />
