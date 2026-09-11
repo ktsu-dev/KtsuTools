@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="ktsu.Coder" />
     <PackageReference Include="YamlDotNet" />
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Spectre.Console.Ansi" />
