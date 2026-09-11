@@ -53,9 +53,14 @@ public class CodeGenService
 	/// <param name="outputFile">Optional absolute path to write generated code to. If null, writes to console.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-#pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
+	/// <remarks>
+	/// CA1822 and S2325 are the same complaint from two analyzers, and the answer to both is that
+	/// this service is a singleton injected into <c>CodeGenCommand</c>'s constructor: a static
+	/// method here would leave the command holding a dependency it takes and never uses.
+	/// </remarks>
+#pragma warning disable CA1822, S2325 // Mark members as static
 	public async Task<int> GenerateAsync(AbsoluteFilePath inputFile, string language, AbsoluteFilePath? outputFile = null, CancellationToken ct = default)
-#pragma warning restore CA1822
+#pragma warning restore CA1822, S2325
 	{
 		Ensure.NotNull(inputFile);
 		Ensure.NotNull(language);
