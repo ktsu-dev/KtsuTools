@@ -59,7 +59,7 @@ Flags belong after a `--` separator, otherwise `ktools` claims them as its own o
 | `markdown` | `KtsuTools.Markdown` | Markdown processing and linting — `lint` |
 | `memfrag` | `KtsuTools.MemFrag` | Memory fragmentation analysis |
 | `project` | `KtsuTools.Project` | Project and solution operations — `build`, `clean` |
-| `codegen` | `KtsuTools.CodeGen` | Code generation utilities |
+| `codegen` | `KtsuTools.CodeGen` | Generates C#, C++, JavaScript or Python from a YAML syntax tree, through [ktsu.Coder](https://github.com/ktsu-dev/Coder) |
 | `image` | `KtsuTools.Image` | Batch image processing and icon normalization |
 | `explorer` | `KtsuTools.FileExplorer` | Interactive file browsing |
 | `build-monitor` | `KtsuTools.BuildMonitor` | CI/CD build status monitoring |

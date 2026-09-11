@@ -3,286 +3,53 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("ktsu.KtsuTools.Test")]
-// Copyright (c) ktsu.dev
-// All rights reserved.
-// Licensed under the MIT license.
 
 namespace KtsuTools.CodeGen;
 
 using System.Collections.ObjectModel;
-using System.Globalization;
-using System.Text;
+
+using ktsu.Coder.Ast;
+using ktsu.Coder.Languages;
+using ktsu.Coder.Serialization;
 using ktsu.Semantics.Paths;
+
 using Spectre.Console;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
-
-#pragma warning disable CA1002 // Do not expose generic lists - needed for AST node model
 
 /// <summary>
-/// Interface for all AST nodes.
+/// Generates source from a YAML description of an abstract syntax tree.
 /// </summary>
-public interface IAstNode
-{
-	/// <summary>Gets the node type name.</summary>
-	public string NodeType { get; }
-}
-
-/// <summary>
-/// A function declaration AST node.
-/// </summary>
-public class FunctionDeclaration : IAstNode
-{
-	/// <inheritdoc/>
-	public string NodeType => "functionDeclaration";
-
-	/// <summary>Gets or sets the function name.</summary>
-	public string Name { get; set; } = string.Empty;
-
-	/// <summary>Gets or sets the return type.</summary>
-	public string ReturnType { get; set; } = "void";
-
-	/// <summary>Gets or sets the parameters.</summary>
-	public Collection<ParameterNode> Parameters { get; init; } = [];
-
-	/// <summary>Gets or sets the body statements.</summary>
-	public Collection<IAstNode> Body { get; init; } = [];
-}
-
-/// <summary>
-/// A parameter AST node.
-/// </summary>
-public class ParameterNode : IAstNode
-{
-	/// <inheritdoc/>
-	public string NodeType => "parameter";
-
-	/// <summary>Gets or sets the parameter name.</summary>
-	public string Name { get; set; } = string.Empty;
-
-	/// <summary>Gets or sets the type.</summary>
-	public string Type { get; set; } = string.Empty;
-
-	/// <summary>Gets or sets a value indicating whether this parameter is optional.</summary>
-	public bool IsOptional { get; set; }
-
-	/// <summary>Gets or sets the default value.</summary>
-	public string? DefaultValue { get; set; }
-}
-
-/// <summary>
-/// A variable declaration AST node.
-/// </summary>
-public class VariableDeclaration : IAstNode
-{
-	/// <inheritdoc/>
-	public string NodeType => "variableDeclaration";
-
-	/// <summary>Gets or sets the variable name.</summary>
-	public string Name { get; set; } = string.Empty;
-
-	/// <summary>Gets or sets the type.</summary>
-	public string? Type { get; set; }
-
-	/// <summary>Gets or sets the initial value expression.</summary>
-	public string? InitialValue { get; set; }
-
-	/// <summary>Gets or sets a value indicating whether this is a constant.</summary>
-	public bool IsConstant { get; set; }
-}
-
-/// <summary>
-/// A return statement AST node.
-/// </summary>
-public class ReturnStatement : IAstNode
-{
-	/// <inheritdoc/>
-	public string NodeType => "returnStatement";
-
-	/// <summary>Gets or sets the return expression.</summary>
-	public string? Expression { get; set; }
-}
-
-/// <summary>
-/// Interface for language code generators.
-/// </summary>
-public interface ILanguageGenerator
-{
-	/// <summary>Gets the language identifier.</summary>
-	public string LanguageId { get; }
-
-	/// <summary>Gets the display name.</summary>
-	public string DisplayName { get; }
-
-	/// <summary>Gets the file extension.</summary>
-	public string FileExtension { get; }
-
-	/// <summary>Generates code from an AST.</summary>
-	public string Generate(FunctionDeclaration declaration);
-}
-
-/// <summary>
-/// C# code generator.
-/// </summary>
-public class CSharpGenerator : ILanguageGenerator
-{
-	/// <inheritdoc/>
-	public string LanguageId => "csharp";
-
-	/// <inheritdoc/>
-	public string DisplayName => "C#";
-
-	/// <inheritdoc/>
-	public string FileExtension => "cs";
-
-	/// <inheritdoc/>
-	public string Generate(FunctionDeclaration declaration)
-	{
-		Ensure.NotNull(declaration);
-
-		StringBuilder sb = new();
-		string returnType = MapType(declaration.ReturnType);
-		string parameters = string.Join(", ", declaration.Parameters.Select(FormatParameter));
-
-		sb.AppendLine(CultureInfo.InvariantCulture, $"public {returnType} {declaration.Name}({parameters})");
-		sb.AppendLine("{");
-
-		foreach (IAstNode statement in declaration.Body)
-		{
-			AppendStatement(sb, statement);
-		}
-
-		sb.AppendLine("}");
-		return sb.ToString();
-	}
-
-	private static string FormatParameter(ParameterNode p)
-	{
-		string paramType = MapType(p.Type);
-		string defaultVal = p.IsOptional && p.DefaultValue is not null
-			? $" = {p.DefaultValue}"
-			: string.Empty;
-		return $"{paramType} {p.Name}{defaultVal}";
-	}
-
-	private static void AppendStatement(StringBuilder sb, IAstNode statement)
-	{
-		if (statement is ReturnStatement ret)
-		{
-			sb.AppendLine(CultureInfo.InvariantCulture, $"    return {ret.Expression};");
-		}
-		else if (statement is VariableDeclaration varDecl)
-		{
-			string varType = varDecl.Type is not null ? MapType(varDecl.Type) : "var";
-			string init = varDecl.InitialValue is not null ? $" = {varDecl.InitialValue}" : string.Empty;
-			string keyword = varDecl.IsConstant ? "const " : string.Empty;
-			sb.AppendLine(CultureInfo.InvariantCulture, $"    {keyword}{varType} {varDecl.Name}{init};");
-		}
-	}
-
-	private static string MapType(string type) => type switch
-	{
-		"str" or "string" => "string",
-		"int" => "int",
-		"float" => "float",
-		"double" => "double",
-		"bool" => "bool",
-		"void" => "void",
-		_ => type,
-	};
-}
-
-/// <summary>
-/// Python code generator.
-/// </summary>
-public class PythonGenerator : ILanguageGenerator
-{
-	/// <inheritdoc/>
-	public string LanguageId => "python";
-
-	/// <inheritdoc/>
-	public string DisplayName => "Python";
-
-	/// <inheritdoc/>
-	public string FileExtension => "py";
-
-	/// <inheritdoc/>
-	public string Generate(FunctionDeclaration declaration)
-	{
-		Ensure.NotNull(declaration);
-
-		StringBuilder sb = new();
-		string parameters = string.Join(", ", declaration.Parameters.Select(FormatParameter));
-		string returnHint = declaration.ReturnType != "void"
-			? $" -> {MapType(declaration.ReturnType)}"
-			: string.Empty;
-
-		sb.AppendLine(CultureInfo.InvariantCulture, $"def {declaration.Name}({parameters}){returnHint}:");
-
-		if (declaration.Body.Count == 0)
-		{
-			sb.AppendLine("    pass");
-		}
-		else
-		{
-			foreach (IAstNode statement in declaration.Body)
-			{
-				AppendStatement(sb, statement);
-			}
-		}
-
-		return sb.ToString();
-	}
-
-	private static string FormatParameter(ParameterNode p)
-	{
-		string typeHint = MapType(p.Type);
-		string defaultVal = p.IsOptional && p.DefaultValue is not null
-			? $" = {p.DefaultValue}"
-			: string.Empty;
-		return $"{p.Name}: {typeHint}{defaultVal}";
-	}
-
-	private static void AppendStatement(StringBuilder sb, IAstNode statement)
-	{
-		if (statement is ReturnStatement ret)
-		{
-			sb.AppendLine(CultureInfo.InvariantCulture, $"    return {ret.Expression}");
-		}
-		else if (statement is VariableDeclaration varDecl)
-		{
-			string init = varDecl.InitialValue ?? "None";
-			sb.AppendLine(CultureInfo.InvariantCulture, $"    {varDecl.Name} = {init}");
-		}
-	}
-
-	private static string MapType(string type) => type switch
-	{
-		"int" => "int",
-		"string" or "str" => "str",
-		"bool" => "bool",
-		"float" or "double" => "float",
-		"void" => "None",
-		_ => type,
-	};
-}
-
-/// <summary>
-/// Service for generating code from YAML AST definitions.
-/// </summary>
+/// <remarks>
+/// The AST, the YAML on both sides of it and every generator come from
+/// <see href="https://github.com/ktsu-dev/Coder">ktsu.Coder</see>. This module used to carry its own
+/// — an <c>IAstNode</c>, five node types, a hand-written YAML reader and a C# and a Python emitter,
+/// all of which that package already had along with C++, JavaScript, a round trip back to YAML, and
+/// a test suite. What is left here is what a command-line front end is actually for: finding the
+/// file, choosing the generator, and putting the result somewhere.
+/// </remarks>
 public class CodeGenService
 {
-	private static readonly Dictionary<string, ILanguageGenerator> Generators = new(StringComparer.OrdinalIgnoreCase)
-	{
-		["csharp"] = new CSharpGenerator(),
-		["python"] = new PythonGenerator(),
-	};
+	/// <summary>
+	/// The generators, by the name a caller asks for them under.
+	/// </summary>
+	private static readonly ReadOnlyDictionary<string, ILanguageGenerator> Generators =
+		new(new Dictionary<string, ILanguageGenerator>(StringComparer.OrdinalIgnoreCase)
+		{
+			["csharp"] = new CSharpGenerator(),
+			["cpp"] = new CppGenerator(),
+			["javascript"] = new JavaScriptGenerator(),
+			["python"] = new PythonGenerator(),
+		});
+
+	/// <summary>
+	/// Gets the languages this command can generate.
+	/// </summary>
+	public static IEnumerable<string> Languages => Generators.Keys;
 
 	/// <summary>
 	/// Generates code from a YAML AST definition file.
 	/// </summary>
 	/// <param name="inputFile">Absolute path to the YAML AST input file.</param>
-	/// <param name="language">Target language identifier (e.g. "csharp", "python").</param>
+	/// <param name="language">Target language identifier (e.g. "csharp", "cpp").</param>
 	/// <param name="outputFile">Optional absolute path to write generated code to. If null, writes to console.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
@@ -310,147 +77,66 @@ public class CodeGenService
 
 		AnsiConsole.MarkupLine($"[bold]Code Generation[/] - {generator.DisplayName}");
 
-		// Read and parse YAML
-		string yamlContent = await File.ReadAllTextAsync(fullPath, ct).ConfigureAwait(false);
+		string yaml = await File.ReadAllTextAsync(fullPath, ct).ConfigureAwait(false);
 
-		FunctionDeclaration? function = ParseYaml(yamlContent);
-
-		if (function is null)
+		if (!TryRead(yaml, out AstNode? node))
 		{
-			AnsiConsole.MarkupLine("[red]Error: Could not parse YAML as a function declaration.[/]");
 			return 1;
 		}
 
-		// Generate code
-		string generatedCode = generator.Generate(function);
+		// A generator says whether it can write a node rather than throwing partway through one, so
+		// a file naming something the target has no form for is reported here instead of arriving
+		// as half a file.
+		if (!generator.CanGenerate(node!))
+		{
+			AnsiConsole.MarkupLine(
+				$"[red]Error: {generator.DisplayName.EscapeMarkup()} cannot generate a {node!.GetNodeTypeName().EscapeMarkup()}.[/]");
+			return 1;
+		}
 
-		// Output
+		string generated = generator.Generate(node!);
+
 		if (outputFile is not null)
 		{
 			string outputPath = outputFile.ToString();
-			await File.WriteAllTextAsync(outputPath, generatedCode, ct).ConfigureAwait(false);
+			await File.WriteAllTextAsync(outputPath, generated, ct).ConfigureAwait(false);
 			AnsiConsole.MarkupLine($"[green]Generated code written to: {outputPath.EscapeMarkup()}[/]");
+			return 0;
 		}
-		else
-		{
-			AnsiConsole.Write(new Panel(generatedCode.EscapeMarkup())
-				.Header($"[blue]{generator.DisplayName} Output[/]")
-				.Border(BoxBorder.Rounded));
-		}
+
+		AnsiConsole.Write(new Panel(generated.EscapeMarkup())
+			.Header($"[blue]{generator.DisplayName} Output[/]")
+			.Border(BoxBorder.Rounded));
 
 		return 0;
 	}
 
-	private static FunctionDeclaration? ParseYaml(string yamlContent)
+	/// <summary>
+	/// Reads the AST a document describes, reporting rather than throwing when it describes none.
+	/// </summary>
+	/// <param name="yaml">The document.</param>
+	/// <param name="node">The AST it described.</param>
+	/// <returns><see langword="true"/> when one was read.</returns>
+	internal static bool TryRead(string yaml, out AstNode? node)
 	{
+		node = null;
+
 		try
 		{
-			IDeserializer deserializer = new DeserializerBuilder()
-				.WithNamingConvention(CamelCaseNamingConvention.Instance)
-				.IgnoreUnmatchedProperties()
-				.Build();
-
-			Dictionary<string, object> root = deserializer.Deserialize<Dictionary<string, object>>(yamlContent);
-
-			if (root.TryGetValue("functionDeclaration", out object? funcObj) && funcObj is Dictionary<object, object> funcDict)
-			{
-				return ParseFunctionDeclaration(funcDict);
-			}
-
-			return null;
+			node = new YamlDeserializer().Deserialize(yaml);
 		}
-		catch (Exception ex) when (ex is YamlDotNet.Core.YamlException or InvalidCastException or KeyNotFoundException)
+		catch (Exception ex) when (ex is YamlDotNet.Core.YamlException or InvalidCastException or ArgumentException)
 		{
-			AnsiConsole.MarkupLine($"[yellow]YAML parsing warning: {ex.Message.EscapeMarkup()}[/]");
-			return null;
+			AnsiConsole.MarkupLine($"[red]Error: could not read the document: {ex.Message.EscapeMarkup()}[/]");
+			return false;
 		}
+
+		if (node is null)
+		{
+			AnsiConsole.MarkupLine("[red]Error: the document does not describe an AST node.[/]");
+			return false;
+		}
+
+		return true;
 	}
-
-	private static FunctionDeclaration ParseFunctionDeclaration(Dictionary<object, object> dict)
-	{
-		FunctionDeclaration func = new()
-		{
-			Name = GetStringValue(dict, "name") ?? "unnamed",
-			ReturnType = GetStringValue(dict, "returnType") ?? "void",
-		};
-
-		ParseParameters(dict, func);
-		ParseBody(dict, func);
-
-		return func;
-	}
-
-	private static void ParseParameters(Dictionary<object, object> dict, FunctionDeclaration func)
-	{
-		if (!dict.TryGetValue("parameters", out object? paramsObj) || paramsObj is not List<object> paramsList)
-		{
-			return;
-		}
-
-		foreach (object paramObj in paramsList)
-		{
-			if (paramObj is Dictionary<object, object> paramDict)
-			{
-				func.Parameters.Add(new ParameterNode
-				{
-					Name = GetStringValue(paramDict, "name") ?? "arg",
-					Type = GetStringValue(paramDict, "type") ?? "string",
-					IsOptional = GetBoolValue(paramDict, "isOptional"),
-					DefaultValue = GetStringValue(paramDict, "defaultValue"),
-				});
-			}
-		}
-	}
-
-	private static void ParseBody(Dictionary<object, object> dict, FunctionDeclaration func)
-	{
-		if (!dict.TryGetValue("body", out object? bodyObj) || bodyObj is not List<object> bodyList)
-		{
-			return;
-		}
-
-		foreach (object stmtObj in bodyList)
-		{
-			if (stmtObj is Dictionary<object, object> stmtDict)
-			{
-				IAstNode? node = ParseStatement(stmtDict);
-				if (node is not null)
-				{
-					func.Body.Add(node);
-				}
-			}
-		}
-	}
-
-	private static IAstNode? ParseStatement(Dictionary<object, object> dict)
-	{
-		if (dict.ContainsKey("returnStatement") && dict["returnStatement"] is Dictionary<object, object> retDict)
-		{
-			return new ReturnStatement
-			{
-				Expression = GetStringValue(retDict, "expression"),
-			};
-		}
-
-		if (dict.ContainsKey("variableDeclaration") && dict["variableDeclaration"] is Dictionary<object, object> varDict)
-		{
-			return new VariableDeclaration
-			{
-				Name = GetStringValue(varDict, "name") ?? "x",
-				Type = GetStringValue(varDict, "type"),
-				InitialValue = GetStringValue(varDict, "initialValue"),
-				IsConstant = GetBoolValue(varDict, "isConstant"),
-			};
-		}
-
-		return null;
-	}
-
-	private static string? GetStringValue(Dictionary<object, object> dict, string key) =>
-		dict.TryGetValue(key, out object? value) ? value?.ToString() : null;
-
-	private static bool GetBoolValue(Dictionary<object, object> dict, string key) =>
-		dict.TryGetValue(key, out object? value) && value is bool b && b;
 }
-
-#pragma warning restore CA1002
