@@ -1,8 +1,8 @@
-## v1.3.0 (minor)
+## v1.4.0 (minor)
 
-Changes since v1.2.0:
+Changes since v1.3.0:
 
-- test: compare the parsed divergence as a value rather than dereferencing it [patch] ([@matt-edmondson](https://github.com/matt-edmondson))
-- feat: add ktsu repo fetch for a read-only workspace survey [minor] ([@matt-edmondson](https://github.com/matt-edmondson))
-- fix: raise ktsu.Semantics.Strings to the version Semantics.Paths requires [patch] ([@matt-edmondson](https://github.com/matt-edmondson))
+- Address code quality Path.Combine comments in repo cache tests ([@copilot-swe-agent[bot]](https://github.com/copilot-swe-agent[bot]))
+- Add repo validate command to prune stale cache entries ([@copilot-swe-agent[bot]](https://github.com/copilot-swe-agent[bot]))
+- Initial plan ([@copilot-swe-agent[bot]](https://github.com/copilot-swe-agent[bot]))
 
