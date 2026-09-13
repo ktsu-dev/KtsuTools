@@ -178,9 +178,10 @@ public class RepoServiceTests
 	{
 		AheadBehind? parsed = AheadBehind.Parse(["3\t7"]);
 
-		Assert.IsNotNull(parsed);
-		Assert.AreEqual(3, parsed.Value.Ahead);
-		Assert.AreEqual(7, parsed.Value.Behind);
+		Assert.AreEqual<AheadBehind?>(
+			new AheadBehind(3, 7),
+			parsed,
+			"The left count is how far ahead the branch is, the right how far behind.");
 	}
 
 	[TestMethod]
