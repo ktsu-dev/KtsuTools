@@ -80,6 +80,129 @@ public class RepoServiceTests
 	}
 
 	[TestMethod]
+	public async Task FetchAllAsyncFetchesEveryRepositoryWithoutTouchingWorkingTrees()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_fetch_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "alpha", ".git"));
+		Directory.CreateDirectory(Path.Join(root, "beta", ".git"));
+		try
+		{
+			RecordingFetchProcessService fake = new();
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.FetchAllAsync(rootPath, parallel: false).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit, "Every repository fetched cleanly, so the exit code should be zero.");
+
+			List<string> fetchArguments = [.. fake.Calls
+				.Where(c => c.Arguments.StartsWith("fetch", StringComparison.Ordinal))
+				.Select(c => c.Arguments)];
+
+			Assert.AreEqual(2, fetchArguments.Count, "Both repositories should be fetched.");
+			Assert.IsTrue(
+				fake.Calls.All(c => c.Command == "git"),
+				"Only git should be invoked.");
+			Assert.IsFalse(
+				fake.Calls.Any(c =>
+					c.Arguments.StartsWith("pull", StringComparison.Ordinal) ||
+					c.Arguments.Contains("merge", StringComparison.Ordinal) ||
+					c.Arguments.Contains("autostash", StringComparison.Ordinal)),
+				"Fetch must not merge, pull, or autostash — that is what makes it safe over dirty working trees.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task FetchAllAsyncReportsFailuresInTheExitCode()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_fetchfail_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "good", ".git"));
+		Directory.CreateDirectory(Path.Join(root, "bad", ".git"));
+		try
+		{
+			RecordingFetchProcessService fake = new(failInDirNamed: "bad");
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.FetchAllAsync(rootPath, parallel: false).ConfigureAwait(false);
+
+			Assert.AreEqual(1, exit, "A failed fetch should surface in the aggregate exit code.");
+			Assert.IsFalse(
+				fake.Calls.Any(c =>
+					c.Arguments.StartsWith("rev-list", StringComparison.Ordinal) &&
+					Path.GetFileName(c.WorkingDirectory) == "bad"),
+				"A repository whose fetch failed has nothing worth counting against its upstream.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task FetchAllAsyncCountsDivergenceAgainstTheUpstream()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_fetchcount_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "solo", ".git"));
+		try
+		{
+			RecordingFetchProcessService fake = new(aheadBehind: "2\t5");
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			await service.FetchAllAsync(rootPath, parallel: false).ConfigureAwait(false);
+
+			string? revList = fake.Calls
+				.Select(c => c.Arguments)
+				.FirstOrDefault(a => a.StartsWith("rev-list", StringComparison.Ordinal));
+
+			Assert.IsNotNull(revList, "Ahead/behind should be counted after a successful fetch.");
+			Assert.IsTrue(
+				revList.Contains("--left-right", StringComparison.Ordinal) &&
+				revList.Contains("--count", StringComparison.Ordinal) &&
+				revList.Contains("HEAD...@{upstream}", StringComparison.Ordinal),
+				$"Counting should compare HEAD against its upstream, but ran '{revList}'.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public void AheadBehindParseReadsTheTabSeparatedCounts()
+	{
+		AheadBehind? parsed = AheadBehind.Parse(["3\t7"]);
+
+		Assert.IsNotNull(parsed);
+		Assert.AreEqual(3, parsed.Value.Ahead);
+		Assert.AreEqual(7, parsed.Value.Behind);
+	}
+
+	[TestMethod]
+	public void AheadBehindParseReturnsNullForOutputThatIsNotTwoCounts()
+	{
+		Assert.IsNull(AheadBehind.Parse(null), "No output means no upstream to compare against.");
+		Assert.IsNull(AheadBehind.Parse([]), "No output means no upstream to compare against.");
+		Assert.IsNull(AheadBehind.Parse(["fatal: no upstream configured for branch 'main'"]));
+		Assert.IsNull(AheadBehind.Parse(["3"]), "One count is not a divergence.");
+	}
+
+	[TestMethod]
+	public void AheadBehindRenderShowsArrowsSyncAndNoUpstream()
+	{
+		Assert.AreEqual("↑2 ↓5", AheadBehind.Render(new AheadBehind(2, 5)));
+		Assert.AreEqual("↑2", AheadBehind.Render(new AheadBehind(2, 0)), "A zero side should be dropped.");
+		Assert.AreEqual("↓5", AheadBehind.Render(new AheadBehind(0, 5)), "A zero side should be dropped.");
+		Assert.AreEqual("≡", AheadBehind.Render(new AheadBehind(0, 0)));
+		Assert.AreEqual("—", AheadBehind.Render(null));
+	}
+
+	[TestMethod]
 	public async Task BuildAndTestAsyncParallelAggregatesExitCodes()
 	{
 		string root = Path.Combine(Path.GetTempPath(), $"ktsu_par_{Guid.NewGuid():N}");
@@ -162,6 +285,32 @@ public class RepoServiceTests
 
 			return Task.FromResult(fails
 				? new ProcessResult(1, [], ["fatal: could not read from remote repository"])
+				: new ProcessResult(0, [], []));
+		}
+	}
+
+	private sealed class RecordingFetchProcessService(string? failInDirNamed = null, string aheadBehind = "0\t0") : IProcessService
+	{
+		public List<(string Command, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
+			RunAsync(command, arguments, workingDirectory, null, ct);
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default)
+		{
+			Calls.Add((command, arguments, workingDirectory));
+
+			bool fails = failInDirNamed is not null &&
+				workingDirectory is not null &&
+				string.Equals(Path.GetFileName(workingDirectory), failInDirNamed, StringComparison.OrdinalIgnoreCase);
+
+			if (fails)
+			{
+				return Task.FromResult(new ProcessResult(1, [], ["fatal: could not read from remote repository"]));
+			}
+
+			return Task.FromResult(arguments.StartsWith("rev-list", StringComparison.Ordinal)
+				? new ProcessResult(0, [aheadBehind], [])
 				: new ProcessResult(0, [], []));
 		}
 	}
