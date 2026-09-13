@@ -57,12 +57,12 @@ public class RepoServiceTests
 	[TestMethod]
 	public async Task DiscoverRepositoriesAsyncUpdatesCachedRepositoriesAndSolutions()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_cache_{Guid.NewGuid():N}");
-		string repoPath = Path.Combine(root, "repo-a");
-		string nestedRepoPath = Path.Combine(root, "nested", "repo-b");
-		string solutionPath = Path.Combine(repoPath, "RepoA.sln");
-		Directory.CreateDirectory(Path.Combine(repoPath, ".git"));
-		Directory.CreateDirectory(Path.Combine(nestedRepoPath, ".git"));
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_cache_{Guid.NewGuid():N}");
+		string repoPath = Path.Join(root, "repo-a");
+		string nestedRepoPath = Path.Join(root, "nested", "repo-b");
+		string solutionPath = Path.Join(repoPath, "RepoA.sln");
+		Directory.CreateDirectory(Path.Join(repoPath, ".git"));
+		Directory.CreateDirectory(Path.Join(nestedRepoPath, ".git"));
 		await File.WriteAllTextAsync(solutionPath, string.Empty).ConfigureAwait(false);
 
 		try
@@ -96,11 +96,11 @@ public class RepoServiceTests
 	[TestMethod]
 	public async Task ValidateCacheAsyncDryRunReportsStaleButDoesNotPrune()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_validate_dry_{Guid.NewGuid():N}");
-		string liveRepo = Path.Combine(root, "repo-live");
-		string staleRepo = Path.Combine(root, "repo-stale");
-		string liveSolution = Path.Combine(root, "Live.sln");
-		string staleSolution = Path.Combine(root, "Stale.sln");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_validate_dry_{Guid.NewGuid():N}");
+		string liveRepo = Path.Join(root, "repo-live");
+		string staleRepo = Path.Join(root, "repo-stale");
+		string liveSolution = Path.Join(root, "Live.sln");
+		string staleSolution = Path.Join(root, "Stale.sln");
 		Directory.CreateDirectory(liveRepo);
 		await File.WriteAllTextAsync(liveSolution, string.Empty).ConfigureAwait(false);
 
@@ -134,11 +134,11 @@ public class RepoServiceTests
 	[TestMethod]
 	public async Task ValidateCacheAsyncPrunesStaleEntriesAndPersists()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_validate_{Guid.NewGuid():N}");
-		string liveRepo = Path.Combine(root, "repo-live");
-		string staleRepo = Path.Combine(root, "repo-stale");
-		string liveSolution = Path.Combine(root, "Live.sln");
-		string staleSolution = Path.Combine(root, "Stale.sln");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_validate_{Guid.NewGuid():N}");
+		string liveRepo = Path.Join(root, "repo-live");
+		string staleRepo = Path.Join(root, "repo-stale");
+		string liveSolution = Path.Join(root, "Live.sln");
+		string staleSolution = Path.Join(root, "Stale.sln");
 		Directory.CreateDirectory(liveRepo);
 		await File.WriteAllTextAsync(liveSolution, string.Empty).ConfigureAwait(false);
 
