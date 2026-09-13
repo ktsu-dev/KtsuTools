@@ -8,6 +8,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using ktsu.Semantics.Paths;
+using KtsuTools.Core.Services.Settings;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Repo;
@@ -46,6 +47,121 @@ public class RepoServiceTests
 				new[] { repoA, repoB },
 				result.ToArray(),
 				"Should return the two real repos, not the plain folder.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task DiscoverRepositoriesAsyncUpdatesCachedRepositoriesAndSolutions()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_cache_{Guid.NewGuid():N}");
+		string repoPath = Path.Join(root, "repo-a");
+		string nestedRepoPath = Path.Join(root, "nested", "repo-b");
+		string solutionPath = Path.Join(repoPath, "RepoA.sln");
+		Directory.CreateDirectory(Path.Join(repoPath, ".git"));
+		Directory.CreateDirectory(Path.Join(nestedRepoPath, ".git"));
+		await File.WriteAllTextAsync(solutionPath, string.Empty).ConfigureAwait(false);
+
+		try
+		{
+			using RepoCacheSettings cache = new();
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			await service.DiscoverRepositoriesAsync(rootPath).ConfigureAwait(false);
+
+			CollectionAssert.AreEquivalent(
+				new[] { repoPath, nestedRepoPath },
+				cache.Repositories.ToArray(),
+				"Discover should refresh the cached repository list.");
+			CollectionAssert.AreEquivalent(
+				new[] { solutionPath },
+				cache.Solutions.ToArray(),
+				"Discover should refresh the cached solution list.");
+			settings.Verify(s => s.SaveAsync(It.IsAny<RepoCacheSettings>()), Times.Once);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ValidateCacheAsyncDryRunReportsStaleButDoesNotPrune()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_validate_dry_{Guid.NewGuid():N}");
+		string liveRepo = Path.Join(root, "repo-live");
+		string staleRepo = Path.Join(root, "repo-stale");
+		string liveSolution = Path.Join(root, "Live.sln");
+		string staleSolution = Path.Join(root, "Stale.sln");
+		Directory.CreateDirectory(liveRepo);
+		await File.WriteAllTextAsync(liveSolution, string.Empty).ConfigureAwait(false);
+
+		try
+		{
+			using RepoCacheSettings cache = new()
+			{
+				Repositories = [liveRepo, staleRepo],
+				Solutions = [liveSolution, staleSolution],
+			};
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+
+			int exit = await service.ValidateCacheAsync(dryRun: true).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			CollectionAssert.AreEquivalent(new[] { liveRepo, staleRepo }, cache.Repositories.ToArray());
+			CollectionAssert.AreEquivalent(new[] { liveSolution, staleSolution }, cache.Solutions.ToArray());
+			settings.Verify(s => s.SaveAsync(It.IsAny<RepoCacheSettings>()), Times.Never);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ValidateCacheAsyncPrunesStaleEntriesAndPersists()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_validate_{Guid.NewGuid():N}");
+		string liveRepo = Path.Join(root, "repo-live");
+		string staleRepo = Path.Join(root, "repo-stale");
+		string liveSolution = Path.Join(root, "Live.sln");
+		string staleSolution = Path.Join(root, "Stale.sln");
+		Directory.CreateDirectory(liveRepo);
+		await File.WriteAllTextAsync(liveSolution, string.Empty).ConfigureAwait(false);
+
+		try
+		{
+			using RepoCacheSettings cache = new()
+			{
+				Repositories = [liveRepo, staleRepo],
+				Solutions = [liveSolution, staleSolution],
+			};
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+
+			int exit = await service.ValidateCacheAsync().ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			CollectionAssert.AreEquivalent(new[] { liveRepo }, cache.Repositories.ToArray());
+			CollectionAssert.AreEquivalent(new[] { liveSolution }, cache.Solutions.ToArray());
+			settings.Verify(s => s.SaveAsync(It.IsAny<RepoCacheSettings>()), Times.Once);
 		}
 		finally
 		{

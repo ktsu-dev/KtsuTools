@@ -14,6 +14,7 @@ using System.Collections.ObjectModel;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
+using KtsuTools.Core.Services.Settings;
 using KtsuTools.Core.UI;
 using Spectre.Console;
 
@@ -35,13 +36,15 @@ public record SolutionInfo
 /// <summary>
 /// Service for cross-repository operations.
 /// </summary>
-public class RepoService(IGitService gitService, IProcessService processService)
+public class RepoService(IGitService gitService, IProcessService processService, ISettingsService? settingsService = null)
 {
 	private const string DotnetCommand = "dotnet";
 	private const string GitCommand = "git";
 
 	private readonly IGitService gitService = gitService;
 	private readonly IProcessService processService = processService;
+	private readonly ISettingsService settingsService = settingsService ?? new SettingsService();
+	private RepoCacheSettings? cacheStore;
 
 	// Spectre's ProgressTask is not thread-safe, and FetchAllAsync updates it from parallel workers.
 	private readonly Lock fetchLock = new();
@@ -74,6 +77,8 @@ public class RepoService(IGitService gitService, IProcessService processService)
 			}).ConfigureAwait(false);
 
 		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
+		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
+		await SaveCacheAsync(sortedRepos, solutionFiles).ConfigureAwait(false);
 
 		// Display results
 		Table table = new();
@@ -91,6 +96,77 @@ public class RepoService(IGitService gitService, IProcessService processService)
 		AnsiConsole.MarkupLine($"[green]Found {sortedRepos.Count} repositories.[/]");
 
 		return sortedRepos;
+	}
+
+	/// <summary>
+	/// Validates the cached repository and solution paths, reporting and optionally pruning stale entries.
+	/// </summary>
+	/// <param name="dryRun">When true, reports stale cache entries without pruning them.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Zero when validation completed.</returns>
+	public async Task<int> ValidateCacheAsync(bool dryRun = false, CancellationToken ct = default)
+	{
+		ct.ThrowIfCancellationRequested();
+		RepoCacheSettings cache = GetCacheStore();
+		List<string> staleRepos = [.. cache.Repositories.Where(path => !Directory.Exists(path))];
+		List<string> staleSolutions = [.. cache.Solutions.Where(path => !File.Exists(path))];
+
+		if (staleRepos.Count == 0 && staleSolutions.Count == 0)
+		{
+			AnsiConsole.MarkupLine($"[green]Cache is valid.[/] Repositories: {cache.Repositories.Count}, solutions: {cache.Solutions.Count}.");
+			return 0;
+		}
+
+		Table table = new()
+		{
+			Border = TableBorder.Rounded,
+		};
+		table.AddColumn("Type");
+		table.AddColumn("Path");
+		table.AddColumn("Status");
+
+		foreach (string path in staleRepos.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+		{
+			table.AddRow("Repository", path.EscapeMarkup(), "[yellow]stale[/]");
+		}
+
+		foreach (string path in staleSolutions.OrderBy(p => p, StringComparer.OrdinalIgnoreCase))
+		{
+			table.AddRow("Solution", path.EscapeMarkup(), "[yellow]stale[/]");
+		}
+
+		AnsiConsole.Write(table);
+
+		int staleRepoCount = staleRepos.Count;
+		int staleSolutionCount = staleSolutions.Count;
+		int remainingRepos = cache.Repositories.Count - staleRepoCount;
+		int remainingSolutions = cache.Solutions.Count - staleSolutionCount;
+
+		if (dryRun)
+		{
+			AnsiConsole.MarkupLine(
+				$"[yellow]Dry run:[/] would prune {staleRepoCount} repository entr{(staleRepoCount == 1 ? "y" : "ies")} and {staleSolutionCount} solution entr{(staleSolutionCount == 1 ? "y" : "ies")}.");
+			AnsiConsole.MarkupLine($"[blue]Would remain:[/] {remainingRepos} repositories, {remainingSolutions} solutions.");
+			return 0;
+		}
+
+		foreach (string path in staleRepos)
+		{
+			_ = cache.Repositories.Remove(path);
+		}
+
+		foreach (string path in staleSolutions)
+		{
+			_ = cache.Solutions.Remove(path);
+		}
+
+		await settingsService.SaveAsync(cache).ConfigureAwait(false);
+
+		AnsiConsole.MarkupLine(
+			$"[green]Pruned {staleRepoCount} repository entr{(staleRepoCount == 1 ? "y" : "ies")} and {staleSolutionCount} solution entr{(staleSolutionCount == 1 ? "y" : "ies")}.[/]");
+		AnsiConsole.MarkupLine($"[blue]Remaining:[/] {cache.Repositories.Count} repositories, {cache.Solutions.Count} solutions.");
+
+		return 0;
 	}
 
 	/// <summary>
@@ -685,4 +761,25 @@ public class RepoService(IGitService gitService, IProcessService processService)
 			return [];
 		}
 	}
+
+	private async Task SaveCacheAsync(IReadOnlyList<string> repositories, IReadOnlyList<string> solutions)
+	{
+		RepoCacheSettings cache = GetCacheStore();
+		cache.Repositories.Clear();
+		cache.Solutions.Clear();
+
+		foreach (string repository in repositories.Distinct(StringComparer.OrdinalIgnoreCase))
+		{
+			cache.Repositories.Add(repository);
+		}
+
+		foreach (string solution in solutions.Distinct(StringComparer.OrdinalIgnoreCase))
+		{
+			cache.Solutions.Add(solution);
+		}
+
+		await settingsService.SaveAsync(cache).ConfigureAwait(false);
+	}
+
+	private RepoCacheSettings GetCacheStore() => cacheStore ??= settingsService.LoadOrCreate<RepoCacheSettings>();
 }

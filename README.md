@@ -57,12 +57,15 @@ ktools repo fetch --path c:/dev/ktsu-dev
 Repositories are fetched concurrently; pass `--sequential` to fetch them one at a time. Each row
 shows `↑n ↓n` for a diverged branch, `≡` when it matches its upstream, and `—` when it has none.
 
+`ktools repo validate` checks the cached repository and solution paths created by `repo discover`,
+reports stale entries, and prunes them. Use `--dry-run` to preview without pruning.
+
 ## Command Groups
 
 | Group | Module | What it does |
 | --- | --- | --- |
 | `git` | `KtsuTools.Repo` | Run one git command in every repository under a directory |
-| `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `build`, `fetch`, `pull`, `update-packages` |
+| `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `validate`, `build`, `fetch`, `pull`, `update-packages` |
 | `packages` | `KtsuTools.Packages` | NuGet package maintenance — `update-packages`, `migrate-cpm` |
 | `dedup` | `KtsuTools.FileDedupe` | Duplicate file detection and removal — `scan`, `dry-run`, `dedupe`, `stats` |
 | `merge-batch` | `KtsuTools.Merge` | Iterative multi-version file merging — `merge`, `merge-history` |
