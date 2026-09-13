@@ -46,12 +46,23 @@ ktools git --path c:/dev -- fetch --prune
 
 Flags belong after a `--` separator, otherwise `ktools` claims them as its own options.
 
+`ktools repo fetch` is the read-only way to survey a workspace. It updates remote-tracking refs
+and reports how far each repository has drifted from its upstream, without the merge and
+`--autostash` that `ktools repo pull` performs, so it is safe to run over dirty working trees.
+
+```bash
+ktools repo fetch --path c:/dev/ktsu-dev
+```
+
+Repositories are fetched concurrently; pass `--sequential` to fetch them one at a time. Each row
+shows `↑n ↓n` for a diverged branch, `≡` when it matches its upstream, and `—` when it has none.
+
 ## Command Groups
 
 | Group | Module | What it does |
 | --- | --- | --- |
 | `git` | `KtsuTools.Repo` | Run one git command in every repository under a directory |
-| `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `pull`, `list`, `update` |
+| `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `build`, `fetch`, `pull`, `update-packages` |
 | `packages` | `KtsuTools.Packages` | NuGet package maintenance — `update-packages`, `migrate-cpm` |
 | `dedup` | `KtsuTools.FileDedupe` | Duplicate file detection and removal — `scan`, `dry-run`, `dedupe`, `stats` |
 | `merge-batch` | `KtsuTools.Merge` | Iterative multi-version file merging — `merge`, `merge-history` |

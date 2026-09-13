@@ -43,6 +43,9 @@ public class RepoService(IGitService gitService, IProcessService processService)
 	private readonly IGitService gitService = gitService;
 	private readonly IProcessService processService = processService;
 
+	// Spectre's ProgressTask is not thread-safe, and FetchAllAsync updates it from parallel workers.
+	private readonly Lock fetchLock = new();
+
 	/// <summary>
 	/// Discovers git repositories in the given directory.
 	/// </summary>
@@ -273,6 +276,140 @@ public class RepoService(IGitService gitService, IProcessService processService)
 
 		return failCount > 0 ? 1 : 0;
 	}
+
+	/// <summary>
+	/// Fetches every repository under the given path without touching any working tree, and reports
+	/// how far each one has diverged from its upstream.
+	/// </summary>
+	/// <param name="path">Directory to search. Repositories are found recursively.</param>
+	/// <param name="parallel">
+	/// When true (the default) repositories are fetched concurrently. Fetching is a read-only
+	/// network operation, so unlike <see cref="BuildAndTestAsync"/> there is nothing to serialize.
+	/// </param>
+	/// <param name="ct">Cancels before the next repository starts.</param>
+	/// <returns>Zero when every repository fetched cleanly, otherwise one.</returns>
+	/// <remarks>
+	/// This is the survey counterpart to <see cref="PullAllAsync"/>: <c>git pull --autostash</c>
+	/// stashes and merges, this only updates remote-tracking refs, so it is safe to run across a
+	/// workspace with uncommitted work in it.
+	/// </remarks>
+	public async Task<int> FetchAllAsync(AbsoluteDirectoryPath path, bool parallel = true, CancellationToken ct = default)
+	{
+		_ = gitService;
+		Ensure.NotNull(path);
+
+		string fullPath = path.ToString();
+
+		if (!Directory.Exists(fullPath))
+		{
+			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+			return 1;
+		}
+
+		ConcurrentBag<string> repos = [];
+		DiscoverGitReposRecursive(fullPath, repos);
+
+		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
+
+		if (sortedRepos.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
+			return 0;
+		}
+
+		ConcurrentDictionary<string, FetchOutcome> outcomes = [];
+
+		await AnsiConsole.Progress()
+			.AutoClear(false)
+			.HideCompleted(false)
+			.StartAsync(async progressContext =>
+			{
+				ProgressTask task = progressContext.AddTask("[green]Fetching repositories[/]", maxValue: sortedRepos.Count);
+
+				if (parallel)
+				{
+					ParallelOptions options = new() { CancellationToken = ct, MaxDegreeOfParallelism = Environment.ProcessorCount };
+
+					await Parallel.ForEachAsync(sortedRepos, options, async (repo, token) =>
+						outcomes[repo] = await FetchRepositoryAsync(repo, task, token).ConfigureAwait(false))
+						.ConfigureAwait(false);
+				}
+				else
+				{
+					foreach (string repo in sortedRepos)
+					{
+						ct.ThrowIfCancellationRequested();
+						outcomes[repo] = await FetchRepositoryAsync(repo, task, ct).ConfigureAwait(false);
+					}
+				}
+			}).ConfigureAwait(false);
+
+		WriteFetchTable(sortedRepos, outcomes);
+
+		int failCount = outcomes.Values.Count(outcome => outcome.Failed);
+		WriteRunSummary(sortedRepos.Count, failCount);
+
+		return failCount > 0 ? 1 : 0;
+	}
+
+	private async Task<FetchOutcome> FetchRepositoryAsync(string repo, ProgressTask task, CancellationToken ct)
+	{
+		string repoName = Path.GetFileName(repo);
+
+		// --prune drops remote-tracking refs for branches deleted upstream, so the counts below never
+		// describe a branch that is no longer there. It rewrites no working tree.
+		ProcessResult fetchResult = await processService.RunAsync(GitCommand, "fetch --all --prune", repo, ct).ConfigureAwait(false);
+
+		bool failed = fetchResult.ExitCode != 0;
+
+		lock (fetchLock)
+		{
+			task.Description = $"[green]Fetching {repoName.EscapeMarkup()}[/]";
+			task.Increment(1);
+		}
+
+		if (failed)
+		{
+			return new FetchOutcome(Failed: true, Divergence: null);
+		}
+
+		ProcessResult countResult = await processService
+			.RunAsync(GitCommand, "rev-list --left-right --count HEAD...@{upstream}", repo, ct)
+			.ConfigureAwait(false);
+
+		// A repository with no upstream exits non-zero here, which is not a fetch failure.
+		AheadBehind? divergence = countResult.ExitCode == 0 ? AheadBehind.Parse(countResult.Output) : null;
+
+		return new FetchOutcome(Failed: false, Divergence: divergence);
+	}
+
+	private static void WriteFetchTable(IReadOnlyList<string> sortedRepos, IReadOnlyDictionary<string, FetchOutcome> outcomes)
+	{
+		Table table = new()
+		{
+			Border = TableBorder.Rounded,
+		};
+
+		table.AddColumn("Repository");
+		table.AddColumn("Fetch");
+		table.AddColumn("Upstream");
+
+		foreach (string repo in sortedRepos)
+		{
+			FetchOutcome outcome = outcomes.TryGetValue(repo, out FetchOutcome? found)
+				? found
+				: new FetchOutcome(Failed: true, Divergence: null);
+
+			table.AddRow(
+				Path.GetFileName(repo).EscapeMarkup(),
+				outcome.Failed ? "[red]failed[/]" : "[green]ok[/]",
+				AheadBehind.Render(outcome.Divergence).EscapeMarkup());
+		}
+
+		AnsiConsole.Write(table);
+	}
+
+	private sealed record FetchOutcome(bool Failed, AheadBehind? Divergence);
 
 	/// <summary>
 	/// Runs a git command in every repository found under the given path, writing each repository's

@@ -109,6 +109,10 @@ internal static class Program
 					.WithDescription("Build and test all discovered solutions")
 					.WithExample("repo", "build");
 
+				repo.AddCommand<RepoFetchCommand>("fetch")
+					.WithDescription("Git fetch all discovered repositories, reporting ahead/behind without touching any working tree")
+					.WithExample("repo", "fetch");
+
 				repo.AddCommand<RepoPullCommand>("pull")
 					.WithDescription("Git pull all discovered repositories")
 					.WithExample("repo", "pull");
