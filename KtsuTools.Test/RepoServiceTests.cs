@@ -5,6 +5,7 @@ namespace KtsuTools.Test;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using ktsu.Semantics.Paths;
@@ -13,6 +14,7 @@ using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Repo;
 using Moq;
+using Spectre.Console;
 
 [TestClass]
 public class RepoServiceTests
@@ -229,6 +231,170 @@ public class RepoServiceTests
 		int exit = await service.ListAsync(missingPath, refresh: true).ConfigureAwait(false);
 
 		Assert.AreEqual(1, exit, "A refresh of a path that does not exist has nothing to walk.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ListAsyncJsonFormatWritesParseableJsonToStdout()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_list_json_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "repo-a");
+		string solution = Path.Join(repo, "A.sln");
+		string orphan = Path.Join(root, "Loose.sln");
+		Directory.CreateDirectory(repo);
+
+		try
+		{
+			using RepoCacheSettings cache = new()
+			{
+				Repositories = [repo],
+				Solutions = [solution, orphan],
+			};
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			string output = await CaptureConsoleAsync(
+				() => service.ListAsync(rootPath, format: RepoListFormat.Json)).ConfigureAwait(false);
+
+			using JsonDocument document = JsonDocument.Parse(output);
+			JsonElement repositories = document.RootElement.GetProperty("repositories");
+
+			Assert.AreEqual(1, repositories.GetArrayLength(), "JSON output should carry the one cached repository.");
+			Assert.AreEqual("repo-a", repositories[0].GetProperty("name").GetString());
+			Assert.AreEqual(repo, repositories[0].GetProperty("path").GetString());
+			CollectionAssert.AreEquivalent(
+				new[] { solution },
+				repositories[0].GetProperty("solutions").EnumerateArray().Select(s => s.GetString()).ToArray());
+			CollectionAssert.AreEquivalent(
+				new[] { orphan },
+				document.RootElement.GetProperty("orphanSolutions").EnumerateArray().Select(s => s.GetString()).ToArray());
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ListAsyncSaysSoWhenThereIsNothingToList()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_list_none_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+
+		try
+		{
+			using RepoCacheSettings cache = new();
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			string output = await CaptureConsoleAsync(() => service.ListAsync(rootPath)).ConfigureAwait(false);
+
+			StringAssert.Contains(
+				output,
+				"No repositories cached",
+				"An empty cache over an empty directory should say so rather than print a bare table.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ListAsyncReportsSolutionsOutsideEveryCachedRepository()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_list_orphan_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "repo-a");
+		string orphan = Path.Join(root, "Loose.sln");
+		Directory.CreateDirectory(repo);
+
+		try
+		{
+			using RepoCacheSettings cache = new()
+			{
+				Repositories = [repo],
+				Solutions = [orphan],
+			};
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			string output = await CaptureConsoleAsync(() => service.ListAsync(rootPath)).ConfigureAwait(false);
+
+			StringAssert.Contains(output, "repo-a", "The cached repository should still be listed.");
+			StringAssert.Contains(
+				output,
+				"outside every cached repository",
+				"A solution no repository contains should be reported, not dropped.");
+			StringAssert.Contains(output, "Loose.sln", "The orphan solution should be named.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Runs <paramref name="action"/> with both stdout and Spectre's console redirected into one
+	/// buffer, so a test can read what the verb actually printed. The console is global, so these
+	/// tests do not run in parallel.
+	/// </summary>
+	private static async Task<string> CaptureConsoleAsync(Func<Task> action)
+	{
+		using StringWriter writer = new();
+		IAnsiConsole originalConsole = AnsiConsole.Console;
+		TextWriter originalOut = Console.Out;
+
+		try
+		{
+			Console.SetOut(writer);
+
+			IAnsiConsole console = AnsiConsole.Create(new AnsiConsoleSettings
+			{
+				Ansi = AnsiSupport.No,
+				ColorSystem = ColorSystemSupport.NoColors,
+				Out = new AnsiConsoleOutput(writer),
+			});
+
+			// Without a width the table collapses to an ellipsis, since there is no terminal to measure.
+			console.Profile.Width = 200;
+			AnsiConsole.Console = console;
+
+			await action().ConfigureAwait(false);
+		}
+		finally
+		{
+			AnsiConsole.Console = originalConsole;
+			Console.SetOut(originalOut);
+		}
+
+		return writer.ToString();
+	}
+
+	[TestMethod]
+	public void GroupSolutionsByRepositoryIgnoresDuplicateCacheEntries()
+	{
+		string repo = Path.Join(Path.GetTempPath(), "ktsu_group_dupe", "repo-a");
+		string solution = Path.Join(repo, "A.sln");
+
+		RepositoryListingSet set = RepoService.GroupSolutionsByRepository([repo, repo], [solution]);
+
+		Assert.AreEqual(1, set.Repositories.Count, "A repository listed twice in the cache should appear once.");
+		CollectionAssert.AreEquivalent(new[] { solution }, set.Repositories.Single().Solutions.ToArray());
 	}
 
 	[TestMethod]
