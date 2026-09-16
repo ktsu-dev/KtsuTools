@@ -3,7 +3,6 @@
 namespace KtsuTools.Test;
 
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -722,8 +721,14 @@ public class RepoServiceTests
 		}
 	}
 
+	/// <remarks>
+	/// Asserts on how many solutions were in flight at once rather than on elapsed time. The wall-clock
+	/// version of this test was a coin flip: BuildAndTestAsync runs at ProcessorCount / 2, which is 1 on
+	/// a three-core runner, so there the "parallel" run is sequential and the two timings differ only by
+	/// scheduling noise.
+	/// </remarks>
 	[TestMethod]
-	public async Task BuildAndTestAsyncParallelIsFasterThanSequential()
+	public async Task BuildAndTestAsyncOverlapsSolutionsOnlyWhenParallel()
 	{
 		string root = Path.Combine(Path.GetTempPath(), $"ktsu_parspeed_{Guid.NewGuid():N}");
 		Directory.CreateDirectory(root);
@@ -738,21 +743,36 @@ public class RepoServiceTests
 
 			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
 
-			DelayedFakeProcessService fakeSeq = new(delayMs: 120);
+			DelayedFakeProcessService fakeSeq = new(delayMs: 20);
 			RepoService seqService = new(new Mock<IGitService>().Object, fakeSeq);
-			Stopwatch swSeq = Stopwatch.StartNew();
 			await seqService.BuildAndTestAsync(rootPath, parallel: false).ConfigureAwait(false);
-			swSeq.Stop();
 
-			DelayedFakeProcessService fakePar = new(delayMs: 120);
+			DelayedFakeProcessService fakePar = new(delayMs: 20);
 			RepoService parService = new(new Mock<IGitService>().Object, fakePar);
-			Stopwatch swPar = Stopwatch.StartNew();
 			await parService.BuildAndTestAsync(rootPath, parallel: true).ConfigureAwait(false);
-			swPar.Stop();
+
+			Assert.AreEqual(1, fakeSeq.MaxConcurrent, "A sequential run should never have two solutions in flight.");
+
+			// The same degree of parallelism BuildAndTestAsync picks.
+			int degreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2);
 
 			Assert.IsTrue(
-				swPar.ElapsedMilliseconds < swSeq.ElapsedMilliseconds,
-				$"Parallel ({swPar.ElapsedMilliseconds} ms) should be faster than sequential ({swSeq.ElapsedMilliseconds} ms).");
+				fakePar.MaxConcurrent <= degreeOfParallelism,
+				$"A parallel run should stay within its degree of parallelism ({degreeOfParallelism}), but reached {fakePar.MaxConcurrent}.");
+
+			if (degreeOfParallelism == 1)
+			{
+				Assert.AreEqual(
+					1,
+					fakePar.MaxConcurrent,
+					"This runner has too few cores for BuildAndTestAsync to overlap anything, so a parallel run is a sequential one.");
+			}
+			else
+			{
+				Assert.IsTrue(
+					fakePar.MaxConcurrent > 1,
+					$"A parallel run on {Environment.ProcessorCount} cores should overlap solutions, but never had more than one in flight.");
+			}
 		}
 		finally
 		{
@@ -808,10 +828,43 @@ public class RepoServiceTests
 
 	private sealed class DelayedFakeProcessService(int delayMs, string? failBuildInDirNamed = null) : IProcessService
 	{
+		private int inFlight;
+		private int maxConcurrent;
+
+		/// <summary>Gets the highest number of calls that were in flight at the same time.</summary>
+		public int MaxConcurrent => Volatile.Read(ref maxConcurrent);
+
 		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
 			RunAsync(command, arguments, workingDirectory, null, ct);
 
 		public async Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default)
+		{
+			int current = Interlocked.Increment(ref inFlight);
+
+			// Raise the high-water mark without losing a concurrent update.
+			int observed = Volatile.Read(ref maxConcurrent);
+			while (current > observed)
+			{
+				int previous = Interlocked.CompareExchange(ref maxConcurrent, current, observed);
+				if (previous == observed)
+				{
+					break;
+				}
+
+				observed = previous;
+			}
+
+			try
+			{
+				return await RunCoreAsync(arguments, workingDirectory, ct).ConfigureAwait(false);
+			}
+			finally
+			{
+				_ = Interlocked.Decrement(ref inFlight);
+			}
+		}
+
+		private async Task<ProcessResult> RunCoreAsync(string arguments, string? workingDirectory, CancellationToken ct)
 		{
 			await Task.Delay(delayMs, ct).ConfigureAwait(false);
 
