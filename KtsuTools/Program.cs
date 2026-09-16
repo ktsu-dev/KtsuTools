@@ -105,6 +105,11 @@ internal static class Program
 					.WithDescription("Discover git repositories in a directory")
 					.WithExample("repo", "discover", "--path", "c:/dev/ktsu-dev");
 
+				repo.AddCommand<RepoListCommand>("list")
+					.WithDescription("List cached repositories and the solutions discovered within each")
+					.WithExample("repo", "list")
+					.WithExample("repo", "list", "--format", "json");
+
 				repo.AddCommand<RepoValidateCommand>("validate")
 					.WithDescription("Validate cached repository and solution paths, pruning stale entries")
 					.WithExample("repo", "validate")

@@ -11,6 +11,8 @@ namespace KtsuTools.Repo;
 
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Text.Json;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
@@ -31,6 +33,46 @@ public record SolutionInfo
 
 	/// <summary>Gets the project file paths in this solution.</summary>
 	public Collection<string> Projects { get; init; } = [];
+}
+
+/// <summary>
+/// A cached repository together with the cached solutions that live inside it.
+/// </summary>
+public sealed record RepositoryListing
+{
+	/// <summary>Gets the repository directory name.</summary>
+	public required string Name { get; init; }
+
+	/// <summary>Gets the repository directory path.</summary>
+	public required string Path { get; init; }
+
+	/// <summary>Gets the solution file paths found within this repository.</summary>
+	public Collection<string> Solutions { get; init; } = [];
+}
+
+/// <summary>
+/// The cached repositories with their solutions, plus any cached solution that sits outside every
+/// cached repository.
+/// </summary>
+public sealed record RepositoryListingSet
+{
+	/// <summary>Gets the cached repositories, ordered by name.</summary>
+	public Collection<RepositoryListing> Repositories { get; init; } = [];
+
+	/// <summary>Gets cached solutions that no cached repository contains.</summary>
+	public Collection<string> OrphanSolutions { get; init; } = [];
+}
+
+/// <summary>
+/// Output shape for <see cref="RepoService.ListAsync"/>.
+/// </summary>
+public enum RepoListFormat
+{
+	/// <summary>A rendered console table.</summary>
+	Table,
+
+	/// <summary>Machine-readable JSON written verbatim to stdout.</summary>
+	Json,
 }
 
 /// <summary>
@@ -65,20 +107,16 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			return [];
 		}
 
-		ConcurrentBag<string> repos = [];
+		List<string> sortedRepos = [];
 
 		await AnsiConsole.Status()
 			.Spinner(Spinner.Known.Star)
 			.StartAsync("Discovering repositories...", async ctx =>
 			{
-				await Task.Run(() => DiscoverGitReposRecursive(fullPath, repos), ct).ConfigureAwait(false);
+				sortedRepos = await WalkAndCacheAsync(fullPath, ct).ConfigureAwait(false);
 
-				ctx.Status($"Found {repos.Count} repositories");
+				ctx.Status($"Found {sortedRepos.Count} repositories");
 			}).ConfigureAwait(false);
-
-		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
-		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
-		await SaveCacheAsync(sortedRepos, solutionFiles).ConfigureAwait(false);
 
 		// Display results
 		Table table = new();
@@ -97,6 +135,182 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 		return sortedRepos;
 	}
+
+	/// <summary>
+	/// Lists the cached repositories and the solutions discovered within each.
+	/// </summary>
+	/// <param name="path">Root directory to walk, used only when the cache is empty or <paramref name="refresh"/> is set.</param>
+	/// <param name="refresh">When true, re-walks the filesystem and rewrites the cache before listing.</param>
+	/// <param name="format">Whether to render a table or emit JSON.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Zero when the listing was produced, one when a refresh was asked for but the path does not exist.</returns>
+	/// <remarks>
+	/// Discovery already walked the filesystem and wrote what it found to the cache, so listing reads
+	/// that cache rather than walking again. <paramref name="refresh"/> is the way to pay for a walk
+	/// deliberately; an empty cache forces one because there is nothing else to show.
+	/// </remarks>
+	public async Task<int> ListAsync(
+		AbsoluteDirectoryPath path,
+		bool refresh = false,
+		RepoListFormat format = RepoListFormat.Table,
+		CancellationToken ct = default)
+	{
+		Ensure.NotNull(path);
+
+		RepoCacheSettings cache = GetCacheStore();
+
+		if (refresh || cache.Repositories.Count == 0)
+		{
+			string fullPath = path.ToString();
+
+			if (!Directory.Exists(fullPath))
+			{
+				ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+				return 1;
+			}
+
+			await WalkAndCacheAsync(fullPath, ct).ConfigureAwait(false);
+		}
+
+		RepositoryListingSet listing = GroupSolutionsByRepository(cache.Repositories, cache.Solutions);
+
+		if (format == RepoListFormat.Json)
+		{
+			WriteListJson(listing);
+		}
+		else
+		{
+			WriteListTable(listing);
+		}
+
+		return 0;
+	}
+
+	/// <summary>
+	/// Groups cached solution paths under the cached repository that contains them.
+	/// </summary>
+	/// <param name="repositories">Cached repository directories.</param>
+	/// <param name="solutions">Cached solution file paths.</param>
+	/// <returns>The repositories in name order, each with its solutions, plus solutions no repository claims.</returns>
+	/// <remarks>
+	/// The cache stores repositories and solutions as two flat lists, so containment is decided by
+	/// path prefix. A solution inside a repository that is itself nested in another is attributed to
+	/// the nearest enclosing repository, matching how discovery treats nested repositories.
+	/// </remarks>
+	public static RepositoryListingSet GroupSolutionsByRepository(IEnumerable<string> repositories, IEnumerable<string> solutions)
+	{
+		Ensure.NotNull(repositories);
+		Ensure.NotNull(solutions);
+
+		List<string> repoPaths = [.. repositories];
+		Dictionary<string, RepositoryListing> byPath = new(StringComparer.OrdinalIgnoreCase);
+		RepositoryListingSet set = new();
+
+		foreach (string repo in repoPaths.OrderBy(r => Path.GetFileName(TrimSeparators(r)), StringComparer.OrdinalIgnoreCase))
+		{
+			if (byPath.ContainsKey(repo))
+			{
+				continue;
+			}
+
+			RepositoryListing listing = new()
+			{
+				Name = Path.GetFileName(TrimSeparators(repo)),
+				Path = repo,
+			};
+
+			byPath[repo] = listing;
+			set.Repositories.Add(listing);
+		}
+
+		// Deepest path first, so a solution in a nested repository is claimed by that repository
+		// rather than by the outer one that also contains it.
+		List<string> deepestFirst = [.. byPath.Keys.OrderByDescending(r => TrimSeparators(r).Length)];
+
+		foreach (string solution in solutions.OrderBy(s => s, StringComparer.OrdinalIgnoreCase))
+		{
+			string? owner = deepestFirst.FirstOrDefault(repo => RepositoryContains(repo, solution));
+
+			if (owner is null)
+			{
+				set.OrphanSolutions.Add(solution);
+				continue;
+			}
+
+			byPath[owner].Solutions.Add(solution);
+		}
+
+		return set;
+	}
+
+	private static string TrimSeparators(string path) =>
+		path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+	private static bool RepositoryContains(string repository, string solution)
+	{
+		string prefix = TrimSeparators(repository);
+
+		// The separator check is what stops 'c:/dev/Repo' from claiming 'c:/dev/RepoTools/X.sln'.
+		return solution.Length > prefix.Length &&
+			solution.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+			(solution[prefix.Length] == Path.DirectorySeparatorChar || solution[prefix.Length] == Path.AltDirectorySeparatorChar);
+	}
+
+	private static void WriteListTable(RepositoryListingSet listing)
+	{
+		if (listing.Repositories.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]No repositories cached. Run 'ktsu repo discover', or pass --refresh.[/]");
+			return;
+		}
+
+		Table table = new()
+		{
+			Border = TableBorder.Rounded,
+		};
+
+		table.AddColumn("Repository");
+		table.AddColumn("Solutions");
+		table.AddColumn(new TableColumn("Count").RightAligned());
+
+		foreach (RepositoryListing repo in listing.Repositories)
+		{
+			string solutions = repo.Solutions.Count == 0
+				? "[dim]none[/]"
+				: string.Join(Environment.NewLine, repo.Solutions.Select(s => Path.GetFileName(s).EscapeMarkup()));
+
+			table.AddRow(
+				repo.Name.EscapeMarkup(),
+				solutions,
+				repo.Solutions.Count.ToString(CultureInfo.InvariantCulture));
+		}
+
+		AnsiConsole.Write(table);
+
+		int solutionCount = listing.Repositories.Sum(repo => repo.Solutions.Count);
+		AnsiConsole.MarkupLine($"[green]{listing.Repositories.Count} repositories · {solutionCount} solutions.[/]");
+
+		if (listing.OrphanSolutions.Count > 0)
+		{
+			AnsiConsole.MarkupLine($"[yellow]{listing.OrphanSolutions.Count} cached solution(s) outside every cached repository:[/]");
+
+			foreach (string solution in listing.OrphanSolutions)
+			{
+				AnsiConsole.MarkupLine($"  [dim]-[/] {solution.EscapeMarkup()}");
+			}
+		}
+	}
+
+	// Straight to stdout rather than through AnsiConsole, which wraps at the console width and would
+	// try to read any [square brackets] in a path as Spectre markup.
+	private static void WriteListJson(RepositoryListingSet listing) =>
+		Console.Out.WriteLine(JsonSerializer.Serialize(listing, ListJsonOptions));
+
+	private static readonly JsonSerializerOptions ListJsonOptions = new()
+	{
+		WriteIndented = true,
+		PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+	};
 
 	/// <summary>
 	/// Validates the cached repository and solution paths, reporting and optionally pruning stale entries.
@@ -760,6 +974,21 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		{
 			return [];
 		}
+	}
+
+	/// <summary>
+	/// Walks the filesystem for repositories and solutions and rewrites the cache with what it finds.
+	/// </summary>
+	private async Task<List<string>> WalkAndCacheAsync(string fullPath, CancellationToken ct)
+	{
+		ConcurrentBag<string> repos = [];
+		await Task.Run(() => DiscoverGitReposRecursive(fullPath, repos), ct).ConfigureAwait(false);
+
+		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
+		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
+		await SaveCacheAsync(sortedRepos, solutionFiles).ConfigureAwait(false);
+
+		return sortedRepos;
 	}
 
 	private async Task SaveCacheAsync(IReadOnlyList<string> repositories, IReadOnlyList<string> solutions)

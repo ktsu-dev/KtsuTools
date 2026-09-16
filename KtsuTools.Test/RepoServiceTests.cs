@@ -17,6 +17,8 @@ using Moq;
 [TestClass]
 public class RepoServiceTests
 {
+	private static readonly string[] RepoAThenRepoB = ["repo-a", "repo-b"];
+
 	[TestMethod]
 	public async Task DiscoverRepositoriesAsyncMissingDirectoryReturnsEmpty()
 	{
@@ -91,6 +93,212 @@ public class RepoServiceTests
 		{
 			Directory.Delete(root, recursive: true);
 		}
+	}
+
+	[TestMethod]
+	public async Task ListAsyncReadsTheCacheWithoutWalkingTheFilesystem()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_list_cached_{Guid.NewGuid():N}");
+		string cachedRepo = Path.Join(root, "repo-cached");
+		string cachedSolution = Path.Join(cachedRepo, "Cached.sln");
+
+		// On disk but absent from the cache: only a filesystem walk could turn this up.
+		string undiscoveredRepo = Path.Join(root, "repo-on-disk-only");
+		Directory.CreateDirectory(Path.Join(cachedRepo, ".git"));
+		Directory.CreateDirectory(Path.Join(undiscoveredRepo, ".git"));
+		await File.WriteAllTextAsync(cachedSolution, string.Empty).ConfigureAwait(false);
+
+		try
+		{
+			using RepoCacheSettings cache = new()
+			{
+				Repositories = [cachedRepo],
+				Solutions = [cachedSolution],
+			};
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.ListAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			CollectionAssert.AreEquivalent(
+				new[] { cachedRepo },
+				cache.Repositories.ToArray(),
+				"Listing a populated cache must not re-walk the filesystem, so the repo only on disk should stay unlisted.");
+			settings.Verify(
+				s => s.SaveAsync(It.IsAny<RepoCacheSettings>()),
+				Times.Never,
+				"Reading the cache should not rewrite it.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ListAsyncRefreshRewalksTheFilesystem()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_list_refresh_{Guid.NewGuid():N}");
+		string cachedRepo = Path.Join(root, "repo-cached");
+		string undiscoveredRepo = Path.Join(root, "repo-on-disk-only");
+		Directory.CreateDirectory(Path.Join(cachedRepo, ".git"));
+		Directory.CreateDirectory(Path.Join(undiscoveredRepo, ".git"));
+
+		try
+		{
+			using RepoCacheSettings cache = new()
+			{
+				Repositories = [cachedRepo],
+			};
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.ListAsync(rootPath, refresh: true).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			CollectionAssert.AreEquivalent(
+				new[] { cachedRepo, undiscoveredRepo },
+				cache.Repositories.ToArray(),
+				"--refresh should re-walk the filesystem and pick up the repository the cache had not seen.");
+			settings.Verify(s => s.SaveAsync(It.IsAny<RepoCacheSettings>()), Times.Once);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ListAsyncWalksWhenTheCacheIsEmpty()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_list_empty_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "repo-a");
+		Directory.CreateDirectory(Path.Join(repo, ".git"));
+
+		try
+		{
+			using RepoCacheSettings cache = new();
+
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.ListAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			CollectionAssert.AreEquivalent(
+				new[] { repo },
+				cache.Repositories.ToArray(),
+				"An empty cache has nothing to list, so it should be populated by a walk.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ListAsyncRefreshOfAMissingDirectoryFails()
+	{
+		using RepoCacheSettings cache = new()
+		{
+			Repositories = [Path.Join(Path.GetTempPath(), "repo-cached")],
+		};
+
+		Mock<ISettingsService> settings = new();
+		settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+
+		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_list_missing_{Guid.NewGuid():N}");
+		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+
+		int exit = await service.ListAsync(missingPath, refresh: true).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A refresh of a path that does not exist has nothing to walk.");
+	}
+
+	[TestMethod]
+	public void GroupSolutionsByRepositoryPutsEachSolutionUnderItsRepository()
+	{
+		string root = Path.Join(Path.GetTempPath(), "ktsu_group");
+		string repoA = Path.Join(root, "repo-a");
+		string repoB = Path.Join(root, "repo-b");
+		string solutionA1 = Path.Join(repoA, "A1.sln");
+		string solutionA2 = Path.Join(repoA, "nested", "A2.sln");
+		string solutionB = Path.Join(repoB, "B.sln");
+
+		RepositoryListingSet set = RepoService.GroupSolutionsByRepository(
+			[repoB, repoA],
+			[solutionB, solutionA2, solutionA1]);
+
+		CollectionAssert.AreEqual(
+			RepoAThenRepoB,
+			set.Repositories.Select(r => r.Name).ToArray(),
+			"Repositories should be listed by name regardless of cache order.");
+		CollectionAssert.AreEquivalent(
+			new[] { solutionA1, solutionA2 },
+			set.Repositories.Single(r => r.Name == "repo-a").Solutions.ToArray());
+		CollectionAssert.AreEquivalent(
+			new[] { solutionB },
+			set.Repositories.Single(r => r.Name == "repo-b").Solutions.ToArray());
+		Assert.AreEqual(0, set.OrphanSolutions.Count);
+	}
+
+	[TestMethod]
+	public void GroupSolutionsByRepositoryPrefersTheNearestEnclosingRepository()
+	{
+		string outer = Path.Join(Path.GetTempPath(), "ktsu_group_outer");
+		string inner = Path.Join(outer, "vendor", "inner");
+		string solution = Path.Join(inner, "Inner.sln");
+
+		RepositoryListingSet set = RepoService.GroupSolutionsByRepository([outer, inner], [solution]);
+
+		Assert.AreEqual(0, set.Repositories.Single(r => r.Name == "ktsu_group_outer").Solutions.Count);
+		CollectionAssert.AreEquivalent(
+			new[] { solution },
+			set.Repositories.Single(r => r.Name == "inner").Solutions.ToArray(),
+			"A nested repository owns the solutions inside it, not the repository it sits in.");
+	}
+
+	[TestMethod]
+	public void GroupSolutionsByRepositoryDoesNotClaimASiblingWithASharedPrefix()
+	{
+		string root = Path.Join(Path.GetTempPath(), "ktsu_group_prefix");
+		string repo = Path.Join(root, "Repo");
+		string sibling = Path.Join(root, "RepoTools");
+		string solution = Path.Join(sibling, "RepoTools.sln");
+
+		RepositoryListingSet set = RepoService.GroupSolutionsByRepository([repo], [solution]);
+
+		Assert.AreEqual(0, set.Repositories.Single().Solutions.Count, "'Repo' must not claim a solution in 'RepoTools'.");
+		CollectionAssert.AreEquivalent(new[] { solution }, set.OrphanSolutions.ToArray());
+	}
+
+	[TestMethod]
+	public void GroupSolutionsByRepositoryReportsSolutionsNoRepositoryContains()
+	{
+		string root = Path.Join(Path.GetTempPath(), "ktsu_group_orphan");
+		string repo = Path.Join(root, "repo-a");
+		string loose = Path.Join(root, "Loose.sln");
+
+		RepositoryListingSet set = RepoService.GroupSolutionsByRepository([repo], [loose]);
+
+		Assert.AreEqual(0, set.Repositories.Single().Solutions.Count);
+		CollectionAssert.AreEquivalent(new[] { loose }, set.OrphanSolutions.ToArray());
 	}
 
 	[TestMethod]

@@ -57,6 +57,19 @@ ktools repo fetch --path c:/dev/ktsu-dev
 Repositories are fetched concurrently; pass `--sequential` to fetch them one at a time. Each row
 shows `↑n ↓n` for a diverged branch, `≡` when it matches its upstream, and `—` when it has none.
 
+`ktools repo list` shows what `repo discover` actually found — each cached repository and the
+solutions inside it. It reads the cache rather than walking the filesystem again, so it returns
+immediately. Pass `--refresh` to re-walk and rewrite the cache; an empty cache is walked anyway,
+since there would be nothing to show otherwise.
+
+```bash
+ktools repo list
+ktools repo list --format json        # stable output for piping
+ktools repo list --refresh --path c:/dev/ktsu-dev
+```
+
+A cached solution that no cached repository contains is reported separately rather than dropped.
+
 `ktools repo validate` checks the cached repository and solution paths created by `repo discover`,
 reports stale entries, and prunes them. Use `--dry-run` to preview without pruning.
 
@@ -65,7 +78,7 @@ reports stale entries, and prunes them. Use `--dry-run` to preview without pruni
 | Group | Module | What it does |
 | --- | --- | --- |
 | `git` | `KtsuTools.Repo` | Run one git command in every repository under a directory |
-| `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `validate`, `build`, `fetch`, `pull`, `update-packages` |
+| `repo` | `KtsuTools.Repo` | Cross-repository git operations — `discover`, `list`, `validate`, `build`, `fetch`, `pull`, `update-packages` |
 | `packages` | `KtsuTools.Packages` | NuGet package maintenance — `update-packages`, `migrate-cpm` |
 | `dedup` | `KtsuTools.FileDedupe` | Duplicate file detection and removal — `scan`, `dry-run`, `dedupe`, `stats` |
 | `merge-batch` | `KtsuTools.Merge` | Iterative multi-version file merging — `merge`, `merge-history` |
