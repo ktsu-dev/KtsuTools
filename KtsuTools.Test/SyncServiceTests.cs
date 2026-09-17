@@ -548,18 +548,27 @@ public class SyncServiceTests
 	{
 		string created = Path.Join(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}");
 		Directory.CreateDirectory(created);
+		return CanonicalPathOf(created).TrimEnd(Path.DirectorySeparatorChar);
+	}
 
-		string canonical = Path.DirectorySeparatorChar.ToString();
-		foreach (string part in Path.GetFullPath(created).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+	/// <summary>
+	/// Resolves a directory path one component at a time, since only a path that is itself a link
+	/// resolves and on macOS it is the /var prefix that is the link, not the directory below it.
+	/// </summary>
+	/// <param name="path">The directory path to resolve.</param>
+	/// <returns>The path with every symlinked component replaced by its target.</returns>
+	private static string CanonicalPathOf(string path)
+	{
+		DirectoryInfo directory = new(path);
+
+		// The root ("/" or "C:\") is never a link, and asking its parent for one would not terminate.
+		if (directory.Parent is null)
 		{
-			canonical = Path.Join(canonical, part);
-			if (Directory.ResolveLinkTarget(canonical, returnFinalTarget: true) is FileSystemInfo target)
-			{
-				canonical = target.FullName;
-			}
+			return directory.FullName;
 		}
 
-		return canonical.TrimEnd(Path.DirectorySeparatorChar);
+		string resolved = Path.Join(CanonicalPathOf(directory.Parent.FullName), directory.Name);
+		return Directory.ResolveLinkTarget(resolved, returnFinalTarget: true)?.FullName ?? resolved;
 	}
 
 	private static void DeleteGitTree(string root)
