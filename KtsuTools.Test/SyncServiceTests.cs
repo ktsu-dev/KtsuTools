@@ -204,8 +204,7 @@ public class SyncServiceTests
 	public void RepoRootsForCollapsesFilesSharingARepositoryAndSkipsUntrackedOnes()
 	{
 		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
-		string outside = Path.Join(Path.GetTempPath(), $"ktsu_sync_loose_{Guid.NewGuid():N}");
-		Directory.CreateDirectory(outside);
+		string outside = CreateCanonicalTempDirectory("ktsu_sync_loose");
 
 		try
 		{
@@ -514,8 +513,7 @@ public class SyncServiceTests
 
 		public static TempWorkspace WithIdenticalFileInRepos(string fileName, string content, params string[] repoNames)
 		{
-			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_ws_{Guid.NewGuid():N}");
-			Directory.CreateDirectory(root);
+			string root = CreateCanonicalTempDirectory("ktsu_sync_ws");
 
 			List<string> repoRoots = [];
 			foreach (string name in repoNames)
@@ -537,6 +535,32 @@ public class SyncServiceTests
 		}
 
 		public void Dispose() => DeleteGitTree(RootDirectory);
+	}
+
+	/// <summary>
+	/// Creates a temp directory and returns the path with every symlinked component resolved.
+	/// libgit2 canonicalises a repository's working directory, and on macOS the temp directory is
+	/// reached through a /var -> /private/var symlink, so an uncanonicalised path is rejected as
+	/// being outside the repository it is actually inside.
+	/// </summary>
+	/// <param name="prefix">Prefix for the generated directory name.</param>
+	/// <returns>The canonical path of the created directory.</returns>
+	private static string CreateCanonicalTempDirectory(string prefix)
+	{
+		string created = Path.Join(Path.GetTempPath(), $"{prefix}_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(created);
+
+		string canonical = Path.DirectorySeparatorChar.ToString();
+		foreach (string part in Path.GetFullPath(created).Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+		{
+			canonical = Path.Join(canonical, part);
+			if (Directory.ResolveLinkTarget(canonical, returnFinalTarget: true) is FileSystemInfo target)
+			{
+				canonical = target.FullName;
+			}
+		}
+
+		return canonical.TrimEnd(Path.DirectorySeparatorChar);
 	}
 
 	private static void DeleteGitTree(string root)
@@ -583,8 +607,7 @@ public class SyncServiceTests
 
 		public static TempGitRepo WithoutAnyCommit()
 		{
-			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_{Guid.NewGuid():N}");
-			Directory.CreateDirectory(root);
+			string root = CreateCanonicalTempDirectory("ktsu_sync");
 			_ = Repository.Init(root);
 			return new TempGitRepo(root);
 		}
