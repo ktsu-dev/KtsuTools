@@ -201,19 +201,19 @@ public class SyncServiceTests
 	public void RepoRootsForCollapsesFilesSharingARepositoryAndSkipsUntrackedOnes()
 	{
 		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
-		string outside = Path.Combine(Path.GetTempPath(), $"ktsu_sync_loose_{Guid.NewGuid():N}");
+		string outside = Path.Join(Path.GetTempPath(), $"ktsu_sync_loose_{Guid.NewGuid():N}");
 		Directory.CreateDirectory(outside);
 
 		try
 		{
 			repo.Write("other.txt", "second file");
-			File.WriteAllText(Path.Combine(outside, "shared.txt"), "not in a repo");
+			File.WriteAllText(Path.Join(outside, "shared.txt"), "not in a repo");
 
 			IReadOnlyList<string> roots = SyncService.RepoRootsFor(
 			[
-				Path.Combine(repo.Root, "shared.txt"),
-				Path.Combine(repo.Root, "other.txt"),
-				Path.Combine(outside, "shared.txt"),
+				Path.Join(repo.Root, "shared.txt"),
+				Path.Join(repo.Root, "other.txt"),
+				Path.Join(outside, "shared.txt"),
 			]);
 
 			Assert.AreEqual(1, roots.Count, "Two files in one repo must yield one checkout, not two.");
@@ -239,7 +239,7 @@ public class SyncServiceTests
 
 		public static TempGitRepo WithInitialCommit()
 		{
-			string root = Path.Combine(Path.GetTempPath(), $"ktsu_sync_{Guid.NewGuid():N}");
+			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_{Guid.NewGuid():N}");
 			Directory.CreateDirectory(root);
 			_ = Repository.Init(root);
 
@@ -273,10 +273,10 @@ public class SyncServiceTests
 		}
 
 		public void Write(string fileName, string content) =>
-			File.WriteAllText(Path.Combine(Root, fileName), content);
+			File.WriteAllText(Path.Join(Root, fileName), content);
 
 		public string Read(string fileName) =>
-			File.ReadAllText(Path.Combine(Root, fileName));
+			File.ReadAllText(Path.Join(Root, fileName));
 
 		public string Commit(string fileName, string content, string author)
 		{
