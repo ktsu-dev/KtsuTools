@@ -49,6 +49,13 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 		[CommandOption("--auto-push")]
 		[Description("Push without prompting when every unpushed commit on a repo was authored by KtsuTools.")]
 		public bool AutoPush { get; init; }
+
+		/// <summary>
+		/// Gets the branch to commit onto in each repo instead of whatever is checked out.
+		/// </summary>
+		[CommandOption("--branch <NAME>")]
+		[Description("Commit onto a branch of this name in each repo, created if missing and reused if it already exists, restoring the original branch afterwards.")]
+		public string Branch { get; init; } = string.Empty;
 	}
 
 	/// <inheritdoc/>
@@ -69,7 +76,7 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 
 		using CtrlCScope scope = new();
 		AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(path));
-		return await syncService.RunAsync(rootPath, filenames, settings.AutoPush, scope.Token).ConfigureAwait(false);
+		return await syncService.RunAsync(rootPath, filenames, settings.AutoPush, settings.Branch, scope.Token).ConfigureAwait(false);
 	}
 
 	private static List<string> ExpandFilenames(IEnumerable<string> raw) =>

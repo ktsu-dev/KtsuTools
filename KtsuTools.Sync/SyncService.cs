@@ -34,6 +34,15 @@ public class SyncService(IProcessService processService)
 	private const string GitDirSuffixUnix = ".git/";
 
 	/// <summary>
+	/// Records where a repository was before sync moved it onto the sync branch, so the original
+	/// checkout can be restored and the sync's own commits can be told apart from what was there.
+	/// </summary>
+	/// <param name="RepoRoot">Working directory of the repository that was switched.</param>
+	/// <param name="OriginalBranch">The branch to return to, or a commit sha when HEAD was detached.</param>
+	/// <param name="OriginalTipSha">The tip the sync branch was based on.</param>
+	internal sealed record BranchSwitch(string RepoRoot, string OriginalBranch, string OriginalTipSha);
+
+	/// <summary>
 	/// Runs the sync operation for the specified path and filename.
 	/// </summary>
 	/// <param name="path">The root path to scan recursively.</param>
@@ -51,7 +60,19 @@ public class SyncService(IProcessService processService)
 	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public async Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default)
+	public Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, CancellationToken ct = default) =>
+		RunAsync(path, filenames, autoPush, branch: string.Empty, ct);
+
+	/// <summary>
+	/// Runs the sync operation for the specified path and one or more filename patterns.
+	/// </summary>
+	/// <param name="path">The root path to scan recursively.</param>
+	/// <param name="filenames">One or more filename patterns to scan for.</param>
+	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
+	/// <param name="branch">When non-empty, commits land on a branch of this name in each repo, created if missing and reused if it already exists, and the original checkout is restored afterwards.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
+	public async Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, string branch, CancellationToken ct = default)
 	{
 		Ensure.NotNull(path);
 		ct.ThrowIfCancellationRequested();
@@ -107,9 +128,19 @@ public class SyncService(IProcessService processService)
 			await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, pathString, commitDirectories, ct).ConfigureAwait(false);
 		}
 
-		await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, pathString).ConfigureAwait(false);
+		string branchName = branch?.Trim() ?? string.Empty;
 
-		await PushToRemoteAsync(commitDirectories, pathString, autoPush, ct).ConfigureAwait(false);
+		IReadOnlyList<BranchSwitch> branchSwitches =
+			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, pathString, branchName).ConfigureAwait(false);
+
+		try
+		{
+			await PushToRemoteAsync(commitDirectories, pathString, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
+		}
+		finally
+		{
+			RestoreBranches(branchSwitches);
+		}
 
 		return 0;
 	}
@@ -291,30 +322,205 @@ public class SyncService(IProcessService processService)
 			.Replace(GitDirSuffixWindows, "", StringComparison.Ordinal)
 			.Replace(GitDirSuffixUnix, "", StringComparison.Ordinal);
 
-	private static async Task CommitChangedFilesAsync(
+	private static async Task<IReadOnlyList<BranchSwitch>> CommitChangedFilesAsync(
 		HashSet<string> commitDirectories,
 		HashSet<string> expandedFilesToSync,
-		string path)
+		string path,
+		string branchName)
 	{
 		AnsiConsole.WriteLine();
 
 		Collection<string> commitFiles = FindChangedFiles(commitDirectories, expandedFilesToSync, path);
 
-		if (commitFiles.Count > 0)
+		if (commitFiles.Count == 0)
 		{
-			AnsiConsole.WriteLine();
-			bool confirmed = await AnsiConsole.ConfirmAsync("Commit changed files?", defaultValue: false).ConfigureAwait(false);
+			return [];
+		}
 
-			if (confirmed)
+		AnsiConsole.WriteLine();
+		bool confirmed = await AnsiConsole.ConfirmAsync("Commit changed files?", defaultValue: false).ConfigureAwait(false);
+
+		if (!confirmed)
+		{
+			return [];
+		}
+
+		AnsiConsole.WriteLine();
+		return CommitFiles(commitFiles, branchName);
+	}
+
+	/// <summary>
+	/// Commits the changed files, onto the sync branch in each repository when one is named.
+	/// </summary>
+	/// <param name="commitFiles">Absolute paths of the files to commit.</param>
+	/// <param name="branchName">The sync branch, or empty to commit onto whatever is checked out.</param>
+	/// <returns>The switches to undo once pushing is done, empty when committing in place.</returns>
+	internal static IReadOnlyList<BranchSwitch> CommitFiles(IReadOnlyList<string> commitFiles, string branchName)
+	{
+		List<BranchSwitch> branchSwitches = [];
+		IEnumerable<string> toCommit = commitFiles;
+
+		if (!string.IsNullOrEmpty(branchName))
+		{
+			branchSwitches = [.. SwitchReposToBranch(commitFiles, branchName)];
+
+			// A repo that could not be switched keeps its checked-out branch, which is exactly what
+			// --branch exists to avoid, so its files are left uncommitted rather than landing there.
+			HashSet<string> switched = new(branchSwitches.Select(s => s.RepoRoot), StringComparer.Ordinal);
+			toCommit = commitFiles.Where(f => RepoRootFor(f) is string root && switched.Contains(root));
+		}
+
+		foreach (string filePath in toCommit)
+		{
+			CommitFile(filePath);
+		}
+
+		return branchSwitches;
+	}
+
+	internal static IEnumerable<BranchSwitch> SwitchReposToBranch(IEnumerable<string> commitFiles, string branchName)
+	{
+		foreach (string repoRoot in RepoRootsFor(commitFiles))
+		{
+			BranchSwitch? branchSwitch;
+			try
 			{
-				AnsiConsole.WriteLine();
-				foreach (string filePath in commitFiles)
-				{
-					CommitFile(filePath);
-				}
+				branchSwitch = SwitchToSyncBranch(repoRoot, branchName);
+			}
+			catch (LibGit2SharpException ex)
+			{
+				AnsiConsole.MarkupLine($"[red]Could not check out {branchName.EscapeMarkup()} in:[/] {repoRoot.EscapeMarkup()}");
+				AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
+				continue;
+			}
+
+			if (branchSwitch is null)
+			{
+				AnsiConsole.MarkupLine($"[yellow]Skipping (no commits to branch from):[/] {repoRoot.EscapeMarkup()}");
+				continue;
+			}
+
+			AnsiConsole.MarkupLine($"[green]On branch[/] {branchName.EscapeMarkup()} [green]in:[/] {repoRoot.EscapeMarkup()}");
+			yield return branchSwitch;
+		}
+	}
+
+	/// <summary>
+	/// Distinct repository roots owning the supplied files, in first-seen order.
+	/// </summary>
+	/// <param name="filePaths">Absolute paths of files to resolve.</param>
+	/// <returns>The repository working directories, without duplicates.</returns>
+	internal static IReadOnlyList<string> RepoRootsFor(IEnumerable<string> filePaths) =>
+	[
+		.. filePaths
+			.Select(RepoRootFor)
+			.OfType<string>()
+			.Distinct(StringComparer.Ordinal)
+	];
+
+	private static string? RepoRootFor(string filePath)
+	{
+		string repoPath = Repository.Discover(filePath);
+		return string.IsNullOrEmpty(repoPath) || !IsGitRepoPath(repoPath)
+			? null
+			: StripGitSuffix(repoPath);
+	}
+
+	/// <summary>
+	/// Checks out the sync branch in a repository, creating it at the current HEAD when it does not
+	/// exist and reusing it when it does, and records what to restore afterwards.
+	/// </summary>
+	/// <param name="repoRoot">The repository working directory.</param>
+	/// <param name="branchName">The branch to commit onto.</param>
+	/// <returns>The recorded switch, or <see langword="null"/> when the repository has no commit to branch from.</returns>
+	internal static BranchSwitch? SwitchToSyncBranch(string repoRoot, string branchName)
+	{
+		using Repository repo = new(repoRoot);
+
+		if (repo.Head.Tip is null)
+		{
+			return null;
+		}
+
+		string originalTipSha = repo.Head.Tip.Sha;
+		string original = repo.Info.IsHeadDetached ? originalTipSha : repo.Head.FriendlyName;
+
+		if (!string.Equals(repo.Head.FriendlyName, branchName, StringComparison.Ordinal))
+		{
+			Branch target = repo.Branches[branchName] ?? repo.CreateBranch(branchName);
+			_ = Commands.Checkout(repo, target);
+		}
+
+		return new BranchSwitch(repoRoot, original, originalTipSha);
+	}
+
+	/// <summary>
+	/// Returns each repository to the branch it was on before the sync branch was checked out.
+	/// </summary>
+	/// <param name="branchSwitches">The switches recorded by <see cref="SwitchToSyncBranch"/>.</param>
+	internal static void RestoreBranches(IReadOnlyList<BranchSwitch> branchSwitches)
+	{
+		foreach (BranchSwitch branchSwitch in branchSwitches)
+		{
+			try
+			{
+				RestoreBranch(branchSwitch);
+			}
+			catch (LibGit2SharpException ex)
+			{
+				AnsiConsole.MarkupLine($"[red]Could not restore {branchSwitch.OriginalBranch.EscapeMarkup()} in:[/] {branchSwitch.RepoRoot.EscapeMarkup()}");
+				AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
 			}
 		}
 	}
+
+	/// <summary>
+	/// Returns a single repository to the branch it was on before the sync branch was checked out.
+	/// </summary>
+	/// <param name="branchSwitch">The switch recorded by <see cref="SwitchToSyncBranch"/>.</param>
+	internal static void RestoreBranch(BranchSwitch branchSwitch)
+	{
+		Ensure.NotNull(branchSwitch);
+
+		using Repository repo = new(branchSwitch.RepoRoot);
+		if (string.Equals(repo.Head.FriendlyName, branchSwitch.OriginalBranch, StringComparison.Ordinal))
+		{
+			return;
+		}
+
+		_ = Commands.Checkout(repo, branchSwitch.OriginalBranch);
+	}
+
+	/// <summary>
+	/// Commits on the repository's current HEAD that are not reachable from the recorded base tip,
+	/// which for a sync branch is exactly the commits the sync added.
+	/// </summary>
+	/// <param name="repoRoot">The repository working directory.</param>
+	/// <param name="baseTipSha">The tip the sync branch was based on.</param>
+	/// <returns>The author name of each commit added on top of the base, newest first.</returns>
+	internal static IReadOnlyList<string> CommitAuthorsSinceBase(string repoRoot, string baseTipSha)
+	{
+		using Repository repo = new(repoRoot);
+
+		CommitFilter filter = new() { IncludeReachableFrom = repo.Head };
+		if (!string.IsNullOrEmpty(baseTipSha))
+		{
+			filter.ExcludeReachableFrom = baseTipSha;
+		}
+
+		return [.. repo.Commits.QueryBy(filter).Select(c => c.Author.Name)];
+	}
+
+	/// <summary>
+	/// Builds the git push arguments, which must set the upstream when sync created the branch
+	/// locally and the remote has never seen it.
+	/// </summary>
+	/// <param name="branchName">The sync branch, or empty when committing in place.</param>
+	/// <returns>The arguments to pass to git.</returns>
+	internal static string BuildPushArguments(string branchName) =>
+		string.IsNullOrEmpty(branchName)
+			? "push"
+			: $"push --set-upstream origin {branchName}";
 
 	private static Collection<string> FindChangedFiles(
 		HashSet<string> commitDirectories,
@@ -377,9 +583,19 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private async Task PushToRemoteAsync(HashSet<string> commitDirectories, string path, bool autoPush, CancellationToken ct)
+	internal async Task PushToRemoteAsync(
+		HashSet<string> commitDirectories,
+		string path,
+		bool autoPush,
+		string branchName,
+		IReadOnlyList<BranchSwitch> branchSwitches,
+		CancellationToken ct)
 	{
-		Collection<string> pushDirectories = FindPushableDirectories(commitDirectories, path);
+		// A branch sync just created has no upstream, so AheadBy is zero and the tracking-based
+		// check would never find anything to push; the recorded base tip answers it instead.
+		Collection<string> pushDirectories = string.IsNullOrEmpty(branchName)
+			? FindPushableDirectories(commitDirectories, path)
+			: FindPushableBranchDirectories(branchSwitches);
 
 		if (pushDirectories.Count == 0)
 		{
@@ -407,8 +623,26 @@ public class SyncService(IProcessService processService)
 		foreach (string dir in pushDirectories)
 		{
 			ct.ThrowIfCancellationRequested();
-			await PushDirectoryAsync(dir, ct).ConfigureAwait(false);
+			await PushDirectoryAsync(dir, branchName, ct).ConfigureAwait(false);
 		}
+	}
+
+	internal static Collection<string> FindPushableBranchDirectories(IReadOnlyList<BranchSwitch> branchSwitches)
+	{
+		Collection<string> pushDirectories = [];
+
+		foreach (BranchSwitch branchSwitch in branchSwitches)
+		{
+			IReadOnlyList<string> authors = CommitAuthorsSinceBase(branchSwitch.RepoRoot, branchSwitch.OriginalTipSha);
+
+			if (authors.Count > 0 && authors.All(author => author == CommitAuthorName))
+			{
+				pushDirectories.Add(branchSwitch.RepoRoot);
+				AnsiConsole.MarkupLine($"[cyan]{branchSwitch.RepoRoot.EscapeMarkup()}[/] can be pushed automatically");
+			}
+		}
+
+		return pushDirectories;
 	}
 
 	private static Collection<string> FindPushableDirectories(HashSet<string> commitDirectories, string path)
@@ -440,22 +674,27 @@ public class SyncService(IProcessService processService)
 		return pushDirectories;
 	}
 
-	private async Task PushDirectoryAsync(string repoRoot, CancellationToken ct)
+	internal async Task PushDirectoryAsync(string repoRoot, string branchName, CancellationToken ct)
 	{
 		AnsiConsole.MarkupLine($"[green]Pushing:[/] {repoRoot.EscapeMarkup()}");
 
-		AnsiConsole.MarkupLine("[dim]Pulling remote changes...[/]");
-		ProcessResult pull = await processService.RunAsync("git", "pull", repoRoot, ct).ConfigureAwait(false);
-		if (pull.ExitCode != 0)
+		// Pulling only makes sense for a branch that tracks a remote one. A sync branch may not
+		// exist on the remote at all, and `git pull` there fails for want of tracking information.
+		if (string.IsNullOrEmpty(branchName))
 		{
-			string pullMessage = pull.Errors.Count > 0 ? string.Join('\n', pull.Errors) : string.Join('\n', pull.Output);
-			AnsiConsole.MarkupLine($"[red]Pull failed for:[/] {repoRoot.EscapeMarkup()}");
-			AnsiConsole.MarkupLine($"[red]{pullMessage.EscapeMarkup()}[/]");
-			AnsiConsole.MarkupLine("[yellow]Skipping push to avoid non-fast-forward; resolve conflicts manually.[/]");
-			return;
+			AnsiConsole.MarkupLine("[dim]Pulling remote changes...[/]");
+			ProcessResult pull = await processService.RunAsync("git", "pull", repoRoot, ct).ConfigureAwait(false);
+			if (pull.ExitCode != 0)
+			{
+				string pullMessage = pull.Errors.Count > 0 ? string.Join('\n', pull.Errors) : string.Join('\n', pull.Output);
+				AnsiConsole.MarkupLine($"[red]Pull failed for:[/] {repoRoot.EscapeMarkup()}");
+				AnsiConsole.MarkupLine($"[red]{pullMessage.EscapeMarkup()}[/]");
+				AnsiConsole.MarkupLine("[yellow]Skipping push to avoid non-fast-forward; resolve conflicts manually.[/]");
+				return;
+			}
 		}
 
-		ProcessResult push = await processService.RunAsync("git", "push", repoRoot, ct).ConfigureAwait(false);
+		ProcessResult push = await processService.RunAsync("git", BuildPushArguments(branchName), repoRoot, ct).ConfigureAwait(false);
 		if (push.ExitCode == 0)
 		{
 			AnsiConsole.MarkupLine($"[green]Successfully pushed:[/] {repoRoot.EscapeMarkup()}");
