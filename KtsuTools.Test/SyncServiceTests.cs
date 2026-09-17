@@ -516,9 +516,8 @@ public class SyncServiceTests
 			string root = CreateCanonicalTempDirectory("ktsu_sync_ws");
 
 			List<string> repoRoots = [];
-			foreach (string name in repoNames)
+			foreach (string repoRoot in repoNames.Select(name => Path.Join(root, name)))
 			{
-				string repoRoot = Path.Join(root, name);
 				Directory.CreateDirectory(repoRoot);
 				_ = Repository.Init(repoRoot);
 				File.WriteAllText(Path.Join(repoRoot, fileName), content);

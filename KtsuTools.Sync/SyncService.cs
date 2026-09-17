@@ -410,21 +410,13 @@ public class SyncService(IProcessService processService)
 	/// </summary>
 	/// <param name="filePaths">Absolute paths of files to resolve.</param>
 	/// <returns>The repository working directories, without duplicates.</returns>
-	internal static IReadOnlyList<string> RepoRootsFor(IEnumerable<string> filePaths)
-	{
-		List<string> roots = [];
-		HashSet<string> seen = new(StringComparer.Ordinal);
-
-		foreach (string filePath in filePaths)
-		{
-			if (RepoRootFor(filePath) is string root && seen.Add(root))
-			{
-				roots.Add(root);
-			}
-		}
-
-		return roots;
-	}
+	internal static IReadOnlyList<string> RepoRootsFor(IEnumerable<string> filePaths) =>
+	[
+		.. filePaths
+			.Select(RepoRootFor)
+			.OfType<string>()
+			.Distinct(StringComparer.Ordinal)
+	];
 
 	private static string? RepoRootFor(string filePath)
 	{
