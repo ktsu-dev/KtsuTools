@@ -346,8 +346,20 @@ public class SyncService(IProcessService processService)
 		}
 
 		AnsiConsole.WriteLine();
+		return CommitFiles(commitFiles, branchName);
+	}
 
+	/// <summary>
+	/// Commits the changed files, onto the sync branch in each repository when one is named.
+	/// </summary>
+	/// <param name="commitFiles">Absolute paths of the files to commit.</param>
+	/// <param name="branchName">The sync branch, or empty to commit onto whatever is checked out.</param>
+	/// <returns>The switches to undo once pushing is done, empty when committing in place.</returns>
+	internal static IReadOnlyList<BranchSwitch> CommitFiles(IReadOnlyList<string> commitFiles, string branchName)
+	{
 		List<BranchSwitch> branchSwitches = [];
+		IEnumerable<string> toCommit = commitFiles;
+
 		if (!string.IsNullOrEmpty(branchName))
 		{
 			branchSwitches = [.. SwitchReposToBranch(commitFiles, branchName)];
@@ -355,10 +367,10 @@ public class SyncService(IProcessService processService)
 			// A repo that could not be switched keeps its checked-out branch, which is exactly what
 			// --branch exists to avoid, so its files are left uncommitted rather than landing there.
 			HashSet<string> switched = new(branchSwitches.Select(s => s.RepoRoot), StringComparer.Ordinal);
-			commitFiles = [.. commitFiles.Where(f => RepoRootFor(f) is string root && switched.Contains(root))];
+			toCommit = commitFiles.Where(f => RepoRootFor(f) is string root && switched.Contains(root));
 		}
 
-		foreach (string filePath in commitFiles)
+		foreach (string filePath in toCommit)
 		{
 			CommitFile(filePath);
 		}
@@ -366,7 +378,7 @@ public class SyncService(IProcessService processService)
 		return branchSwitches;
 	}
 
-	private static IEnumerable<BranchSwitch> SwitchReposToBranch(IEnumerable<string> commitFiles, string branchName)
+	internal static IEnumerable<BranchSwitch> SwitchReposToBranch(IEnumerable<string> commitFiles, string branchName)
 	{
 		foreach (string repoRoot in RepoRootsFor(commitFiles))
 		{
@@ -579,7 +591,7 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private async Task PushToRemoteAsync(
+	internal async Task PushToRemoteAsync(
 		HashSet<string> commitDirectories,
 		string path,
 		bool autoPush,
@@ -623,7 +635,7 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private static Collection<string> FindPushableBranchDirectories(IReadOnlyList<BranchSwitch> branchSwitches)
+	internal static Collection<string> FindPushableBranchDirectories(IReadOnlyList<BranchSwitch> branchSwitches)
 	{
 		Collection<string> pushDirectories = [];
 
@@ -670,7 +682,7 @@ public class SyncService(IProcessService processService)
 		return pushDirectories;
 	}
 
-	private async Task PushDirectoryAsync(string repoRoot, string branchName, CancellationToken ct)
+	internal async Task PushDirectoryAsync(string repoRoot, string branchName, CancellationToken ct)
 	{
 		AnsiConsole.MarkupLine($"[green]Pushing:[/] {repoRoot.EscapeMarkup()}");
 

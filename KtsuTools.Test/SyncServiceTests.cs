@@ -6,7 +6,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using ktsu.Semantics.Paths;
+using KtsuTools.Core.Services.Process;
 using KtsuTools.Sync;
 using LibGit2Sharp;
 
@@ -227,6 +230,347 @@ public class SyncServiceTests
 		}
 	}
 
+	[TestMethod]
+	public void CommitFilesPutsEachRepositoryCommitOnTheSyncBranch()
+	{
+		using TempGitRepo first = TempGitRepo.WithInitialCommit();
+		using TempGitRepo second = TempGitRepo.WithInitialCommit();
+		string firstOriginalTip = first.HeadSha;
+		string secondOriginalBranch = second.CurrentBranch;
+
+		first.Write("shared.txt", "synced content");
+		second.Write("shared.txt", "synced content");
+
+		IReadOnlyList<SyncService.BranchSwitch> switches = SyncService.CommitFiles(
+			[Path.Join(first.Root, "shared.txt"), Path.Join(second.Root, "shared.txt")],
+			"sync/shared");
+
+		Assert.AreEqual(2, switches.Count, "Each repository with a changed file must be switched.");
+		Assert.AreNotEqual(firstOriginalTip, first.TipOf("sync/shared"), "The sync branch must carry the commit.");
+		Assert.AreEqual(firstOriginalTip, first.TipOf(switches[0].OriginalBranch), "The original branch must not have moved.");
+		Assert.AreEqual(secondOriginalBranch, switches[1].OriginalBranch);
+	}
+
+	[TestMethod]
+	public void CommitFilesWithoutABranchCommitsOntoTheCheckedOutBranch()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string originalBranch = repo.CurrentBranch;
+		string originalTip = repo.HeadSha;
+		repo.Write("shared.txt", "synced content");
+
+		IReadOnlyList<SyncService.BranchSwitch> switches = SyncService.CommitFiles(
+			[Path.Join(repo.Root, "shared.txt")],
+			string.Empty);
+
+		Assert.AreEqual(0, switches.Count, "Committing in place switches nothing, so there is nothing to restore.");
+		Assert.AreEqual(originalBranch, repo.CurrentBranch);
+		Assert.AreNotEqual(originalTip, repo.HeadSha, "The commit must land on the checked-out branch.");
+	}
+
+	[TestMethod]
+	public void SwitchReposToBranchSkipsARepositoryWithNothingToBranchFrom()
+	{
+		using TempGitRepo committed = TempGitRepo.WithInitialCommit();
+		using TempGitRepo empty = TempGitRepo.WithoutAnyCommit();
+		committed.Write("shared.txt", "synced content");
+		empty.Write("shared.txt", "synced content");
+
+		IReadOnlyList<SyncService.BranchSwitch> switches =
+		[
+			.. SyncService.SwitchReposToBranch(
+				[Path.Join(committed.Root, "shared.txt"), Path.Join(empty.Root, "shared.txt")],
+				"sync/shared")
+		];
+
+		Assert.AreEqual(1, switches.Count, "A repo with no commit has no HEAD to branch from.");
+		Assert.AreEqual("sync/shared", committed.CurrentBranch);
+	}
+
+	[TestMethod]
+	public void CommitFilesLeavesARepositoryUncommittedWhenItsCheckoutConflicts()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string originalBranch = repo.CurrentBranch;
+		string originalTip = repo.HeadSha;
+
+		// The sync branch already changed the same file, so checking it out over an uncommitted
+		// local edit is a conflict libgit2 refuses.
+		_ = repo.CommitOnBranch("sync/shared", "shared.txt", "a different version", "KtsuTools");
+		repo.Write("shared.txt", "local edit");
+
+		IReadOnlyList<SyncService.BranchSwitch> switches = SyncService.CommitFiles(
+			[Path.Join(repo.Root, "shared.txt")],
+			"sync/shared");
+
+		Assert.AreEqual(0, switches.Count, "A repo that could not be switched must not be reported as switched.");
+		Assert.AreEqual(originalBranch, repo.CurrentBranch);
+		Assert.AreEqual(originalTip, repo.HeadSha, "The commit must not land in place when the branch was the point.");
+	}
+
+	[TestMethod]
+	public void RestoreBranchesReturnsEveryRepositoryAndSurvivesOneThatCannotBeRestored()
+	{
+		using TempGitRepo first = TempGitRepo.WithInitialCommit();
+		using TempGitRepo second = TempGitRepo.WithInitialCommit();
+		string firstOriginal = first.CurrentBranch;
+		string secondOriginal = second.CurrentBranch;
+
+		SyncService.BranchSwitch? firstSwitch = SyncService.SwitchToSyncBranch(first.Root, "sync/shared");
+		SyncService.BranchSwitch? secondSwitch = SyncService.SwitchToSyncBranch(second.Root, "sync/shared");
+		Assert.IsNotNull(firstSwitch);
+		Assert.IsNotNull(secondSwitch);
+
+		// A branch that no longer exists cannot be restored; the other repo must still come back.
+		SyncService.BranchSwitch missing = new(first.Root, "branch-that-went-away", firstSwitch.OriginalTipSha);
+
+		SyncService.RestoreBranches([missing, secondSwitch]);
+
+		Assert.AreEqual("sync/shared", first.CurrentBranch, "The failed restore must be reported, not thrown.");
+		Assert.AreEqual(secondOriginal, second.CurrentBranch, "A later repo must still be restored.");
+		Assert.AreEqual(firstOriginal, secondOriginal);
+	}
+
+	[TestMethod]
+	public void FindPushableBranchDirectoriesTakesOnlyBranchesHoldingSyncCommits()
+	{
+		using TempGitRepo pushable = TempGitRepo.WithInitialCommit();
+		using TempGitRepo handEdited = TempGitRepo.WithInitialCommit();
+		using TempGitRepo untouched = TempGitRepo.WithInitialCommit();
+
+		SyncService.BranchSwitch? pushableSwitch = SyncService.SwitchToSyncBranch(pushable.Root, "sync/shared");
+		SyncService.BranchSwitch? handEditedSwitch = SyncService.SwitchToSyncBranch(handEdited.Root, "sync/shared");
+		SyncService.BranchSwitch? untouchedSwitch = SyncService.SwitchToSyncBranch(untouched.Root, "sync/shared");
+		Assert.IsNotNull(pushableSwitch);
+		Assert.IsNotNull(handEditedSwitch);
+		Assert.IsNotNull(untouchedSwitch);
+
+		_ = pushable.Commit("shared.txt", "synced content", "KtsuTools");
+		_ = handEdited.Commit("shared.txt", "hand written", "A Human");
+
+		IReadOnlyList<string> pushDirectories =
+			[.. SyncService.FindPushableBranchDirectories([pushableSwitch, handEditedSwitch, untouchedSwitch])];
+
+		Assert.AreEqual(1, pushDirectories.Count, "Only the branch carrying sync-authored commits may be pushed.");
+		Assert.AreEqual(pushable.Root, pushDirectories[0]);
+	}
+
+	[TestMethod]
+	public async Task PushDirectoryAsyncSetsUpstreamAndSkipsThePullForASyncBranch()
+	{
+		RecordingProcessService fake = new();
+
+		await new SyncService(fake)
+			.PushDirectoryAsync("/tmp/repo", "sync/shared", CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, fake.Calls.Count, "A branch the remote has never seen has nothing to pull.");
+		Assert.AreEqual("push --set-upstream origin sync/shared", fake.Calls[0].Arguments);
+		Assert.AreEqual("/tmp/repo", fake.Calls[0].WorkingDirectory);
+	}
+
+	[TestMethod]
+	public async Task PushDirectoryAsyncStillPullsBeforePushingWithoutABranch()
+	{
+		RecordingProcessService fake = new();
+
+		await new SyncService(fake)
+			.PushDirectoryAsync("/tmp/repo", string.Empty, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		string[] expected = ["pull", "push"];
+
+		CollectionAssert.AreEqual(
+			expected,
+			fake.Calls.Select(c => c.Arguments).ToArray(),
+			"Committing in place keeps the existing pull-then-push behaviour.");
+	}
+
+	[TestMethod]
+	public async Task PushDirectoryAsyncSkipsThePushWhenThePullFails()
+	{
+		RecordingProcessService fake = new(exitCode: 1);
+
+		await new SyncService(fake)
+			.PushDirectoryAsync("/tmp/repo", string.Empty, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, fake.Calls.Count, "A failed pull must not be followed by a push.");
+		Assert.AreEqual("pull", fake.Calls[0].Arguments);
+	}
+
+	[TestMethod]
+	public async Task PushToRemoteAsyncPushesEverySyncBranchWhenAutoPushIsOn()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		SyncService.BranchSwitch? branchSwitch = SyncService.SwitchToSyncBranch(repo.Root, "sync/shared");
+		Assert.IsNotNull(branchSwitch);
+		_ = repo.Commit("shared.txt", "synced content", "KtsuTools");
+
+		RecordingProcessService fake = new();
+
+		await new SyncService(fake)
+			.PushToRemoteAsync([], repo.Root, autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, fake.Calls.Count);
+		Assert.AreEqual("push --set-upstream origin sync/shared", fake.Calls[0].Arguments);
+		Assert.AreEqual(repo.Root, fake.Calls[0].WorkingDirectory);
+	}
+
+	[TestMethod]
+	public async Task PushToRemoteAsyncPushesNothingWhenNoSyncBranchGainedACommit()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		SyncService.BranchSwitch? branchSwitch = SyncService.SwitchToSyncBranch(repo.Root, "sync/shared");
+		Assert.IsNotNull(branchSwitch);
+
+		RecordingProcessService fake = new();
+
+		await new SyncService(fake)
+			.PushToRemoteAsync([], repo.Root, autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, fake.Calls.Count, "An empty sync branch has nothing to publish.");
+	}
+
+	[TestMethod]
+	public void RestoreBranchOnTheOriginalBranchAlreadyDoesNothing()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string originalBranch = repo.CurrentBranch;
+		string originalTip = repo.HeadSha;
+
+		SyncService.RestoreBranch(new SyncService.BranchSwitch(repo.Root, originalBranch, originalTip));
+
+		Assert.AreEqual(originalBranch, repo.CurrentBranch);
+		Assert.AreEqual(originalTip, repo.HeadSha);
+	}
+
+	[TestMethod]
+	public void CommitFilesIsQuietWhenTheSyncedFileIsAlreadyCommitted()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+
+		// Nothing changed since the initial commit, so committing again has an empty tree diff.
+		IReadOnlyList<SyncService.BranchSwitch> switches = SyncService.CommitFiles(
+			[Path.Join(repo.Root, "shared.txt")],
+			"sync/shared");
+
+		Assert.AreEqual(1, switches.Count);
+		Assert.AreEqual(
+			switches[0].OriginalTipSha,
+			repo.HeadSha,
+			"An empty commit must be swallowed, not recorded.");
+	}
+
+	[TestMethod]
+	public async Task RunAsyncWithABranchTouchesNothingWhenEveryCopyIsAlreadyInSync()
+	{
+		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a", "repo-b");
+		RecordingProcessService fake = new();
+
+		int exit = await new SyncService(fake)
+			.RunAsync(workspace.Root, ["shared.txt"], autoPush: true, "sync/shared", CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit);
+		Assert.AreEqual(0, fake.Calls.Count, "Nothing was committed, so there is nothing to push.");
+		foreach (string repoRoot in workspace.RepoRoots)
+		{
+			Assert.AreNotEqual(
+				"sync/shared",
+				TempGitRepo.BranchOf(repoRoot),
+				"A run that commits nothing must leave every repo on its own branch.");
+		}
+	}
+
+	[TestMethod]
+	public async Task RunAsyncWithoutABranchReportsAMissingPath()
+	{
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_sync_absent_{Guid.NewGuid():N}");
+		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+
+		int exit = await new SyncService(new RecordingProcessService())
+			.RunAsync(path, ["shared.txt"], autoPush: false, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit);
+	}
+
+	private sealed class TempWorkspace : IDisposable
+	{
+		private TempWorkspace(string root, IReadOnlyList<string> repoRoots)
+		{
+			RootDirectory = root;
+			RepoRoots = repoRoots;
+		}
+
+		private string RootDirectory { get; }
+
+		public IReadOnlyList<string> RepoRoots { get; }
+
+		public AbsoluteDirectoryPath Root => AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(RootDirectory);
+
+		public static TempWorkspace WithIdenticalFileInRepos(string fileName, string content, params string[] repoNames)
+		{
+			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_ws_{Guid.NewGuid():N}");
+			Directory.CreateDirectory(root);
+
+			List<string> repoRoots = [];
+			foreach (string name in repoNames)
+			{
+				string repoRoot = Path.Join(root, name);
+				Directory.CreateDirectory(repoRoot);
+				_ = Repository.Init(repoRoot);
+				File.WriteAllText(Path.Join(repoRoot, fileName), content);
+
+				using Repository repo = new(repoRoot);
+				Commands.Stage(repo, fileName);
+				Signature signature = new("A Human", "human@example.test", DateTimeOffset.Now);
+				_ = repo.Commit($"Add {fileName}", signature, signature);
+
+				repoRoots.Add(repoRoot);
+			}
+
+			return new TempWorkspace(root, repoRoots);
+		}
+
+		public void Dispose() => DeleteGitTree(RootDirectory);
+	}
+
+	private static void DeleteGitTree(string root)
+	{
+		try
+		{
+			// Git marks objects and pack files read-only, which blocks a plain recursive delete.
+			foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+			{
+				File.SetAttributes(file, FileAttributes.Normal);
+			}
+
+			Directory.Delete(root, recursive: true);
+		}
+		catch (DirectoryNotFoundException)
+		{
+			// Already gone.
+		}
+	}
+
+	private sealed class RecordingProcessService(int exitCode = 0) : IProcessService
+	{
+		public List<(string Command, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
+			RunAsync(command, arguments, workingDirectory, null, ct);
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default)
+		{
+			Calls.Add((command, arguments, workingDirectory));
+			return Task.FromResult(new ProcessResult(exitCode, [], []));
+		}
+	}
+
 	/// <summary>
 	/// A throwaway git repository with real commits, so the branch handling is exercised against
 	/// libgit2 rather than a stand-in.
@@ -237,24 +581,27 @@ public class SyncServiceTests
 
 		public string Root { get; }
 
-		public static TempGitRepo WithInitialCommit()
+		public static TempGitRepo WithoutAnyCommit()
 		{
 			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_{Guid.NewGuid():N}");
 			Directory.CreateDirectory(root);
 			_ = Repository.Init(root);
+			return new TempGitRepo(root);
+		}
 
-			TempGitRepo repo = new(root);
+		public static TempGitRepo WithInitialCommit()
+		{
+			TempGitRepo repo = WithoutAnyCommit();
 			_ = repo.Commit("shared.txt", "original content", "A Human");
 			return repo;
 		}
 
-		public string CurrentBranch
+		public string CurrentBranch => BranchOf(Root);
+
+		public static string BranchOf(string repoRoot)
 		{
-			get
-			{
-				using Repository repo = new(Root);
-				return repo.Head.FriendlyName;
-			}
+			using Repository repo = new(repoRoot);
+			return repo.Head.FriendlyName;
 		}
 
 		public string HeadSha
@@ -308,22 +655,6 @@ public class SyncServiceTests
 			return sha;
 		}
 
-		public void Dispose()
-		{
-			try
-			{
-				// Git marks objects and pack files read-only, which blocks a plain recursive delete.
-				foreach (string file in Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories))
-				{
-					File.SetAttributes(file, FileAttributes.Normal);
-				}
-
-				Directory.Delete(Root, recursive: true);
-			}
-			catch (DirectoryNotFoundException)
-			{
-				// Already gone.
-			}
-		}
+		public void Dispose() => DeleteGitTree(Root);
 	}
 }
