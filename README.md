@@ -73,6 +73,19 @@ A cached solution that no cached repository contains is reported separately rath
 `ktools repo validate` checks the cached repository and solution paths created by `repo discover`,
 reports stale entries, and prunes them. Use `--dry-run` to preview without pruning.
 
+`ktools sync` commits onto whatever branch each repository has checked out, which across a
+workspace of thirty repositories means thirty commits on thirty `main`s. Pass `--branch <NAME>` to
+commit onto a dedicated branch instead: it is created at the current HEAD where it does not exist
+and reused where it does, and every repository is returned to the branch it was on once the run
+finishes.
+
+```bash
+ktools sync --path c:/dev/ktsu-dev --filename .editorconfig --branch sync/editorconfig
+```
+
+With `--auto-push`, a `--branch` run pushes that branch and sets its upstream, so the sync lands
+somewhere a pull request can be opened from rather than on the default branch.
+
 ## Command Groups
 
 | Group | Module | What it does |
