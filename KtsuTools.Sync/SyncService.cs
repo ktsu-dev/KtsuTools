@@ -300,9 +300,10 @@ public class SyncService(IProcessService processService)
 		HashSet<string> seen = new(PathComparer);
 		List<string> matches = [];
 
-		foreach (string file in EnumerateCandidates(roots, patterns))
+		foreach (string file in EnumerateCandidates(roots, patterns).Where(file => IsScannable(file, exclusions)))
 		{
-			if (IsScannable(file, exclusions) && seen.Add(file))
+			// Deduplication stays in the loop body: it is stateful, so it has to run in scan order.
+			if (seen.Add(file))
 			{
 				matches.Add(file);
 			}
