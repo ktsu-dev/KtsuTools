@@ -588,23 +588,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		_ = gitService;
 		Ensure.NotNull(path);
 
-		string fullPath = path.ToString();
-
-		if (!Directory.Exists(fullPath))
+		if (TryDiscoverWorkspaceRepos(path.ToString(), out int nothingToFetch) is not List<string> sortedRepos)
 		{
-			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
-			return 1;
-		}
-
-		ConcurrentBag<string> repos = [];
-		DiscoverGitReposRecursive(fullPath, repos);
-
-		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
-
-		if (sortedRepos.Count == 0)
-		{
-			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
-			return 0;
+			return nothingToFetch;
 		}
 
 		ConcurrentDictionary<string, FetchOutcome> outcomes = [];
@@ -702,6 +688,41 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	private sealed record FetchOutcome(bool Failed, AheadBehind? Divergence);
 
 	/// <summary>
+	/// Resolves the repositories a workspace-wide verb should operate on, in name order, and reports
+	/// the two cases where there is nothing to operate on.
+	/// </summary>
+	/// <param name="fullPath">The workspace root to search.</param>
+	/// <param name="exitCode">
+	/// The code the caller should return when this yields nothing: one for a path that does not
+	/// exist, which is a caller error, and zero for a workspace that simply holds no repositories.
+	/// </param>
+	/// <returns>The repositories in name order, or <see langword="null"/> when the caller should stop.</returns>
+	private static List<string>? TryDiscoverWorkspaceRepos(string fullPath, out int exitCode)
+	{
+		if (!Directory.Exists(fullPath))
+		{
+			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+			exitCode = 1;
+			return null;
+		}
+
+		ConcurrentBag<string> repos = [];
+		DiscoverGitReposRecursive(fullPath, repos);
+
+		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
+
+		exitCode = 0;
+
+		if (sortedRepos.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
+			return null;
+		}
+
+		return sortedRepos;
+	}
+
+	/// <summary>
 	/// The first line of a Git LFS pointer file. A working tree that still holds these instead of the
 	/// real content is what a missing set of LFS filters looks like from the outside.
 	/// </summary>
@@ -755,23 +776,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		_ = gitService;
 		Ensure.NotNull(path);
 
-		string fullPath = path.ToString();
-
-		if (!Directory.Exists(fullPath))
+		if (TryDiscoverWorkspaceRepos(path.ToString(), out int nothingToInstall) is not List<string> sortedRepos)
 		{
-			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
-			return 1;
-		}
-
-		ConcurrentBag<string> repos = [];
-		DiscoverGitReposRecursive(fullPath, repos);
-
-		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
-
-		if (sortedRepos.Count == 0)
-		{
-			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
-			return 0;
+			return nothingToInstall;
 		}
 
 		Dictionary<string, LfsOutcome> outcomes = [];
@@ -969,23 +976,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			return 1;
 		}
 
-		string fullPath = path.ToString();
-
-		if (!Directory.Exists(fullPath))
+		if (TryDiscoverWorkspaceRepos(path.ToString(), out int nothingToRun) is not List<string> sortedRepos)
 		{
-			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
-			return 1;
-		}
-
-		ConcurrentBag<string> repos = [];
-		DiscoverGitReposRecursive(fullPath, repos);
-
-		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
-
-		if (sortedRepos.Count == 0)
-		{
-			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
-			return 0;
+			return nothingToRun;
 		}
 
 		string arguments = BuildGitArguments(args, color);
