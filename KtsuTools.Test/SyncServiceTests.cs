@@ -4,6 +4,7 @@ namespace KtsuTools.Test;
 
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -12,6 +13,7 @@ using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Sync;
 using LibGit2Sharp;
+using Spectre.Console;
 
 [TestClass]
 public class SyncServiceTests
@@ -666,6 +668,162 @@ public class SyncServiceTests
 			.ConfigureAwait(false);
 
 		Assert.AreEqual(1, exit);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task RunAsyncReportsWhenNoFilenamePatternIsGiven()
+	{
+		using TempTree tree = TempTree.New();
+		int exit = 0;
+
+		string output = await CaptureConsoleAsync(async () =>
+			exit = await new SyncService(new RecordingProcessService())
+				.RunAsync([tree.Root], ["   "], autoPush: false, branch: string.Empty, exclusions: [], CancellationToken.None)
+				.ConfigureAwait(false)).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit);
+		StringAssert.Contains(output, "No filename patterns provided", StringComparison.Ordinal);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task RunAsyncNamesEveryRootAndExclusionItScans()
+	{
+		using TempTree first = TempTree.New();
+		using TempTree second = TempTree.New();
+		_ = first.WriteFile("repo-a", "shared.txt");
+		_ = second.WriteFile("repo-b", "shared.txt");
+		RecordingProcessService fake = new();
+		int exit = 0;
+
+		string output = await CaptureConsoleAsync(async () =>
+			exit = await new SyncService(fake)
+				.RunAsync([first.Root, second.Root], ["shared.txt"], autoPush: false, branch: string.Empty, ["third-party"], CancellationToken.None)
+				.ConfigureAwait(false)).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit);
+		Assert.AreEqual(0, fake.Calls.Count, "Identical copies outside a repo leave nothing to commit or push.");
+		StringAssert.Contains(output, first.Root, StringComparison.Ordinal);
+		StringAssert.Contains(output, second.Root, StringComparison.Ordinal);
+		StringAssert.Contains(output, "third-party", StringComparison.Ordinal);
+	}
+
+	[TestMethod]
+	public void CalculateOldestModificationDatesTakesTheOldestFileInEachGroup()
+	{
+		using TempTree tree = TempTree.New();
+		string recent = Path.GetDirectoryName(tree.WriteFile("recent", "shared.txt"))!;
+		string older = Path.GetDirectoryName(tree.WriteFile("older", "shared.txt"))!;
+		string oldest = Path.GetDirectoryName(tree.WriteFile("oldest", "shared.txt"))!;
+
+		DateTime baseTime = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Local);
+		File.SetLastWriteTime(Path.Join(recent, "shared.txt"), baseTime);
+		File.SetLastWriteTime(Path.Join(older, "shared.txt"), baseTime.AddDays(-1));
+		File.SetLastWriteTime(Path.Join(oldest, "shared.txt"), baseTime.AddDays(-2));
+
+		Dictionary<string, Collection<string>> results = new(StringComparer.Ordinal)
+		{
+			["AAAA"] = [recent],
+			["BBBB"] = [older, oldest],
+		};
+
+		Dictionary<string, DateTime> dates = SyncService.CalculateOldestModificationDates(results, "shared.txt");
+
+		Assert.AreEqual(baseTime, dates["AAAA"]);
+		Assert.AreEqual(
+			baseTime.AddDays(-2),
+			dates["BBBB"],
+			"A group is dated by its oldest copy, not whichever one was listed first.");
+	}
+
+	[TestMethod]
+	public void CalculateOldestModificationDatesIgnoresADirectoryOnTheFilename()
+	{
+		using TempTree tree = TempTree.New();
+		string dir = Path.GetDirectoryName(tree.WriteFile("repo-a", "shared.txt"))!;
+		DateTime written = new(2026, 2, 3, 9, 30, 0, DateTimeKind.Local);
+		File.SetLastWriteTime(Path.Join(dir, "shared.txt"), written);
+
+		Dictionary<string, Collection<string>> results = new(StringComparer.Ordinal) { ["AAAA"] = [dir] };
+
+		// A rooted name would otherwise make Path.Combine discard the directory silently.
+		Dictionary<string, DateTime> dates = SyncService.CalculateOldestModificationDates(
+			results,
+			Path.Join(Path.GetTempPath(), "shared.txt"));
+
+		Assert.AreEqual(written, dates["AAAA"]);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task DisplayHashGroupsTableListsEveryGroupWithItsDirectories()
+	{
+		string root = Path.Join(Path.GetTempPath(), "workspace");
+		Dictionary<string, Collection<string>> results = new(StringComparer.Ordinal)
+		{
+			["AAAA"] = [Path.Join(root, "repo-a")],
+			["BBBB"] = [Path.Join(root, "repo-b")],
+		};
+		Dictionary<string, DateTime> dates = new(StringComparer.Ordinal)
+		{
+			["AAAA"] = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Local),
+			["BBBB"] = new DateTime(2026, 1, 2, 12, 0, 0, DateTimeKind.Local),
+		};
+
+		string output = await CaptureConsoleAsync(() =>
+		{
+			SyncService.DisplayHashGroupsTable(results, "shared.txt", dates, [root]);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "Differences found for:", StringComparison.Ordinal);
+		StringAssert.Contains(output, "AAAA", StringComparison.Ordinal);
+		StringAssert.Contains(output, "BBBB", StringComparison.Ordinal);
+		StringAssert.Contains(output, "repo-a", StringComparison.Ordinal);
+		StringAssert.Contains(output, "repo-b", StringComparison.Ordinal);
+		Assert.IsFalse(
+			output.Contains(root, StringComparison.Ordinal),
+			"One root is being scanned, so directories show relative to it.");
+	}
+
+	/// <summary>
+	/// Runs <paramref name="action"/> with both stdout and Spectre's console redirected into one
+	/// buffer, so a test can read what the sync actually printed. The console is global, so these
+	/// tests do not run in parallel.
+	/// </summary>
+	/// <param name="action">The work to run against the redirected console.</param>
+	/// <returns>Everything written while it ran.</returns>
+	private static async Task<string> CaptureConsoleAsync(Func<Task> action)
+	{
+		using StringWriter writer = new();
+		IAnsiConsole originalConsole = AnsiConsole.Console;
+		TextWriter originalOut = Console.Out;
+
+		try
+		{
+			Console.SetOut(writer);
+
+			IAnsiConsole console = AnsiConsole.Create(new AnsiConsoleSettings
+			{
+				Ansi = AnsiSupport.No,
+				ColorSystem = ColorSystemSupport.NoColors,
+				Out = new AnsiConsoleOutput(writer),
+			});
+
+			// Without a width the table collapses to an ellipsis, since there is no terminal to measure.
+			console.Profile.Width = 200;
+			AnsiConsole.Console = console;
+
+			await action().ConfigureAwait(false);
+		}
+		finally
+		{
+			AnsiConsole.Console = originalConsole;
+			Console.SetOut(originalOut);
+		}
+
+		return writer.ToString();
 	}
 
 	/// <summary>

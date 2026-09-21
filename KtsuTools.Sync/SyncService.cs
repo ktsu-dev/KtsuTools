@@ -266,10 +266,8 @@ public class SyncService(IProcessService processService)
 		string fullPath = Path.GetFullPath(filePath);
 		string[] directorySegments = DirectorySegmentsOf(fullPath);
 
-		foreach (string exclusion in exclusions)
+		foreach (string trimmed in exclusions.Select(Path.TrimEndingDirectorySeparator))
 		{
-			string trimmed = Path.TrimEndingDirectorySeparator(exclusion);
-
 			bool excluded = HasDirectorySeparator(trimmed)
 				? fullPath.StartsWith(NormalizeRoot(trimmed) + Path.DirectorySeparatorChar, PathComparison)
 				: Array.Exists(directorySegments, segment => string.Equals(segment, trimmed, PathComparison));
@@ -439,15 +437,20 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	private static Dictionary<string, DateTime> CalculateOldestModificationDates(
+	internal static Dictionary<string, DateTime> CalculateOldestModificationDates(
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename)
 	{
+		// The callers pass a name that came from Path.GetFileName, but a rooted second argument
+		// would make Path.Combine discard the directory silently, so re-establish that here rather
+		// than relying on the caller.
+		string fileName = Path.GetFileName(uniqueFilename);
+
 		Dictionary<string, DateTime> oldestModificationDates = [];
 		foreach ((string hash, Collection<string> directories) in results)
 		{
 			DateTime oldestModified = directories
-				.Min(dir => new FileInfo(Path.Combine(dir, uniqueFilename)).LastWriteTime);
+				.Min(dir => new FileInfo(Path.Combine(dir, fileName)).LastWriteTime);
 
 			oldestModificationDates[hash] = oldestModified;
 		}
@@ -455,7 +458,7 @@ public class SyncService(IProcessService processService)
 		return oldestModificationDates;
 	}
 
-	private static void DisplayHashGroupsTable(
+	internal static void DisplayHashGroupsTable(
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
 		Dictionary<string, DateTime> oldestModificationDates,
@@ -517,12 +520,16 @@ public class SyncService(IProcessService processService)
 		}
 
 		string sourceDir = sourceDirectories[0];
-		string sourceFile = Path.Combine(sourceDir, uniqueFilename);
+
+		// A rooted second argument would make Path.Combine discard the directory silently and copy
+		// over the source itself, so reduce the name to a bare file name before combining anything.
+		string fileName = Path.GetFileName(uniqueFilename);
+		string sourceFile = Path.Combine(sourceDir, fileName);
 
 		AnsiConsole.MarkupLine("[bold]Planned copies:[/]");
 		foreach (string dir in destinationDirectories)
 		{
-			string destinationFile = Path.Combine(DisplayPath(dir, roots), uniqueFilename);
+			string destinationFile = Path.Combine(DisplayPath(dir, roots), fileName);
 			AnsiConsole.MarkupLine($"  [blue]{DisplayPath(sourceDir, roots).EscapeMarkup()}[/] -> [yellow]{destinationFile.EscapeMarkup()}[/]");
 		}
 
@@ -536,7 +543,7 @@ public class SyncService(IProcessService processService)
 			foreach (string dir in destinationDirectories)
 			{
 				ct.ThrowIfCancellationRequested();
-				string destinationFile = Path.Combine(dir, uniqueFilename);
+				string destinationFile = Path.Combine(dir, fileName);
 				AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
 				File.Copy(sourceFile, destinationFile, overwrite: true);
 			}
