@@ -927,7 +927,13 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		int unavailable = outcomes.Values.Count(o => o.Status == LfsInstallStatus.Unavailable);
 		int failed = outcomes.Values.Count(o => o.Status == LfsInstallStatus.Failed);
 
-		string color = failed > 0 ? "red" : unavailable > 0 ? "yellow" : "green";
+		string color = (failed, unavailable) switch
+		{
+			( > 0, _) => "red",
+			(_, > 0) => "yellow",
+			_ => "green",
+		};
+
 		AnsiConsole.MarkupLine($"[{color}]{repoCount} repos · {installed} installed · {unavailable} unavailable · {failed} failed[/]");
 
 		if (unavailable > 0)
