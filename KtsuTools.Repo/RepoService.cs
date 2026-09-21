@@ -702,6 +702,240 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	private sealed record FetchOutcome(bool Failed, AheadBehind? Divergence);
 
 	/// <summary>
+	/// The first line of a Git LFS pointer file. A working tree that still holds these instead of the
+	/// real content is what a missing set of LFS filters looks like from the outside.
+	/// </summary>
+	private const string LfsPointerHeader = "version https://git-lfs.github.com/spec/v1";
+
+	/// <summary>
+	/// Pointer files are a few hundred bytes. Anything larger is the real content, so there is no
+	/// reason to read it.
+	/// </summary>
+	private const long LfsPointerMaxBytes = 1024;
+
+	/// <summary>How <c>git lfs install --local</c> went for one repository.</summary>
+	internal enum LfsInstallStatus
+	{
+		/// <summary>The filters were configured.</summary>
+		Installed,
+
+		/// <summary>Git has no <c>lfs</c> subcommand here, so there was nothing to configure.</summary>
+		Unavailable,
+
+		/// <summary>Git has <c>lfs</c>, but the install exited non-zero.</summary>
+		Failed,
+	}
+
+	/// <param name="Status">How the install went.</param>
+	/// <param name="UnsmudgedPointers">
+	/// Tracked files still sitting in the working tree as pointers. Only counted after a successful
+	/// install, since the listing needs <c>git lfs</c> to work.
+	/// </param>
+	private sealed record LfsOutcome(LfsInstallStatus Status, int UnsmudgedPointers);
+
+	/// <summary>
+	/// Configures Git LFS in every repository found under the given path, so a freshly cloned
+	/// workspace gets its filters in one pass instead of one repository at a time, on first failure.
+	/// </summary>
+	/// <param name="path">Directory to search. Repositories are found recursively.</param>
+	/// <param name="ct">Cancels before the next repository starts.</param>
+	/// <returns>
+	/// Zero when no repository failed outright. A repository where <c>git lfs</c> is simply not
+	/// installed is reported rather than counted as a failure, because that is one missing tool
+	/// rather than a broken repository, and it would otherwise fail every row of the run.
+	/// </returns>
+	/// <remarks>
+	/// Installing is only half the symptom. A repository cloned without the filters has pointer files
+	/// in its working tree, and installing the filters afterwards does not rewrite them — that needs a
+	/// checkout. Those files are counted per repository so the run says which repositories still need
+	/// one.
+	/// </remarks>
+	public async Task<int> InstallLfsAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)
+	{
+		_ = gitService;
+		Ensure.NotNull(path);
+
+		string fullPath = path.ToString();
+
+		if (!Directory.Exists(fullPath))
+		{
+			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+			return 1;
+		}
+
+		ConcurrentBag<string> repos = [];
+		DiscoverGitReposRecursive(fullPath, repos);
+
+		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
+
+		if (sortedRepos.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
+			return 0;
+		}
+
+		Dictionary<string, LfsOutcome> outcomes = [];
+
+		await AnsiConsole.Progress()
+			.AutoClear(false)
+			.HideCompleted(false)
+			.StartAsync(async progressContext =>
+			{
+				ProgressTask task = progressContext.AddTask("[green]Installing Git LFS[/]", maxValue: sortedRepos.Count);
+
+				foreach (string repo in sortedRepos)
+				{
+					ct.ThrowIfCancellationRequested();
+
+					task.Description = $"[green]Installing Git LFS in {Path.GetFileName(repo).EscapeMarkup()}[/]";
+					outcomes[repo] = await InstallLfsInRepositoryAsync(repo, ct).ConfigureAwait(false);
+					task.Increment(1);
+				}
+			}).ConfigureAwait(false);
+
+		WriteLfsTable(sortedRepos, outcomes);
+		WriteLfsSummary(sortedRepos.Count, outcomes);
+
+		return outcomes.Values.Any(outcome => outcome.Status == LfsInstallStatus.Failed) ? 1 : 0;
+	}
+
+	private async Task<LfsOutcome> InstallLfsInRepositoryAsync(string repo, CancellationToken ct)
+	{
+		// --local keeps the filters in the repository's own config, so nothing is written to the
+		// user's global config on their behalf.
+		ProcessResult install = await processService.RunAsync(GitCommand, "lfs install --local", repo, ct).ConfigureAwait(false);
+
+		if (install.ExitCode != 0)
+		{
+			return new LfsOutcome(
+				IsLfsUnavailable(install) ? LfsInstallStatus.Unavailable : LfsInstallStatus.Failed,
+				UnsmudgedPointers: 0);
+		}
+
+		ProcessResult tracked = await processService.RunAsync(GitCommand, "lfs ls-files --name-only", repo, ct).ConfigureAwait(false);
+
+		// A repository that tracks nothing through LFS exits non-zero on some git-lfs versions, and
+		// either way has no pointers to count.
+		int pointers = tracked.ExitCode == 0 ? CountUnsmudgedPointers(repo, tracked.Output) : 0;
+
+		return new LfsOutcome(LfsInstallStatus.Installed, pointers);
+	}
+
+	/// <summary>
+	/// Tells "git has no lfs subcommand" apart from a real install failure. Git answers an unknown
+	/// subcommand with <c>git: 'lfs' is not a git command</c>; a shell that cannot find the binary at
+	/// all says <c>command not found</c>.
+	/// </summary>
+	private static bool IsLfsUnavailable(ProcessResult result) =>
+		result.Errors.Concat(result.Output).Any(line =>
+			line.Contains("is not a git command", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("lfs: command not found", StringComparison.OrdinalIgnoreCase));
+
+	/// <summary>
+	/// Counts how many of a repository's LFS-tracked files are still pointer files in the working
+	/// tree, which is the state that breaks builds without announcing itself as an LFS problem.
+	/// </summary>
+	/// <param name="repoRoot">Working directory of the repository.</param>
+	/// <param name="trackedPaths">Repository-relative paths, as <c>git lfs ls-files --name-only</c> prints them.</param>
+	/// <returns>The number of tracked files whose content is a pointer rather than the real file.</returns>
+	internal static int CountUnsmudgedPointers(string repoRoot, IEnumerable<string> trackedPaths) =>
+		trackedPaths
+			.Select(line => line.Trim())
+			.Where(line => !string.IsNullOrEmpty(line))
+			.Count(relative => IsPointerFile(Path.Combine(repoRoot, relative)));
+
+	private static bool IsPointerFile(string file)
+	{
+		try
+		{
+			FileInfo info = new(file);
+
+			if (!info.Exists || info.Length > LfsPointerMaxBytes)
+			{
+				return false;
+			}
+
+			using StreamReader reader = new(file);
+			string? first = reader.ReadLine();
+
+			return first is not null && first.StartsWith(LfsPointerHeader, StringComparison.Ordinal);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// An unreadable file is not evidence of a pointer, and one of them should not end the run.
+			return false;
+		}
+	}
+
+	private static void WriteLfsTable(IReadOnlyList<string> sortedRepos, IReadOnlyDictionary<string, LfsOutcome> outcomes)
+	{
+		Table table = new()
+		{
+			Border = TableBorder.Rounded,
+		};
+
+		table.AddColumn("Repository");
+		table.AddColumn("Git LFS");
+		table.AddColumn("Pointer files");
+
+		foreach (string repo in sortedRepos)
+		{
+			LfsOutcome outcome = outcomes.TryGetValue(repo, out LfsOutcome? found)
+				? found
+				: new LfsOutcome(LfsInstallStatus.Failed, UnsmudgedPointers: 0);
+
+			table.AddRow(
+				Path.GetFileName(repo).EscapeMarkup(),
+				RenderLfsStatus(outcome.Status),
+				RenderPointerCount(outcome));
+		}
+
+		AnsiConsole.Write(table);
+	}
+
+	private static string RenderLfsStatus(LfsInstallStatus status) => status switch
+	{
+		LfsInstallStatus.Installed => "[green]installed[/]",
+		LfsInstallStatus.Unavailable => "[yellow]unavailable[/]",
+		_ => "[red]failed[/]",
+	};
+
+	private static string RenderPointerCount(LfsOutcome outcome)
+	{
+		if (outcome.Status != LfsInstallStatus.Installed)
+		{
+			return "-";
+		}
+
+		return outcome.UnsmudgedPointers > 0
+			? $"[yellow]{outcome.UnsmudgedPointers} unsmudged[/]"
+			: "[green]ok[/]";
+	}
+
+	private static void WriteLfsSummary(int repoCount, IReadOnlyDictionary<string, LfsOutcome> outcomes)
+	{
+		AnsiConsole.Write(new Rule().LeftJustified());
+
+		int installed = outcomes.Values.Count(o => o.Status == LfsInstallStatus.Installed);
+		int unavailable = outcomes.Values.Count(o => o.Status == LfsInstallStatus.Unavailable);
+		int failed = outcomes.Values.Count(o => o.Status == LfsInstallStatus.Failed);
+
+		string color = failed > 0 ? "red" : unavailable > 0 ? "yellow" : "green";
+		AnsiConsole.MarkupLine($"[{color}]{repoCount} repos · {installed} installed · {unavailable} unavailable · {failed} failed[/]");
+
+		if (unavailable > 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]git lfs is not available. Install it from https://git-lfs.com and run this again.[/]");
+		}
+
+		int withPointers = outcomes.Values.Count(o => o.UnsmudgedPointers > 0);
+		if (withPointers > 0)
+		{
+			AnsiConsole.MarkupLine($"[yellow]{withPointers} repo(s) still hold pointer files. Run 'git lfs pull' in each to replace them with the real content.[/]");
+		}
+	}
+
+	/// <summary>
 	/// Runs a git command in every repository found under the given path, writing each repository's
 	/// output verbatim beneath a header.
 	/// </summary>

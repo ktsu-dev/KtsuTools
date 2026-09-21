@@ -130,6 +130,16 @@ internal static class Program
 				repo.AddCommand<RepoUpdatePackagesCommand>("update-packages")
 					.WithDescription("Update NuGet packages across all repositories")
 					.WithExample("repo", "update-packages");
+
+				repo.AddBranch("lfs", lfs =>
+				{
+					lfs.SetDescription("Git LFS configuration across discovered repositories");
+
+					lfs.AddCommand<RepoLfsInstallCommand>("install")
+						.WithDescription("Run git lfs install --local across all discovered repositories, reporting any that still hold pointer files")
+						.WithExample("repo", "lfs", "install")
+						.WithExample("repo", "lfs", "install", "--path", "c:/dev/ktsu-dev");
+				});
 			});
 
 			config.AddBranch("packages", pkg =>
