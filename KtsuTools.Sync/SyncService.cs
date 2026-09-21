@@ -226,12 +226,10 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	{
 		Dictionary<string, string> baseBranches = new(StringComparer.Ordinal);
 
-		foreach (BranchSwitch branchSwitch in branchSwitches)
+		foreach (BranchSwitch branchSwitch in branchSwitches
+			.Where(s => !string.Equals(s.OriginalBranch, s.OriginalTipSha, StringComparison.Ordinal)))
 		{
-			if (!string.Equals(branchSwitch.OriginalBranch, branchSwitch.OriginalTipSha, StringComparison.Ordinal))
-			{
-				baseBranches[branchSwitch.RepoRoot] = branchSwitch.OriginalBranch;
-			}
+			baseBranches[branchSwitch.RepoRoot] = branchSwitch.OriginalBranch;
 		}
 
 		return baseBranches;
