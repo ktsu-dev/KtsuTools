@@ -153,6 +153,10 @@ internal static class Program
 				pkg.AddCommand<PackagesMigrateCpmCommand>("migrate-cpm")
 					.WithDescription("Convert to Central Package Management")
 					.WithExample("packages", "migrate-cpm", "--path", ".");
+
+				pkg.AddCommand<PackagesFindUnusedCommand>("find-unused")
+					.WithDescription("Report package references that no source refers to")
+					.WithExample("packages", "find-unused", "--path", ".");
 			});
 
 			config.AddBranch("markdown", md =>
