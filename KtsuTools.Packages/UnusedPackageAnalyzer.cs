@@ -213,14 +213,11 @@ internal static partial class UnusedPackageAnalyzer
 				continue;
 			}
 
-			foreach (XElement element in doc.Descendants())
-			{
-				if (element.Name.LocalName is "PackageReference" or "GlobalPackageReference"
-					&& element.Attribute(IncludeAttribute)?.Value is { Length: > 0 } id)
-				{
-					referenced.Add(id);
-				}
-			}
+			referenced.UnionWith(doc.Descendants()
+				.Where(e => e.Name.LocalName is "PackageReference" or "GlobalPackageReference")
+				.Select(e => e.Attribute(IncludeAttribute)?.Value)
+				.OfType<string>()
+				.Where(id => id.Length > 0));
 		}
 
 		return [.. props.Descendants("PackageVersion")
@@ -268,13 +265,11 @@ internal static partial class UnusedPackageAnalyzer
 			SourceIndex index = new();
 
 			// MSBuild-declared implicit usings count as source references.
-			foreach (XElement element in project.Descendants())
-			{
-				if (element.Name.LocalName == "Using" && element.Attribute(IncludeAttribute)?.Value is { Length: > 0 } ns)
-				{
-					index.namespaces.Add(ns);
-				}
-			}
+			index.namespaces.UnionWith(project.Descendants()
+				.Where(e => e.Name.LocalName == "Using")
+				.Select(e => e.Attribute(IncludeAttribute)?.Value)
+				.OfType<string>()
+				.Where(ns => ns.Length > 0));
 
 			foreach (string file in EnumerateSourceFiles(projectDirectory))
 			{
