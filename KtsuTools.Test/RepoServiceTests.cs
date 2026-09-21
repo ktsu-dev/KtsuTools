@@ -19,6 +19,7 @@ using Spectre.Console;
 public class RepoServiceTests
 {
 	private static readonly string[] RepoAThenRepoB = ["repo-a", "repo-b"];
+	private static readonly string[] AlphaThenBeta = ["alpha", "beta"];
 
 	[TestMethod]
 	public async Task DiscoverRepositoriesAsyncMissingDirectoryReturnsEmpty()
@@ -777,6 +778,199 @@ public class RepoServiceTests
 		finally
 		{
 			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task InstallLfsAsyncConfiguresEveryRepositoryLocally()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_lfs_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "alpha", ".git"));
+		Directory.CreateDirectory(Path.Join(root, "beta", ".git"));
+		try
+		{
+			RecordingLfsProcessService fake = new();
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.InstallLfsAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit, "Every repository was configured, so the exit code should be zero.");
+
+			List<string> installDirectories = [.. fake.Calls
+				.Where(c => c.Arguments.StartsWith("lfs install", StringComparison.Ordinal))
+				.Select(c => Path.GetFileName(c.WorkingDirectory!))];
+
+			Assert.AreEqual(2, installDirectories.Count, "Both repositories should be configured.");
+			CollectionAssert.AreEquivalent(
+				AlphaThenBeta,
+				installDirectories,
+				"Each discovered repository should be configured in its own working directory.");
+			Assert.IsTrue(
+				fake.Calls.All(c => c.Command == "git"),
+				"Only git should be invoked.");
+			Assert.IsTrue(
+				fake.Calls
+					.Where(c => c.Arguments.StartsWith("lfs install", StringComparison.Ordinal))
+					.All(c => c.Arguments.Contains("--local", StringComparison.Ordinal)),
+				"--local keeps the filters in the repository's own config instead of the user's global one.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task InstallLfsAsyncReportsMissingGitLfsWithoutFailingTheRun()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_lfsmissing_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "alpha", ".git"));
+		try
+		{
+			RecordingLfsProcessService fake = new(
+				installExitCode: 1,
+				installErrors: ["git: 'lfs' is not a git command. See 'git --help'."]);
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.InstallLfsAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit, "A missing git lfs is one absent tool, not a broken repository, so it is reported rather than failed.");
+			Assert.IsFalse(
+				fake.Calls.Any(c => c.Arguments.Contains("ls-files", StringComparison.Ordinal)),
+				"Listing tracked files needs the same missing subcommand, so it should not be attempted.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task InstallLfsAsyncFailsWhenAnInstallFailsForAnyOtherReason()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_lfsfail_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "alpha", ".git"));
+		try
+		{
+			RecordingLfsProcessService fake = new(
+				installExitCode: 1,
+				installErrors: ["error: could not lock config file .git/config: Permission denied"]);
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.InstallLfsAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(1, exit, "An install that failed for a reason other than a missing git lfs should surface in the exit code.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task InstallLfsAsyncCountsPointerFilesLeftInTheWorkingTree()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_lfspointers_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "alpha");
+		Directory.CreateDirectory(Path.Join(repo, ".git"));
+		try
+		{
+			await File.WriteAllTextAsync(
+				Path.Join(repo, "icon.png"),
+				"version https://git-lfs.github.com/spec/v1\noid sha256:0a1b2c3d\nsize 4096\n").ConfigureAwait(false);
+
+			RecordingLfsProcessService fake = new(trackedFiles: ["icon.png"]);
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.InstallLfsAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(
+				0,
+				exit,
+				"A working tree that still holds pointer files needs a checkout, which is worth reporting but is not an install failure.");
+			Assert.IsTrue(
+				fake.Calls.Any(c => c.Arguments.StartsWith("lfs ls-files", StringComparison.Ordinal)),
+				"A successful install should be followed by a listing of what LFS tracks, so the pointers can be counted.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task FetchAllAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new RecordingFetchProcessService());
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_fetchmissingdir_{Guid.NewGuid():N}");
+		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+
+		int exit = await service.FetchAllAsync(missingPath, parallel: false).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not an empty workspace.");
+	}
+
+	[TestMethod]
+	public async Task InstallLfsAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new RecordingLfsProcessService());
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_lfsmissingdir_{Guid.NewGuid():N}");
+		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+
+		int exit = await service.InstallLfsAsync(missingPath).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not an empty workspace.");
+	}
+
+	[TestMethod]
+	public async Task CountUnsmudgedPointersCountsOnlyPointerFiles()
+	{
+		string repo = Path.Join(Path.GetTempPath(), $"ktsu_lfspointer_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(repo);
+		try
+		{
+			string pointer = Path.Join(repo, "icon.png");
+			string real = Path.Join(repo, "logo.png");
+
+			await File.WriteAllTextAsync(
+				pointer,
+				"version https://git-lfs.github.com/spec/v1\noid sha256:0a1b2c3d\nsize 4096\n").ConfigureAwait(false);
+			await File.WriteAllTextAsync(real, new string('x', 2048)).ConfigureAwait(false);
+
+			int count = RepoService.CountUnsmudgedPointers(repo, ["icon.png", "logo.png", "deleted.png", "  "]);
+
+			Assert.AreEqual(
+				1,
+				count,
+				"Only the file whose content is still a pointer should be counted; real content, a missing path and a blank line should not.");
+		}
+		finally
+		{
+			Directory.Delete(repo, recursive: true);
+		}
+	}
+
+	private sealed class RecordingLfsProcessService(
+		int installExitCode = 0,
+		IReadOnlyList<string>? installErrors = null,
+		IReadOnlyList<string>? trackedFiles = null) : IProcessService
+	{
+		public List<(string Command, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
+			RunAsync(command, arguments, workingDirectory, null, ct);
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default)
+		{
+			Calls.Add((command, arguments, workingDirectory));
+
+			return Task.FromResult(arguments.StartsWith("lfs ls-files", StringComparison.Ordinal)
+				? new ProcessResult(0, trackedFiles ?? [], [])
+				: new ProcessResult(installExitCode, [], installErrors ?? []));
 		}
 	}
 

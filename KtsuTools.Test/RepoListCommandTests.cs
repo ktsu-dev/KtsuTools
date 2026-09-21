@@ -2,9 +2,7 @@
 
 namespace KtsuTools.Test;
 
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -110,13 +108,5 @@ public class RepoListCommandTests
 		{
 			Directory.Delete(root, recursive: true);
 		}
-	}
-
-	private sealed class NoRemainingArguments : IRemainingArguments
-	{
-		public ILookup<string, string?> Parsed { get; } =
-			Enumerable.Empty<KeyValuePair<string, string?>>().ToLookup(pair => pair.Key, pair => pair.Value);
-
-		public IReadOnlyList<string> Raw { get; } = [];
 	}
 }
