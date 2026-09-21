@@ -261,6 +261,218 @@ public class SyncPullRequestsTests
 	}
 
 	[TestMethod]
+	public async Task OpenAsyncDoesNothingWhenNoRepositoryWasPushed()
+	{
+		ScriptedProcessService gh = ScriptedProcessService.WithNoOpenPullRequest();
+
+		await OpenerFor(gh).OpenAsync([], Branch, new Dictionary<string, string>(), [Synced(".editorconfig")], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, gh.ProbeCalls, "Nothing was pushed, so gh should not even be probed.");
+	}
+
+	[TestMethod]
+	public async Task OpenAsyncSkipsEverythingWhenThereIsNeitherAGhCliNorAToken()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ScriptedProcessService gh = ScriptedProcessService.WithoutTheGhCli();
+		RecordingGitHubService api = new() { IsAuthenticated = false };
+
+		using (NoGitHubToken.InEnvironment())
+		{
+			await new SyncPullRequestOpener(gh, api)
+				.OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
+				.ConfigureAwait(false);
+		}
+
+		Assert.AreEqual(0, gh.CreateCalls.Count);
+		Assert.AreEqual(0, api.Created.Count, "With no gh and no token there is no way to open anything.");
+	}
+
+	[TestMethod]
+	public async Task OpenAsyncAuthenticatesTheApiFromAnEnvironmentToken()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ScriptedProcessService gh = ScriptedProcessService.WithoutTheGhCli();
+		RecordingGitHubService api = new() { IsAuthenticated = false };
+
+		using (NoGitHubToken.InEnvironment("GH_TOKEN", "a-token"))
+		{
+			await new SyncPullRequestOpener(gh, api)
+				.OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
+				.ConfigureAwait(false);
+		}
+
+		Assert.AreEqual("a-token", api.InitializedWith, "The token in the environment is what authenticates the fallback.");
+		Assert.AreEqual(1, api.Created.Count);
+	}
+
+	[TestMethod]
+	public async Task OpenAsyncTreatsAGhCliThatIsNotOnThePathAsAbsent()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ThrowingProcessService gh = new();
+		RecordingGitHubService api = new() { IsAuthenticated = true };
+
+		await new SyncPullRequestOpener(gh, api)
+			.OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, api.Created.Count, "A gh that cannot be launched at all must fall through to the API.");
+	}
+
+	[TestMethod]
+	public async Task OpenAsyncReportsAGhCreateThatFailsAndKeepsGoing()
+	{
+		using TempRemoteRepo first = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		using TempRemoteRepo second = TempRemoteRepo.On("https://github.com/ktsu-dev/Sorting.git");
+		ScriptedProcessService gh = ScriptedProcessService.WithAFailingCreate();
+
+		Dictionary<string, string> bases = new(StringComparer.Ordinal)
+		{
+			[first.Root] = BaseBranch,
+			[second.Root] = BaseBranch,
+		};
+
+		await OpenerFor(gh).OpenAsync([first.Root, second.Root], Branch, bases, [Synced(".editorconfig")], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(2, gh.CreateCalls.Count, "One repository's rejected pull request must not abandon the rest of the run.");
+	}
+
+	[TestMethod]
+	public async Task OpenAsyncReportsAnApiThatRejectsThePullRequest()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ScriptedProcessService gh = ScriptedProcessService.WithoutTheGhCli();
+		RecordingGitHubService api = new() { IsAuthenticated = true, RejectCreate = true };
+
+		await new SyncPullRequestOpener(gh, api)
+			.OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, api.Created.Count, "The attempt is still made; only its result is a rejection.");
+	}
+
+	[TestMethod]
+	public void RemoteUrlOfIsNullForADirectoryThatIsNotARepository()
+	{
+		string notARepo = Path.Join(Path.GetTempPath(), $"ktsu_sync_pr_bare_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(notARepo);
+		try
+		{
+			Assert.IsNull(SyncPullRequestOpener.RemoteUrlOf(notARepo));
+		}
+		finally
+		{
+			Directory.Delete(notARepo, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public void RemoteUrlOfIsNullForARepositoryWithNoOrigin()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.WithoutARemote();
+
+		Assert.IsNull(SyncPullRequestOpener.RemoteUrlOf(repo.Root));
+	}
+
+	[TestMethod]
+	public async Task OpenPullRequestsAsyncDoesNothingWhenNothingWasPushed()
+	{
+		ScriptedProcessService process = ScriptedProcessService.WithNoOpenPullRequest();
+
+		await new SyncService(process, new RecordingGitHubService())
+			.OpenPullRequestsAsync([], Branch, [], [Synced(".editorconfig")], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, process.ProbeCalls);
+		Assert.AreEqual(0, process.CreateCalls.Count);
+	}
+
+	[TestMethod]
+	public async Task OpenPullRequestsAsyncSkipsWhenNoGitHubServiceIsAvailable()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ScriptedProcessService process = ScriptedProcessService.WithNoOpenPullRequest();
+
+		await new SyncService(process)
+			.OpenPullRequestsAsync(
+				[repo.Root],
+				Branch,
+				[new SyncService.BranchSwitch(repo.Root, BaseBranch, "aaaa1111")],
+				[Synced(".editorconfig")],
+				CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, process.CreateCalls.Count, "Without a GitHub service there is nothing to open a pull request with.");
+	}
+
+	[TestMethod]
+	public async Task OpenPullRequestsAsyncOpensOneForEachPushedRepository()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ScriptedProcessService gh = ScriptedProcessService.WithNoOpenPullRequest();
+
+		await new SyncService(gh, new RecordingGitHubService())
+			.OpenPullRequestsAsync(
+				[repo.Root],
+				Branch,
+				[new SyncService.BranchSwitch(repo.Root, BaseBranch, "aaaa1111")],
+				[Synced(".editorconfig")],
+				CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, gh.CreateCalls.Count);
+		StringAssert.Contains(gh.CreateCalls[0], "--base \"main\"");
+	}
+
+	[TestMethod]
+	public async Task PushDirectoryAsyncReportsAFailedPush()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		FailingPushService push = new();
+
+		bool pushed = await new SyncService(push)
+			.PushDirectoryAsync(repo.Root, Branch, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.IsFalse(pushed, "A repository whose push failed must not be reported as pushed.");
+	}
+
+	[TestMethod]
+	public async Task PushDirectoryAsyncReportsASuccessfulPush()
+	{
+		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
+		ScriptedProcessService push = ScriptedProcessService.WithNoOpenPullRequest();
+
+		bool pushed = await new SyncService(push)
+			.PushDirectoryAsync(repo.Root, Branch, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.IsTrue(pushed);
+	}
+
+	[TestMethod]
+	public void CreatePullRequestBeforeInitializingIsAProgrammingError()
+	{
+		GitHubService service = new();
+
+		Assert.IsFalse(service.IsAuthenticated);
+		_ = Assert.ThrowsExactlyAsync<InvalidOperationException>(
+			async () => await service.CreatePullRequestAsync("o", "r", "head", "base", "t", "b", CancellationToken.None).ConfigureAwait(false));
+	}
+
+	[TestMethod]
+	public void FindOpenPullRequestBeforeInitializingIsAProgrammingError()
+	{
+		GitHubService service = new();
+
+		_ = Assert.ThrowsExactlyAsync<InvalidOperationException>(
+			async () => await service.FindOpenPullRequestAsync("o", "r", "head", CancellationToken.None).ConfigureAwait(false));
+	}
+
+	[TestMethod]
 	public void BaseBranchesForKeepsTheBranchEachRepoWasOn()
 	{
 		Dictionary<string, string> bases = SyncService.BaseBranchesFor(
@@ -298,9 +510,11 @@ public class SyncPullRequestsTests
 	/// A process service that answers the three calls the opener makes — the gh probe, the pull
 	/// request list, and the create — so the gh path is exercised without gh being installed.
 	/// </summary>
-	private sealed class ScriptedProcessService(int probeExitCode, string listOutput) : IProcessService
+	private sealed class ScriptedProcessService(int probeExitCode, string listOutput, int createExitCode = 0) : IProcessService
 	{
 		public List<string> CreateCalls { get; } = [];
+
+		public int ProbeCalls { get; private set; }
 
 		public static ScriptedProcessService WithNoOpenPullRequest() => new(0, "[]");
 
@@ -309,6 +523,8 @@ public class SyncPullRequestsTests
 
 		public static ScriptedProcessService WithoutTheGhCli() => new(1, "[]");
 
+		public static ScriptedProcessService WithAFailingCreate() => new(0, "[]", createExitCode: 1);
+
 		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
 			RunAsync(command, arguments, workingDirectory, null, ct);
 
@@ -316,6 +532,7 @@ public class SyncPullRequestsTests
 		{
 			if (arguments == "--version")
 			{
+				ProbeCalls++;
 				return Task.FromResult(new ProcessResult(probeExitCode, ["gh version 2.0.0"], []));
 			}
 
@@ -325,7 +542,68 @@ public class SyncPullRequestsTests
 			}
 
 			CreateCalls.Add(arguments);
-			return Task.FromResult(new ProcessResult(0, ["https://github.com/ktsu-dev/KtsuTools/pull/9"], []));
+			return createExitCode == 0
+				? Task.FromResult(new ProcessResult(0, ["https://github.com/ktsu-dev/KtsuTools/pull/9"], []))
+				: Task.FromResult(new ProcessResult(createExitCode, [], ["pull request create failed"]));
+		}
+	}
+
+	/// <summary>
+	/// A process service whose every call fails, so the push-failure path is exercised.
+	/// </summary>
+	private sealed class FailingPushService : IProcessService
+	{
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
+			RunAsync(command, arguments, workingDirectory, null, ct);
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default) =>
+			Task.FromResult(new ProcessResult(1, [], ["remote rejected"]));
+	}
+
+	/// <summary>
+	/// A process service that fails to launch at all, the way a missing executable does.
+	/// </summary>
+	private sealed class ThrowingProcessService : IProcessService
+	{
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
+			RunAsync(command, arguments, workingDirectory, null, ct);
+
+		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default) =>
+			throw new System.ComponentModel.Win32Exception(2, "No such file or directory");
+	}
+
+	/// <summary>
+	/// Clears both token variables for the duration of a test and restores whatever was there,
+	/// so a token in the developer's or runner's environment cannot change the outcome.
+	/// </summary>
+	private sealed class NoGitHubToken : IDisposable
+	{
+		private readonly string? originalGhToken = Environment.GetEnvironmentVariable("GH_TOKEN");
+		private readonly string? originalGitHubToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
+
+		private NoGitHubToken()
+		{
+		}
+
+		public static NoGitHubToken InEnvironment()
+		{
+			NoGitHubToken scope = new();
+			Environment.SetEnvironmentVariable("GH_TOKEN", null);
+			Environment.SetEnvironmentVariable("GITHUB_TOKEN", null);
+			return scope;
+		}
+
+		public static NoGitHubToken InEnvironment(string name, string value)
+		{
+			NoGitHubToken scope = InEnvironment();
+			Environment.SetEnvironmentVariable(name, value);
+			return scope;
+		}
+
+		public void Dispose()
+		{
+			Environment.SetEnvironmentVariable("GH_TOKEN", originalGhToken);
+			Environment.SetEnvironmentVariable("GITHUB_TOKEN", originalGitHubToken);
 		}
 	}
 
@@ -338,10 +616,15 @@ public class SyncPullRequestsTests
 
 		public Uri? ExistingPullRequest { get; init; }
 
+		public bool RejectCreate { get; init; }
+
+		public string? InitializedWith { get; private set; }
+
 		public bool IsAuthenticated { get; set; }
 
 		public Task InitializeAsync(string token, CancellationToken ct = default)
 		{
+			InitializedWith = token;
 			IsAuthenticated = true;
 			return Task.CompletedTask;
 		}
@@ -352,7 +635,7 @@ public class SyncPullRequestsTests
 		public Task<Uri?> CreatePullRequestAsync(string owner, string repo, string headBranch, string baseBranch, string title, string body, CancellationToken ct = default)
 		{
 			Created.Add((owner, repo, headBranch, baseBranch));
-			return Task.FromResult<Uri?>(new Uri($"https://github.com/{owner}/{repo}/pull/1"));
+			return Task.FromResult(RejectCreate ? null : new Uri($"https://github.com/{owner}/{repo}/pull/1"));
 		}
 
 		public Task<IReadOnlyList<GitHubRepository>> GetRepositoriesAsync(string owner, CancellationToken ct = default) =>
@@ -383,15 +666,21 @@ public class SyncPullRequestsTests
 
 		public static TempRemoteRepo On(string remoteUrl)
 		{
-			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_pr_{Guid.NewGuid():N}");
-			Directory.CreateDirectory(root);
-			_ = Repository.Init(root);
+			TempRemoteRepo created = WithoutARemote();
 
-			using (Repository repo = new(root))
+			using (Repository repo = new(created.Root))
 			{
 				_ = repo.Network.Remotes.Add("origin", remoteUrl);
 			}
 
+			return created;
+		}
+
+		public static TempRemoteRepo WithoutARemote()
+		{
+			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_pr_{Guid.NewGuid():N}");
+			Directory.CreateDirectory(root);
+			_ = Repository.Init(root);
 			return new TempRemoteRepo(root);
 		}
 

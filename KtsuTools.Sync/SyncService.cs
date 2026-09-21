@@ -191,7 +191,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// <param name="branchSwitches">The recorded switches, which carry the branch each repo was on before the sync.</param>
 	/// <param name="syncedFiles">The files the sync copied.</param>
 	/// <param name="ct">Cancellation token.</param>
-	private async Task OpenPullRequestsAsync(
+	internal async Task OpenPullRequestsAsync(
 		IReadOnlyList<string> pushedRepoRoots,
 		string branchName,
 		IReadOnlyList<BranchSwitch> branchSwitches,

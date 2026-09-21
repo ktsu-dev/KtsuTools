@@ -499,6 +499,20 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public async Task RunAsyncWithPullRequestsTouchesNothingWhenEveryCopyIsAlreadyInSync()
+	{
+		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a", "repo-b");
+		RecordingProcessService fake = new();
+
+		int exit = await new SyncService(fake)
+			.RunAsync(workspace.Root, ["shared.txt"], autoPush: true, "sync/shared", openPullRequest: true, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit);
+		Assert.AreEqual(0, fake.Calls.Count, "Nothing was pushed, so there is no pull request to open and nothing to run.");
+	}
+
+	[TestMethod]
 	public async Task RunAsyncWithoutABranchReportsAMissingPath()
 	{
 		string missing = Path.Join(Path.GetTempPath(), $"ktsu_sync_absent_{Guid.NewGuid():N}");
