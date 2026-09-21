@@ -871,6 +871,50 @@ public class RepoServiceTests
 	}
 
 	[TestMethod]
+	public async Task InstallLfsAsyncCountsPointerFilesLeftInTheWorkingTree()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_lfspointers_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "alpha");
+		Directory.CreateDirectory(Path.Join(repo, ".git"));
+		try
+		{
+			await File.WriteAllTextAsync(
+				Path.Join(repo, "icon.png"),
+				"version https://git-lfs.github.com/spec/v1\noid sha256:0a1b2c3d\nsize 4096\n").ConfigureAwait(false);
+
+			RecordingLfsProcessService fake = new(trackedFiles: ["icon.png"]);
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.InstallLfsAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(
+				0,
+				exit,
+				"A working tree that still holds pointer files needs a checkout, which is worth reporting but is not an install failure.");
+			Assert.IsTrue(
+				fake.Calls.Any(c => c.Arguments.StartsWith("lfs ls-files", StringComparison.Ordinal)),
+				"A successful install should be followed by a listing of what LFS tracks, so the pointers can be counted.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task FetchAllAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new RecordingFetchProcessService());
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_fetchmissingdir_{Guid.NewGuid():N}");
+		AbsoluteDirectoryPath missingPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(missing);
+
+		int exit = await service.FetchAllAsync(missingPath, parallel: false).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not an empty workspace.");
+	}
+
+	[TestMethod]
 	public async Task InstallLfsAsyncMissingDirectoryReturnsFailure()
 	{
 		RepoService service = new(new Mock<IGitService>().Object, new RecordingLfsProcessService());
