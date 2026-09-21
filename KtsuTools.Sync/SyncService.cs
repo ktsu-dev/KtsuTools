@@ -297,19 +297,14 @@ public class SyncService(IProcessService processService)
 		Ensure.NotNull(roots);
 		Ensure.NotNull(patterns);
 
-		HashSet<string> seen = new(PathComparer);
-		List<string> matches = [];
-
-		foreach (string file in EnumerateCandidates(roots, patterns).Where(file => IsScannable(file, exclusions)))
-		{
-			// Deduplication stays in the loop body: it is stateful, so it has to run in scan order.
-			if (seen.Add(file))
-			{
-				matches.Add(file);
-			}
-		}
-
-		return matches;
+		// Distinct keeps the first occurrence of a file two roots both reach, which is what the
+		// scan order means, and does the deduplication without a running set to mutate.
+		return
+		[
+			.. EnumerateCandidates(roots, patterns)
+				.Where(file => IsScannable(file, exclusions))
+				.Distinct(PathComparer)
+		];
 	}
 
 	/// <summary>
