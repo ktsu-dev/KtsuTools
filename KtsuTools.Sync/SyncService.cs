@@ -300,32 +300,48 @@ public class SyncService(IProcessService processService)
 		HashSet<string> seen = new(PathComparer);
 		List<string> matches = [];
 
+		foreach (string file in EnumerateCandidates(roots, patterns))
+		{
+			if (IsScannable(file, exclusions) && seen.Add(file))
+			{
+				matches.Add(file);
+			}
+		}
+
+		return matches;
+	}
+
+	/// <summary>
+	/// Every file under any root matching any pattern, in scan order, including the duplicates that
+	/// overlapping roots and overlapping patterns produce.
+	/// </summary>
+	/// <param name="roots">The absolute directories to scan recursively.</param>
+	/// <param name="patterns">The filename patterns to match.</param>
+	/// <returns>Absolute paths of the matched files.</returns>
+	private static IEnumerable<string> EnumerateCandidates(IReadOnlyList<string> roots, IReadOnlyList<string> patterns)
+	{
 		foreach (string root in roots)
 		{
 			foreach (string pattern in patterns)
 			{
 				foreach (string file in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
 				{
-					if (IsExcluded(file, exclusions))
-					{
-						continue;
-					}
-
-					if (IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath))
-					{
-						continue;
-					}
-
-					if (seen.Add(file))
-					{
-						matches.Add(file);
-					}
+					yield return file;
 				}
 			}
 		}
-
-		return matches;
 	}
+
+	/// <summary>
+	/// Whether a matched file is one the sync should take, which excludes anything under an excluded
+	/// directory and anything inside a repository nested in another repository.
+	/// </summary>
+	/// <param name="file">Absolute path of the matched file.</param>
+	/// <param name="exclusions">The normalized exclusion entries.</param>
+	/// <returns>True when the file belongs in the scan.</returns>
+	private static bool IsScannable(string file, IReadOnlyList<string> exclusions) =>
+		!IsExcluded(file, exclusions)
+		&& !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath);
 
 	/// <summary>
 	/// The form of a matched directory to show. It stays relative while a single workspace is being
