@@ -743,16 +743,17 @@ public class SyncServiceTests
 		string dir = Path.Join(Path.GetTempPath(), "workspace");
 		string rooted = Path.Join(Path.GetTempPath(), "elsewhere", "shared.txt");
 
-		// The sync joins a directory to a file name in several places. Path.Combine returns a rooted
-		// second argument on its own, dropping the directory, which is the behaviour every one of
-		// those sites has to avoid; Path.Join keeps both. Path.GetFileName never yields a rooted
-		// value, so the two agree for every name the sync actually derives.
+		// The sync joins a directory to a file name in several places, and uses Path.Join rather than
+		// Path.Combine because Combine returns a rooted second argument on its own and drops the
+		// directory — which in SyncFilesToHashAsync would make source and destination the same path
+		// and copy a file over itself. These pin what the sync relies on from Join: it produces the
+		// path it looks like it should, it keeps the directory whatever the second argument is, and
+		// the names the sync derives are never rooted to begin with.
 		Assert.AreEqual(
-			Path.Combine(dir, "shared.txt"),
+			dir + Path.DirectorySeparatorChar + "shared.txt",
 			Path.Join(dir, "shared.txt"),
-			"For a bare file name the two must agree, so switching to Join changes no behaviour.");
+			"A bare file name joins onto the directory exactly as written.");
 
-		Assert.AreEqual(rooted, Path.Combine(dir, rooted), "This is the Path.Combine behaviour being avoided.");
 		StringAssert.StartsWith(Path.Join(dir, rooted), dir, StringComparison.Ordinal, "Join must never drop the directory.");
 		Assert.IsFalse(Path.IsPathRooted(Path.GetFileName(rooted)), "A bare file name is never rooted.");
 	}
