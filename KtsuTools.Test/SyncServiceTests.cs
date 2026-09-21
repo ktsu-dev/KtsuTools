@@ -409,7 +409,7 @@ public class SyncServiceTests
 		RecordingProcessService fake = new();
 
 		await new SyncService(fake)
-			.PushToRemoteAsync([], repo.Root, autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
+			.PushToRemoteAsync([], autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
 			.ConfigureAwait(false);
 
 		Assert.AreEqual(1, fake.Calls.Count);
@@ -427,7 +427,7 @@ public class SyncServiceTests
 		RecordingProcessService fake = new();
 
 		await new SyncService(fake)
-			.PushToRemoteAsync([], repo.Root, autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
+			.PushToRemoteAsync([], autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
 			.ConfigureAwait(false);
 
 		Assert.AreEqual(0, fake.Calls.Count, "An empty sync branch has nothing to publish.");
@@ -495,6 +495,205 @@ public class SyncServiceTests
 			.ConfigureAwait(false);
 
 		Assert.AreEqual(1, exit);
+	}
+
+	[TestMethod]
+	public void FindMatchingFilesScansEveryRootNotJustTheFirst()
+	{
+		using TempTree tree = TempTree.New();
+		string first = tree.WriteFile(Path.Join("ktsu-dev", "repo-a"), "shared.txt");
+		string second = tree.WriteFile(Path.Join("3k", "repo-b"), "shared.txt");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles(
+			[Path.GetDirectoryName(first)!, Path.GetDirectoryName(second)!],
+			["shared.txt"],
+			[]);
+
+		CollectionAssert.AreEquivalent(
+			new[] { first, second },
+			matches.ToArray(),
+			"Repos spread across unrelated parents must all be scanned.");
+	}
+
+	[TestMethod]
+	public void FindMatchingFilesReportsAFileOnceWhenRootsOverlap()
+	{
+		using TempTree tree = TempTree.New();
+		string file = tree.WriteFile(Path.Join("ktsu-dev", "repo-a"), "shared.txt");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles(
+			[tree.Root, Path.GetDirectoryName(file)!],
+			["shared.txt"],
+			[]);
+
+		Assert.AreEqual(1, matches.Count, "A workspace root and a repo inside it must not double-count.");
+		Assert.AreEqual(file, matches[0]);
+	}
+
+	[TestMethod]
+	public void FindMatchingFilesSkipsAnExcludedDirectoryName()
+	{
+		using TempTree tree = TempTree.New();
+		string kept = tree.WriteFile("repo-a", "shared.txt");
+		_ = tree.WriteFile(Path.Join("third-party", "vendored"), "shared.txt");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles([tree.Root], ["shared.txt"], ["third-party"]);
+
+		Assert.AreEqual(1, matches.Count, "A bare name must exclude the whole subtree beneath it.");
+		Assert.AreEqual(kept, matches[0]);
+	}
+
+	[TestMethod]
+	public void FindMatchingFilesExcludesOnlyTheNamedDirectoryWhenGivenAPath()
+	{
+		using TempTree tree = TempTree.New();
+		string excluded = tree.WriteFile(Path.Join("one", "vendor"), "shared.txt");
+		string kept = tree.WriteFile(Path.Join("two", "vendor"), "shared.txt");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles(
+			[tree.Root],
+			["shared.txt"],
+			[Path.GetDirectoryName(excluded)!]);
+
+		Assert.AreEqual(1, matches.Count, "An exclusion naming a path must not match a same-named directory elsewhere.");
+		Assert.AreEqual(kept, matches[0]);
+	}
+
+	[TestMethod]
+	public void IsExcludedIgnoresATrailingSeparatorOnABareName()
+	{
+		string file = Path.Join(Path.GetTempPath(), "workspace", "node_modules", "pkg", "shared.txt");
+
+		Assert.IsTrue(SyncService.IsExcluded(file, SyncService.NormalizeExclusions([$"node_modules{Path.DirectorySeparatorChar}"])));
+	}
+
+	[TestMethod]
+	public void IsExcludedDoesNotMatchTheFileNameItself()
+	{
+		string file = Path.Join(Path.GetTempPath(), "workspace", "repo-a", "shared.txt");
+
+		Assert.IsFalse(SyncService.IsExcluded(file, SyncService.NormalizeExclusions(["shared.txt"])));
+	}
+
+	[TestMethod]
+	public void NormalizeExclusionsSplitsCommaSeparatedEntriesAndDropsBlanks()
+	{
+		IReadOnlyList<string> exclusions = SyncService.NormalizeExclusions(["bin, obj", "  ", "bin"]);
+
+		Assert.AreEqual(2, exclusions.Count);
+		Assert.AreEqual("bin", exclusions[0]);
+		Assert.AreEqual("obj", exclusions[1]);
+	}
+
+	[TestMethod]
+	public void ResolveRootsCombinesTheWorkspaceWithExplicitReposWithoutDuplicates()
+	{
+		using TempTree tree = TempTree.New();
+		string repo = tree.CreateDirectory("repo-a");
+
+		IReadOnlyList<string> roots = SyncService.ResolveRoots(tree.Root, [repo, $"{repo}{Path.DirectorySeparatorChar}"], repoListFile: null);
+
+		CollectionAssert.AreEqual(new[] { tree.Root, repo }, roots.ToArray());
+	}
+
+	[TestMethod]
+	public void ResolveRootsSplitsACommaSeparatedRepoList()
+	{
+		using TempTree tree = TempTree.New();
+		string first = tree.CreateDirectory("repo-a");
+		string second = tree.CreateDirectory("repo-b");
+
+		IReadOnlyList<string> roots = SyncService.ResolveRoots(path: null, [$"{first},{second}"], repoListFile: null);
+
+		CollectionAssert.AreEqual(new[] { first, second }, roots.ToArray());
+	}
+
+	[TestMethod]
+	public void ReadRepoListSkipsBlankLinesAndCommentsAndResolvesRelativeEntries()
+	{
+		using TempTree tree = TempTree.New();
+		string first = tree.CreateDirectory("repo-a");
+		string second = tree.CreateDirectory("repo-b");
+		string listFile = Path.Join(tree.Root, "repos.txt");
+		File.WriteAllLines(listFile, ["# the ktsu clones", "", "repo-a", $"  {second}  "]);
+
+		IReadOnlyList<string> repos = SyncService.ReadRepoList(listFile);
+
+		CollectionAssert.AreEqual(new[] { first, second }, repos.ToArray());
+	}
+
+	[TestMethod]
+	public void DisplayPathStaysRelativeWhileOneWorkspaceIsScanned()
+	{
+		string root = Path.Join(Path.GetTempPath(), "workspace");
+		string directory = Path.Join(root, "repo-a", "src");
+
+		Assert.AreEqual(Path.Join("repo-a", "src"), SyncService.DisplayPath(directory, [root]));
+		Assert.AreEqual("workspace", SyncService.DisplayPath(root, [root]));
+	}
+
+	[TestMethod]
+	public void DisplayPathIsAbsoluteOnceSeveralRootsAreScanned()
+	{
+		string first = Path.Join(Path.GetTempPath(), "ktsu-dev");
+		string second = Path.Join(Path.GetTempPath(), "3k");
+		string directory = Path.Join(first, "repo-a");
+
+		Assert.AreEqual(
+			directory,
+			SyncService.DisplayPath(directory, [first, second]),
+			"Two roots can share a relative path, so only the absolute one is unambiguous.");
+	}
+
+	[TestMethod]
+	public async Task RunAsyncReportsAMissingRootEvenWhenAnotherRootExists()
+	{
+		using TempTree tree = TempTree.New();
+		string missing = Path.Join(tree.Root, $"absent_{Guid.NewGuid():N}");
+
+		int exit = await new SyncService(new RecordingProcessService())
+			.RunAsync([tree.Root, missing], ["shared.txt"], autoPush: false, branch: string.Empty, exclusions: [], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "Every root is checked, not just the first.");
+	}
+
+	[TestMethod]
+	public async Task RunAsyncReportsThatThereIsNothingToScanWithoutARoot()
+	{
+		int exit = await new SyncService(new RecordingProcessService())
+			.RunAsync([], ["shared.txt"], autoPush: false, branch: string.Empty, exclusions: [], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit);
+	}
+
+	/// <summary>
+	/// A throwaway directory tree, for the scanning paths that need files on disk but no git.
+	/// </summary>
+	private sealed class TempTree : IDisposable
+	{
+		private TempTree(string root) => Root = root;
+
+		public string Root { get; }
+
+		public static TempTree New() => new(CreateCanonicalTempDirectory("ktsu_sync_tree"));
+
+		public string CreateDirectory(string relativeDirectory)
+		{
+			string directory = Path.Join(Root, relativeDirectory);
+			Directory.CreateDirectory(directory);
+			return directory;
+		}
+
+		public string WriteFile(string relativeDirectory, string fileName)
+		{
+			string filePath = Path.Join(CreateDirectory(relativeDirectory), fileName);
+			File.WriteAllText(filePath, "same content");
+			return filePath;
+		}
+
+		public void Dispose() => DeleteGitTree(Root);
 	}
 
 	private sealed class TempWorkspace : IDisposable

@@ -33,6 +33,14 @@ public class SyncService(IProcessService processService)
 	private const string GitDirSuffixWindows = ".git\\";
 	private const string GitDirSuffixUnix = ".git/";
 
+	// Windows paths differ only in case, so two spellings of one directory are the same root there
+	// and two different roots everywhere else.
+	private static readonly StringComparer PathComparer =
+		OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+	private static readonly StringComparison PathComparison =
+		OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
 	/// <summary>
 	/// Records where a repository was before sync moved it onto the sync branch, so the original
 	/// checkout can be restored and the sync's own commits can be told apart from what was there.
@@ -72,16 +80,48 @@ public class SyncService(IProcessService processService)
 	/// <param name="branch">When non-empty, commits land on a branch of this name in each repo, created if missing and reused if it already exists, and the original checkout is restored afterwards.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public async Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, string branch, CancellationToken ct = default)
+	public Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, string branch, CancellationToken ct = default)
 	{
 		Ensure.NotNull(path);
+		return RunAsync([path.ToString()], filenames, autoPush, branch, exclusions: [], ct);
+	}
+
+	/// <summary>
+	/// Runs the sync operation over one or more roots, each either a workspace to walk or a single
+	/// repository, skipping anything under an excluded directory.
+	/// </summary>
+	/// <param name="roots">The directories to scan recursively. Overlapping roots are scanned once.</param>
+	/// <param name="filenames">One or more filename patterns to scan for.</param>
+	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
+	/// <param name="branch">When non-empty, commits land on a branch of this name in each repo, created if missing and reused if it already exists, and the original checkout is restored afterwards.</param>
+	/// <param name="exclusions">Directory names, or paths, whose contents are left out of the scan.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
+	public async Task<int> RunAsync(
+		IReadOnlyList<string> roots,
+		IReadOnlyList<string> filenames,
+		bool autoPush,
+		string branch,
+		IReadOnlyList<string> exclusions,
+		CancellationToken ct = default)
+	{
+		Ensure.NotNull(roots);
 		ct.ThrowIfCancellationRequested();
 
-		string pathString = path.ToString();
+		List<string> scanRoots = [.. roots
+			.Where(r => !string.IsNullOrWhiteSpace(r))
+			.Select(NormalizeRoot)
+			.Distinct(PathComparer)];
 
-		if (!Directory.Exists(pathString))
+		if (scanRoots.Count == 0)
 		{
-			AnsiConsole.MarkupLine($"[red]Path does not exist: {pathString.EscapeMarkup()}[/]");
+			AnsiConsole.MarkupLine("[red]No paths to scan.[/]");
+			return 1;
+		}
+
+		if (scanRoots.Find(r => !Directory.Exists(r)) is string missing)
+		{
+			AnsiConsole.MarkupLine($"[red]Path does not exist: {missing.EscapeMarkup()}[/]");
 			return 1;
 		}
 
@@ -96,23 +136,18 @@ public class SyncService(IProcessService processService)
 			return 1;
 		}
 
+		IReadOnlyList<string> exclusionList = NormalizeExclusions(exclusions);
+
 		AnsiConsole.MarkupLine($"[bold]Scanning for:[/] {string.Join(", ", patterns).EscapeMarkup()}");
-		AnsiConsole.MarkupLine($"[bold]In:[/] {pathString.EscapeMarkup()}");
+		AnsiConsole.MarkupLine($"[bold]In:[/] {string.Join(", ", scanRoots).EscapeMarkup()}");
+		if (exclusionList.Count > 0)
+		{
+			AnsiConsole.MarkupLine($"[bold]Excluding:[/] {string.Join(", ", exclusionList).EscapeMarkup()}");
+		}
+
 		AnsiConsole.WriteLine();
 
-		HashSet<string> seen = new(StringComparer.Ordinal);
-		Collection<string> fileEnumeration = [];
-		foreach (string pattern in patterns)
-		{
-			foreach (string file in Directory.EnumerateFiles(pathString, pattern, SearchOption.AllDirectories)
-				.Where(f => !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(f).AbsoluteDirectoryPath)))
-			{
-				if (seen.Add(file))
-				{
-					fileEnumeration.Add(file);
-				}
-			}
-		}
+		Collection<string> fileEnumeration = [.. FindMatchingFiles(scanRoots, patterns, exclusionList)];
 
 		IEnumerable<string> uniqueFilenames = fileEnumeration.Select(Path.GetFileName).Distinct()!;
 		AnsiConsole.MarkupLine($"[bold]Found matches:[/] {string.Join(", ", uniqueFilenames).EscapeMarkup()}");
@@ -125,17 +160,17 @@ public class SyncService(IProcessService processService)
 		foreach (string uniqueFilename in uniqueFilenames)
 		{
 			ct.ThrowIfCancellationRequested();
-			await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, pathString, commitDirectories, ct).ConfigureAwait(false);
+			await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, ct).ConfigureAwait(false);
 		}
 
 		string branchName = branch?.Trim() ?? string.Empty;
 
 		IReadOnlyList<BranchSwitch> branchSwitches =
-			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, pathString, branchName).ConfigureAwait(false);
+			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, branchName).ConfigureAwait(false);
 
 		try
 		{
-			await PushToRemoteAsync(commitDirectories, pathString, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
+			await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
 		}
 		finally
 		{
@@ -145,10 +180,205 @@ public class SyncService(IProcessService processService)
 		return 0;
 	}
 
+	/// <summary>
+	/// Resolves the directories to scan from a workspace path, explicit repository paths, and a file
+	/// listing repository paths, in that order and without duplicates.
+	/// </summary>
+	/// <param name="path">The workspace to walk, or empty when only explicit repositories are given.</param>
+	/// <param name="repos">Explicit repository paths, each of which may also be a comma-separated list.</param>
+	/// <param name="repoListFile">A file listing repository paths, or empty when there is none.</param>
+	/// <returns>The absolute roots to scan, in the order they were supplied.</returns>
+	public static IReadOnlyList<string> ResolveRoots(string? path, IEnumerable<string>? repos, string? repoListFile)
+	{
+		List<string> roots = [];
+
+		if (!string.IsNullOrWhiteSpace(path))
+		{
+			roots.Add(path);
+		}
+
+		if (repos is not null)
+		{
+			roots.AddRange(repos
+				.Where(r => r is not null)
+				.SelectMany(r => r.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
+		}
+
+		if (!string.IsNullOrWhiteSpace(repoListFile))
+		{
+			roots.AddRange(ReadRepoList(repoListFile));
+		}
+
+		return [.. roots
+			.Where(r => !string.IsNullOrWhiteSpace(r))
+			.Select(NormalizeRoot)
+			.Distinct(PathComparer)];
+	}
+
+	/// <summary>
+	/// Reads repository paths from a list file, one per line, ignoring blank lines and # comments.
+	/// A relative entry resolves against the list file's own directory, so a list can travel with the
+	/// checkout it describes rather than depending on where the tool was run from.
+	/// </summary>
+	/// <param name="repoListFile">Path of the file to read.</param>
+	/// <returns>The absolute repository paths the file names.</returns>
+	public static IReadOnlyList<string> ReadRepoList(string repoListFile)
+	{
+		string fullPath = Path.GetFullPath(repoListFile);
+		string baseDirectory = Path.GetDirectoryName(fullPath) ?? Directory.GetCurrentDirectory();
+
+		return [.. File.ReadLines(fullPath)
+			.Select(line => line.Trim())
+			.Where(line => line.Length > 0 && !line.StartsWith('#'))
+			.Select(line => Path.GetFullPath(line, baseDirectory))];
+	}
+
+	/// <summary>
+	/// Splits comma-separated exclusions apart and drops the blanks and duplicates.
+	/// </summary>
+	/// <param name="exclusions">The exclusions as supplied on the command line.</param>
+	/// <returns>The distinct exclusion entries.</returns>
+	internal static IReadOnlyList<string> NormalizeExclusions(IEnumerable<string>? exclusions) =>
+		exclusions is null
+			? []
+			: [.. exclusions
+				.Where(e => e is not null)
+				.SelectMany(e => e.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+				.Where(e => !string.IsNullOrWhiteSpace(e))
+				.Distinct(PathComparer)];
+
+	/// <summary>
+	/// Whether a matched file sits under an excluded directory. An exclusion naming a path excludes
+	/// that directory alone; one naming a bare directory excludes every directory of that name.
+	/// </summary>
+	/// <param name="filePath">Absolute path of the matched file.</param>
+	/// <param name="exclusions">The normalized exclusion entries.</param>
+	/// <returns>True when the file is excluded.</returns>
+	internal static bool IsExcluded(string filePath, IReadOnlyList<string> exclusions)
+	{
+		Ensure.NotNull(exclusions);
+
+		if (exclusions.Count == 0)
+		{
+			return false;
+		}
+
+		string fullPath = Path.GetFullPath(filePath);
+		string[] directorySegments = DirectorySegmentsOf(fullPath);
+
+		foreach (string exclusion in exclusions)
+		{
+			string trimmed = Path.TrimEndingDirectorySeparator(exclusion);
+
+			bool excluded = HasDirectorySeparator(trimmed)
+				? fullPath.StartsWith(NormalizeRoot(trimmed) + Path.DirectorySeparatorChar, PathComparison)
+				: Array.Exists(directorySegments, segment => string.Equals(segment, trimmed, PathComparison));
+
+			if (excluded)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/// <summary>
+	/// Every file matching any pattern under any root, skipping exclusions and nested repositories,
+	/// with each file reported once however many roots reach it.
+	/// </summary>
+	/// <param name="roots">The absolute directories to scan recursively.</param>
+	/// <param name="patterns">The filename patterns to match.</param>
+	/// <param name="exclusions">The normalized exclusion entries.</param>
+	/// <returns>Absolute paths of the matched files, in scan order.</returns>
+	internal static IReadOnlyList<string> FindMatchingFiles(
+		IReadOnlyList<string> roots,
+		IReadOnlyList<string> patterns,
+		IReadOnlyList<string> exclusions)
+	{
+		Ensure.NotNull(roots);
+		Ensure.NotNull(patterns);
+
+		HashSet<string> seen = new(PathComparer);
+		List<string> matches = [];
+
+		foreach (string root in roots)
+		{
+			foreach (string pattern in patterns)
+			{
+				foreach (string file in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
+				{
+					if (IsExcluded(file, exclusions))
+					{
+						continue;
+					}
+
+					if (IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath))
+					{
+						continue;
+					}
+
+					if (seen.Add(file))
+					{
+						matches.Add(file);
+					}
+				}
+			}
+		}
+
+		return matches;
+	}
+
+	/// <summary>
+	/// The form of a matched directory to show. It stays relative while a single workspace is being
+	/// scanned, and becomes absolute once several roots could produce the same relative path.
+	/// </summary>
+	/// <param name="directory">Absolute path of the directory to show.</param>
+	/// <param name="roots">The roots being scanned.</param>
+	/// <returns>The path to display.</returns>
+	internal static string DisplayPath(string directory, IReadOnlyList<string> roots)
+	{
+		Ensure.NotNull(roots);
+
+		if (roots.Count != 1)
+		{
+			return directory;
+		}
+
+		string root = roots[0];
+
+		if (string.Equals(directory, root, PathComparison))
+		{
+			string name = Path.GetFileName(root);
+			return name.Length > 0 ? name : root;
+		}
+
+		string prefix = root + Path.DirectorySeparatorChar;
+		return directory.StartsWith(prefix, PathComparison)
+			? directory[prefix.Length..]
+			: directory;
+	}
+
+	private static string NormalizeRoot(string root) =>
+		Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+
+	private static bool HasDirectorySeparator(string value) =>
+		value.Contains(Path.DirectorySeparatorChar) || value.Contains(Path.AltDirectorySeparatorChar);
+
+	private static string[] DirectorySegmentsOf(string filePath)
+	{
+		string? directory = Path.GetDirectoryName(filePath);
+		return string.IsNullOrEmpty(directory)
+			? []
+			: directory.Split(
+				[Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+				StringSplitOptions.RemoveEmptyEntries);
+	}
+
 	private static async Task ProcessUniqueFilenameAsync(
 		string uniqueFilename,
 		Collection<string> fileEnumeration,
-		string path,
+		IReadOnlyList<string> roots,
 		HashSet<string> commitDirectories,
 		CancellationToken ct)
 	{
@@ -170,7 +400,7 @@ public class SyncService(IProcessService processService)
 				results.Add(hashStr, result);
 			}
 
-			result.Add(file.Replace(path, "", StringComparison.Ordinal).Replace(uniqueFilename, "", StringComparison.Ordinal).Trim(Path.DirectorySeparatorChar));
+			result.Add(Path.GetDirectoryName(file) ?? string.Empty);
 		}
 
 		IEnumerable<string> allDirectories = results.SelectMany(r => r.Value);
@@ -178,7 +408,7 @@ public class SyncService(IProcessService processService)
 
 		if (results.Count > 1)
 		{
-			await HandleMultipleHashGroupsAsync(results, uniqueFilename, path, ct).ConfigureAwait(false);
+			await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, ct).ConfigureAwait(false);
 		}
 		else if (results.Count == 1)
 		{
@@ -189,36 +419,35 @@ public class SyncService(IProcessService processService)
 	private static async Task HandleMultipleHashGroupsAsync(
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
-		string path,
+		IReadOnlyList<string> roots,
 		CancellationToken ct)
 	{
-		Dictionary<string, DateTime> oldestModificationDates = CalculateOldestModificationDates(results, path, uniqueFilename);
+		Dictionary<string, DateTime> oldestModificationDates = CalculateOldestModificationDates(results, uniqueFilename);
 
 		// Sort by oldest modification date (most recent first)
 		Dictionary<string, Collection<string>> sortedResults = results
 			.OrderByDescending(r => oldestModificationDates[r.Key])
 			.ToDictionary(r => r.Key, r => r.Value);
 
-		DisplayHashGroupsTable(sortedResults, uniqueFilename, oldestModificationDates);
+		DisplayHashGroupsTable(sortedResults, uniqueFilename, oldestModificationDates, roots);
 
 		string syncHash = PromptForSyncHash(sortedResults);
 
 		if (!string.IsNullOrWhiteSpace(syncHash))
 		{
-			await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, path, ct).ConfigureAwait(false);
+			await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, ct).ConfigureAwait(false);
 		}
 	}
 
 	private static Dictionary<string, DateTime> CalculateOldestModificationDates(
 		Dictionary<string, Collection<string>> results,
-		string path,
 		string uniqueFilename)
 	{
 		Dictionary<string, DateTime> oldestModificationDates = [];
-		foreach ((string hash, Collection<string> relativeDirectories) in results)
+		foreach ((string hash, Collection<string> directories) in results)
 		{
-			DateTime oldestModified = relativeDirectories
-				.Min(dir => new FileInfo(Path.Combine(path, dir, uniqueFilename)).LastWriteTime);
+			DateTime oldestModified = directories
+				.Min(dir => new FileInfo(Path.Combine(dir, uniqueFilename)).LastWriteTime);
 
 			oldestModificationDates[hash] = oldestModified;
 		}
@@ -229,13 +458,14 @@ public class SyncService(IProcessService processService)
 	private static void DisplayHashGroupsTable(
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
-		Dictionary<string, DateTime> oldestModificationDates)
+		Dictionary<string, DateTime> oldestModificationDates,
+		IReadOnlyList<string> roots)
 	{
 		AnsiConsole.WriteLine();
 		AnsiConsole.MarkupLine($"[bold yellow]Differences found for:[/] {uniqueFilename.EscapeMarkup()}");
 		AnsiConsole.WriteLine();
 
-		foreach ((string hash, Collection<string> relativeDirectories) in results)
+		foreach ((string hash, Collection<string> directories) in results)
 		{
 			Table table = new()
 			{
@@ -244,9 +474,9 @@ public class SyncService(IProcessService processService)
 			table.AddColumn("Directory");
 			table.Border(TableBorder.Rounded);
 
-			foreach (string dir in relativeDirectories)
+			foreach (string dir in directories)
 			{
-				table.AddRow(dir.EscapeMarkup());
+				table.AddRow(DisplayPath(dir, roots).EscapeMarkup());
 			}
 
 			AnsiConsole.Write(table);
@@ -271,7 +501,7 @@ public class SyncService(IProcessService processService)
 		string syncHash,
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
-		string path,
+		IReadOnlyList<string> roots,
 		CancellationToken ct)
 	{
 		Collection<string> destinationDirectories = results
@@ -287,13 +517,13 @@ public class SyncService(IProcessService processService)
 		}
 
 		string sourceDir = sourceDirectories[0];
-		string sourceFile = Path.Combine(path, sourceDir, uniqueFilename);
+		string sourceFile = Path.Combine(sourceDir, uniqueFilename);
 
 		AnsiConsole.MarkupLine("[bold]Planned copies:[/]");
 		foreach (string dir in destinationDirectories)
 		{
-			string destinationFile = Path.Combine(path, dir, uniqueFilename);
-			AnsiConsole.MarkupLine($"  [blue]{sourceDir.EscapeMarkup()}[/] -> [yellow]{destinationFile.EscapeMarkup()}[/]");
+			string destinationFile = Path.Combine(DisplayPath(dir, roots), uniqueFilename);
+			AnsiConsole.MarkupLine($"  [blue]{DisplayPath(sourceDir, roots).EscapeMarkup()}[/] -> [yellow]{destinationFile.EscapeMarkup()}[/]");
 		}
 
 		AnsiConsole.WriteLine();
@@ -306,8 +536,8 @@ public class SyncService(IProcessService processService)
 			foreach (string dir in destinationDirectories)
 			{
 				ct.ThrowIfCancellationRequested();
-				string destinationFile = Path.Combine(path, dir, uniqueFilename);
-				AnsiConsole.MarkupLine($"[green]Copying:[/] {sourceDir.EscapeMarkup()} -> {destinationFile.EscapeMarkup()}");
+				string destinationFile = Path.Combine(dir, uniqueFilename);
+				AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
 				File.Copy(sourceFile, destinationFile, overwrite: true);
 			}
 		}
@@ -325,12 +555,11 @@ public class SyncService(IProcessService processService)
 	private static async Task<IReadOnlyList<BranchSwitch>> CommitChangedFilesAsync(
 		HashSet<string> commitDirectories,
 		HashSet<string> expandedFilesToSync,
-		string path,
 		string branchName)
 	{
 		AnsiConsole.WriteLine();
 
-		Collection<string> commitFiles = FindChangedFiles(commitDirectories, expandedFilesToSync, path);
+		Collection<string> commitFiles = FindChangedFiles(commitDirectories, expandedFilesToSync);
 
 		if (commitFiles.Count == 0)
 		{
@@ -524,14 +753,12 @@ public class SyncService(IProcessService processService)
 
 	private static Collection<string> FindChangedFiles(
 		HashSet<string> commitDirectories,
-		HashSet<string> expandedFilesToSync,
-		string path)
+		HashSet<string> expandedFilesToSync)
 	{
 		Collection<string> commitFiles = [];
 
-		foreach (string dir in commitDirectories)
+		foreach (string directoryPath in commitDirectories)
 		{
-			string directoryPath = Path.Combine(path, dir);
 			string repoPath = Repository.Discover(directoryPath);
 			if (repoPath is null || !IsGitRepoPath(repoPath))
 			{
@@ -585,7 +812,6 @@ public class SyncService(IProcessService processService)
 
 	internal async Task PushToRemoteAsync(
 		HashSet<string> commitDirectories,
-		string path,
 		bool autoPush,
 		string branchName,
 		IReadOnlyList<BranchSwitch> branchSwitches,
@@ -594,7 +820,7 @@ public class SyncService(IProcessService processService)
 		// A branch sync just created has no upstream, so AheadBy is zero and the tracking-based
 		// check would never find anything to push; the recorded base tip answers it instead.
 		Collection<string> pushDirectories = string.IsNullOrEmpty(branchName)
-			? FindPushableDirectories(commitDirectories, path)
+			? FindPushableDirectories(commitDirectories)
 			: FindPushableBranchDirectories(branchSwitches);
 
 		if (pushDirectories.Count == 0)
@@ -645,11 +871,11 @@ public class SyncService(IProcessService processService)
 		return pushDirectories;
 	}
 
-	private static Collection<string> FindPushableDirectories(HashSet<string> commitDirectories, string path)
+	private static Collection<string> FindPushableDirectories(HashSet<string> commitDirectories)
 	{
 		Collection<string> pushDirectories = [];
 		IEnumerable<string> commitRepos = commitDirectories
-			.Select(f => Repository.Discover(Path.Combine(path, f)))
+			.Select(Repository.Discover)
 			.Where(r => !string.IsNullOrEmpty(r) && IsGitRepoPath(r))
 			.Distinct();
 
