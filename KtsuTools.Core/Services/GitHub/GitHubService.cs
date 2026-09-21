@@ -88,6 +88,44 @@ public class GitHubService : IGitHubService
 		}
 	}
 
+	public async Task<Uri?> FindOpenPullRequestAsync(string owner, string repo, string headBranch, CancellationToken ct = default)
+	{
+		try
+		{
+			GitHubClient client = GetClient();
+
+			// The head filter is owner-qualified, which is what tells a branch in this repository
+			// apart from a same-named branch on a fork.
+			PullRequestRequest request = new()
+			{
+				State = ItemStateFilter.Open,
+				Head = $"{owner}:{headBranch}",
+			};
+
+			IReadOnlyList<PullRequest> open = await client.PullRequest.GetAllForRepository(owner, repo, request).ConfigureAwait(false);
+			return open.Count == 0 ? null : new Uri(open[0].HtmlUrl);
+		}
+		catch (ApiException)
+		{
+			return null;
+		}
+	}
+
+	public async Task<Uri?> CreatePullRequestAsync(string owner, string repo, string headBranch, string baseBranch, string title, string body, CancellationToken ct = default)
+	{
+		try
+		{
+			GitHubClient client = GetClient();
+			NewPullRequest request = new(title, headBranch, baseBranch) { Body = body };
+			PullRequest created = await client.PullRequest.Create(owner, repo, request).ConfigureAwait(false);
+			return new Uri(created.HtmlUrl);
+		}
+		catch (ApiException)
+		{
+			return null;
+		}
+	}
+
 	private GitHubClient GetClient() =>
 		_client ?? throw new InvalidOperationException("GitHub client not initialized. Call InitializeAsync first.");
 }
