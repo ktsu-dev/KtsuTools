@@ -441,16 +441,16 @@ public class SyncService(IProcessService processService)
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename)
 	{
-		// The callers pass a name that came from Path.GetFileName, but a rooted second argument
-		// would make Path.Combine discard the directory silently, so re-establish that here rather
-		// than relying on the caller.
+		// Reduce the name to a bare file name rather than trusting the caller, and join instead of
+		// combining: Path.Combine returns a rooted second argument on its own, discarding the
+		// directory, where Path.Join always keeps both.
 		string fileName = Path.GetFileName(uniqueFilename);
 
 		Dictionary<string, DateTime> oldestModificationDates = [];
 		foreach ((string hash, Collection<string> directories) in results)
 		{
 			DateTime oldestModified = directories
-				.Min(dir => new FileInfo(Path.Combine(dir, fileName)).LastWriteTime);
+				.Min(dir => new FileInfo(Path.Join(dir, fileName)).LastWriteTime);
 
 			oldestModificationDates[hash] = oldestModified;
 		}
@@ -521,15 +521,16 @@ public class SyncService(IProcessService processService)
 
 		string sourceDir = sourceDirectories[0];
 
-		// A rooted second argument would make Path.Combine discard the directory silently and copy
-		// over the source itself, so reduce the name to a bare file name before combining anything.
+		// Reduce the name to a bare file name, and join rather than combine. Path.Combine returns a
+		// rooted second argument on its own, which here would make source and destination the same
+		// path and copy the file over itself; Path.Join always keeps the directory.
 		string fileName = Path.GetFileName(uniqueFilename);
-		string sourceFile = Path.Combine(sourceDir, fileName);
+		string sourceFile = Path.Join(sourceDir, fileName);
 
 		AnsiConsole.MarkupLine("[bold]Planned copies:[/]");
 		foreach (string dir in destinationDirectories)
 		{
-			string destinationFile = Path.Combine(DisplayPath(dir, roots), fileName);
+			string destinationFile = Path.Join(DisplayPath(dir, roots), fileName);
 			AnsiConsole.MarkupLine($"  [blue]{DisplayPath(sourceDir, roots).EscapeMarkup()}[/] -> [yellow]{destinationFile.EscapeMarkup()}[/]");
 		}
 
@@ -543,7 +544,7 @@ public class SyncService(IProcessService processService)
 			foreach (string dir in destinationDirectories)
 			{
 				ct.ThrowIfCancellationRequested();
-				string destinationFile = Path.Combine(dir, fileName);
+				string destinationFile = Path.Join(dir, fileName);
 				AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
 				File.Copy(sourceFile, destinationFile, overwrite: true);
 			}
@@ -775,7 +776,7 @@ public class SyncService(IProcessService processService)
 			using Repository repo = new(repoPath);
 			foreach (string uniqueFilename in expandedFilesToSync)
 			{
-				string filePath = Path.Combine(directoryPath, uniqueFilename);
+				string filePath = Path.Join(directoryPath, uniqueFilename);
 				FileStatus fileStatus = repo.RetrieveStatus(filePath);
 				if (fileStatus is FileStatus.ModifiedInWorkdir or FileStatus.NewInWorkdir)
 				{

@@ -738,6 +738,26 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void JoiningAFileNameOntoADirectoryKeepsTheDirectory()
+	{
+		string dir = Path.Join(Path.GetTempPath(), "workspace");
+		string rooted = Path.Join(Path.GetTempPath(), "elsewhere", "shared.txt");
+
+		// The sync joins a directory to a file name in several places. Path.Combine returns a rooted
+		// second argument on its own, dropping the directory, which is the behaviour every one of
+		// those sites has to avoid; Path.Join keeps both. Path.GetFileName never yields a rooted
+		// value, so the two agree for every name the sync actually derives.
+		Assert.AreEqual(
+			Path.Combine(dir, "shared.txt"),
+			Path.Join(dir, "shared.txt"),
+			"For a bare file name the two must agree, so switching to Join changes no behaviour.");
+
+		Assert.AreEqual(rooted, Path.Combine(dir, rooted), "This is the Path.Combine behaviour being avoided.");
+		StringAssert.StartsWith(Path.Join(dir, rooted), dir, StringComparison.Ordinal, "Join must never drop the directory.");
+		Assert.IsFalse(Path.IsPathRooted(Path.GetFileName(rooted)), "A bare file name is never rooted.");
+	}
+
+	[TestMethod]
 	public void CalculateOldestModificationDatesIgnoresADirectoryOnTheFilename()
 	{
 		using TempTree tree = TempTree.New();
