@@ -74,8 +74,20 @@ public class GitService(IGitClient gitClient) : IGitService
 		try
 		{
 			GitRepository repo = await OpenAsync(repoPath, ct).ConfigureAwait(false);
+
+			GitResult<GitStatus> status = await repo.Status().TryExecuteAsync(ct).ConfigureAwait(false);
+			if (status is not { Success: true, Value.IsDetached: false } || status.Value.Branch is null)
+			{
+				return false;
+			}
+
+			// Naming the branch is what makes the first push of a new one work. A bare
+			// "git push origin" refuses a branch with no upstream — "the current branch has no
+			// upstream branch", exit 128 — whereas the libgit2 implementation this replaced pushed
+			// the ref explicitly and never consulted tracking configuration.
 			GitResult<GitPushResult> result = await repo.Push()
 				.ToRemote(Origin)
+				.WithBranch(status.Value.Branch)
 				.TryExecuteAsync(ct)
 				.ConfigureAwait(false);
 

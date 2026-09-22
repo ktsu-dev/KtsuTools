@@ -5,6 +5,7 @@ namespace KtsuTools.Test;
 using System;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 
 /// <summary>
@@ -132,6 +133,21 @@ internal static class TestGit
 	/// <param name="branchName">The branch to create.</param>
 	internal static void CheckoutNew(string repoRoot, string branchName) =>
 		_ = Run(repoRoot, "checkout", "-b", branchName);
+
+	/// <summary>Creates a bare repository, usable as a push target.</summary>
+	/// <param name="repoRoot">The directory to initialize.</param>
+	internal static void InitBare(string repoRoot) =>
+		_ = Run(repoRoot, "init", "--bare", "--initial-branch", "main");
+
+	/// <summary>Clones a repository into a new working directory and gives it an identity.</summary>
+	/// <param name="source">The repository to clone from.</param>
+	/// <param name="destination">The directory to clone into.</param>
+	internal static void Clone(string source, string destination)
+	{
+		_ = Run(Path.GetDirectoryName(destination)!, "clone", source, destination);
+		_ = Run(destination, "config", "user.name", "A Human");
+		_ = Run(destination, "config", "user.email", "human@example.test");
+	}
 
 	/// <summary>Adds a remote.</summary>
 	/// <param name="repoRoot">The repository working directory.</param>

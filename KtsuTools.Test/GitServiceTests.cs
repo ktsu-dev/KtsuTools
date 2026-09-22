@@ -150,6 +150,73 @@ public class GitServiceTests
 		Assert.IsFalse(await service.PushAsync(repo.Root).ConfigureAwait(false));
 	}
 
+	/// <summary>
+	/// Pushes a branch that has never been pushed, which is the case a bare <c>git push origin</c>
+	/// refuses for want of an upstream. The libgit2 implementation this replaced named the ref
+	/// explicitly and so never met that refusal; naming the branch keeps it that way.
+	/// </summary>
+	/// <returns>A task that completes when the assertions have run.</returns>
+	[TestMethod]
+	public async Task PushSendsABranchThatHasNoUpstreamYet()
+	{
+		using TempDir remote = TempDir.Empty();
+		using TempRepo repo = TempRepo.WithInitialCommit();
+		GitService service = new();
+
+		TestGit.InitBare(remote.Root);
+		TestGit.AddRemote(repo.Root, "origin", remote.Root);
+
+		Assert.IsTrue(
+			await service.PushAsync(repo.Root).ConfigureAwait(false),
+			"A first push must succeed; the branch has no upstream and that is the ordinary case.");
+
+		Assert.AreEqual(
+			TestGit.HeadSha(repo.Root),
+			TestGit.Run(remote.Root, "rev-parse", "main"),
+			"The remote should carry the same commit, not merely have accepted the command.");
+	}
+
+	[TestMethod]
+	public async Task PullBringsDownACommitMadeElsewhere()
+	{
+		using TempDir remote = TempDir.Empty();
+		using TempRepo origin = TempRepo.WithInitialCommit();
+		using TempDir second = TempDir.Empty();
+		GitService service = new();
+
+		TestGit.InitBare(remote.Root);
+		TestGit.AddRemote(origin.Root, "origin", remote.Root);
+		Assert.IsTrue(await service.PushAsync(origin.Root).ConfigureAwait(false));
+
+		string clone = Path.Join(second.Root, "clone");
+		TestGit.Clone(remote.Root, clone);
+
+		await File.WriteAllTextAsync(Path.Join(origin.Root, "shared.txt"), "second revision").ConfigureAwait(false);
+		Assert.IsTrue(await service.CommitAsync(origin.Root, "Second").ConfigureAwait(false));
+		Assert.IsTrue(await service.PushAsync(origin.Root).ConfigureAwait(false));
+
+		Assert.IsTrue(await service.PullAsync(clone).ConfigureAwait(false));
+
+		Assert.AreEqual(
+			"second revision",
+			await File.ReadAllTextAsync(Path.Join(clone, "shared.txt")).ConfigureAwait(false),
+			"The pull should have brought the other side's commit into the working tree.");
+	}
+
+	[TestMethod]
+	public async Task GetCurrentBranchIsEmptyWhenHeadIsDetached()
+	{
+		using TempRepo repo = TempRepo.WithInitialCommit();
+		GitService service = new();
+
+		_ = TestGit.Run(repo.Root, "checkout", "--detach");
+
+		Assert.AreEqual(
+			string.Empty,
+			await service.GetCurrentBranchAsync(repo.Root).ConfigureAwait(false),
+			"A detached HEAD is on no branch, so there is no name to report.");
+	}
+
 	[TestMethod]
 	public async Task CloneCopiesARepositoryAndReportsFailureForOneThatIsNotThere()
 	{
