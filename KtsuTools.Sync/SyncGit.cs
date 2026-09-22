@@ -191,9 +191,8 @@ internal static class SyncGit
 					.Select(e => Normalize(Path.Join(repoRoot, e.Path.ToString()))),
 				PathComparer);
 
-			foreach (string uniqueFilename in expandedFilesToSync)
+			foreach (string filePath in expandedFilesToSync.Select(name => Path.Join(directoryPath, name)))
 			{
-				string filePath = Path.Join(directoryPath, uniqueFilename);
 				if (changed.Contains(Normalize(filePath)))
 				{
 					commitFiles.Add(filePath);
