@@ -42,4 +42,14 @@ public class SyncCommandSettingsTests
 
 		Assert.IsTrue(settings.Validate().Successful, "Without --pr the branch is optional, as it always was.");
 	}
+
+	[TestMethod]
+	public void ValidateAcceptsPullRequestsWhenASavedConfigurationCouldSupplyTheBranch()
+	{
+		SyncCommand.Settings settings = new() { OpenPullRequest = true, Branch = string.Empty, ConfigName = "org-shared" };
+
+		Assert.IsTrue(
+			settings.Validate().Successful,
+			"The configuration is not loaded until the run starts, so --pr without --branch is only rejected once the resolved branch is known.");
+	}
 }
