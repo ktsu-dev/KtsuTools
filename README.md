@@ -107,6 +107,22 @@ that one directory:
 ktools sync --path c:/dev --exclude third-party,node_modules --filename .editorconfig
 ```
 
+Pass `--pr` to open that pull request in each repository the branch was pushed to, which is what
+turns a thirty-repository sync into something reviewable rather than thirty branches waiting for
+someone to raise them by hand.
+
+```bash
+ktools sync --path c:/dev/ktsu-dev --filename .editorconfig --branch sync/editorconfig --auto-push --pr
+```
+
+`--pr` requires `--branch`, since there is nothing to open a pull request from when sync commits
+onto the checked-out branch. Each pull request targets the branch that repository was on before
+the sync, and its body records every synced file and the version it was brought to. The `gh` CLI
+is used when it is installed, because it carries your own credentials; otherwise the GitHub API is
+used with a token from `GH_TOKEN` or `GITHUB_TOKEN`. A repository whose remote is not on GitHub is
+named and skipped rather than failing the run, and a branch that already has an open pull request
+is left alone.
+
 ## Command Groups
 
 | Group | Module | What it does |

@@ -10,7 +10,6 @@ using KtsuTools.Commands;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Sync;
 using Moq;
-using Spectre.Console;
 using Spectre.Console.Cli;
 
 [TestClass]
@@ -92,36 +91,13 @@ public class SyncCommandTests
 		SyncService service = new(new Mock<IProcessService>().Object);
 		ICommand<SyncCommand.Settings> command = new SyncCommand(service);
 		CommandContext context = new([], new NoRemainingArguments(), "sync", data: null);
+		int exit = 0;
 
-		using StringWriter writer = new();
-		IAnsiConsole originalConsole = AnsiConsole.Console;
-		TextWriter originalOut = Console.Out;
-		int exit;
+		string output = await ConsoleCapture.CaptureAsync(async () =>
+			exit = await command.ExecuteAsync(context, settings, CancellationToken.None).ConfigureAwait(false))
+			.ConfigureAwait(false);
 
-		try
-		{
-			Console.SetOut(writer);
-			IAnsiConsole console = AnsiConsole.Create(new AnsiConsoleSettings
-			{
-				Ansi = AnsiSupport.No,
-				ColorSystem = ColorSystemSupport.NoColors,
-				Out = new AnsiConsoleOutput(writer),
-			});
-
-			// Without a width the paths wrap at the default 80 columns, since there is no terminal
-			// to measure, and a long temp path stops being one contiguous substring.
-			console.Profile.Width = 400;
-			AnsiConsole.Console = console;
-
-			exit = await command.ExecuteAsync(context, settings, CancellationToken.None).ConfigureAwait(false);
-		}
-		finally
-		{
-			AnsiConsole.Console = originalConsole;
-			Console.SetOut(originalOut);
-		}
-
-		return (exit, writer.ToString());
+		return (exit, output);
 	}
 
 	/// <summary>

@@ -487,6 +487,34 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public async Task RunAsyncRejectsPullRequestsWithoutABranchBeforeScanningAnything()
+	{
+		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a");
+		RecordingProcessService fake = new();
+
+		int exit = await new SyncService(fake)
+			.RunAsync(workspace.Root, ["shared.txt"], autoPush: true, branch: string.Empty, openPullRequest: true, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "--pr has nothing to open a pull request from without --branch.");
+		Assert.AreEqual(0, fake.Calls.Count, "The combination is rejected before the workspace is walked.");
+	}
+
+	[TestMethod]
+	public async Task RunAsyncWithPullRequestsTouchesNothingWhenEveryCopyIsAlreadyInSync()
+	{
+		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a", "repo-b");
+		RecordingProcessService fake = new();
+
+		int exit = await new SyncService(fake)
+			.RunAsync(workspace.Root, ["shared.txt"], autoPush: true, "sync/shared", openPullRequest: true, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit);
+		Assert.AreEqual(0, fake.Calls.Count, "Nothing was pushed, so there is no pull request to open and nothing to run.");
+	}
+
+	[TestMethod]
 	public async Task RunAsyncWithoutABranchReportsAMissingPath()
 	{
 		string missing = Path.Join(Path.GetTempPath(), $"ktsu_sync_absent_{Guid.NewGuid():N}");
@@ -677,7 +705,7 @@ public class SyncServiceTests
 		using TempTree tree = TempTree.New();
 		int exit = 0;
 
-		string output = await CaptureConsoleAsync(async () =>
+		string output = await ConsoleCapture.CaptureAsync(async () =>
 			exit = await new SyncService(new RecordingProcessService())
 				.RunAsync([tree.Root], ["   "], autoPush: false, branch: string.Empty, exclusions: [], CancellationToken.None)
 				.ConfigureAwait(false)).ConfigureAwait(false);
@@ -697,7 +725,7 @@ public class SyncServiceTests
 		RecordingProcessService fake = new();
 		int exit = 0;
 
-		string output = await CaptureConsoleAsync(async () =>
+		string output = await ConsoleCapture.CaptureAsync(async () =>
 			exit = await new SyncService(fake)
 				.RunAsync([first.Root, second.Root], ["shared.txt"], autoPush: false, branch: string.Empty, ["third-party"], CancellationToken.None)
 				.ConfigureAwait(false)).ConfigureAwait(false);
@@ -792,7 +820,7 @@ public class SyncServiceTests
 			["BBBB"] = new DateTime(2026, 1, 2, 12, 0, 0, DateTimeKind.Local),
 		};
 
-		string output = await CaptureConsoleAsync(() =>
+		string output = await ConsoleCapture.CaptureAsync(() =>
 		{
 			SyncService.DisplayHashGroupsTable(results, "shared.txt", dates, [root]);
 			return Task.CompletedTask;
@@ -806,45 +834,6 @@ public class SyncServiceTests
 		Assert.IsFalse(
 			output.Contains(root, StringComparison.Ordinal),
 			"One root is being scanned, so directories show relative to it.");
-	}
-
-	/// <summary>
-	/// Runs <paramref name="action"/> with both stdout and Spectre's console redirected into one
-	/// buffer, so a test can read what the sync actually printed. The console is global, so these
-	/// tests do not run in parallel.
-	/// </summary>
-	/// <param name="action">The work to run against the redirected console.</param>
-	/// <returns>Everything written while it ran.</returns>
-	private static async Task<string> CaptureConsoleAsync(Func<Task> action)
-	{
-		using StringWriter writer = new();
-		IAnsiConsole originalConsole = AnsiConsole.Console;
-		TextWriter originalOut = Console.Out;
-
-		try
-		{
-			Console.SetOut(writer);
-
-			IAnsiConsole console = AnsiConsole.Create(new AnsiConsoleSettings
-			{
-				Ansi = AnsiSupport.No,
-				ColorSystem = ColorSystemSupport.NoColors,
-				Out = new AnsiConsoleOutput(writer),
-			});
-
-			// Without a width the table collapses to an ellipsis, since there is no terminal to measure.
-			console.Profile.Width = 200;
-			AnsiConsole.Console = console;
-
-			await action().ConfigureAwait(false);
-		}
-		finally
-		{
-			AnsiConsole.Console = originalConsole;
-			Console.SetOut(originalOut);
-		}
-
-		return writer.ToString();
 	}
 
 	/// <summary>

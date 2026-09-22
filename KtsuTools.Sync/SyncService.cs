@@ -16,6 +16,7 @@ using System.Threading.Tasks;
 using ktsu.Extensions;
 using ktsu.Semantics.Paths;
 
+using KtsuTools.Core.Services.GitHub;
 using KtsuTools.Core.Services.Process;
 
 using LibGit2Sharp;
@@ -25,9 +26,12 @@ using Spectre.Console;
 /// <summary>
 /// Service that synchronizes file contents across multiple repositories.
 /// </summary>
-public class SyncService(IProcessService processService)
+/// <param name="processService">Runs git and gh.</param>
+/// <param name="gitHubService">The GitHub API, used to open pull requests when the gh CLI is absent. Optional, because a sync that does not ask for pull requests never reaches it.</param>
+public class SyncService(IProcessService processService, IGitHubService? gitHubService = null)
 {
 	private readonly IProcessService processService = processService;
+	private readonly IGitHubService? gitHubService = gitHubService;
 
 	private const string CommitAuthorName = "KtsuTools";
 	private const string GitDirSuffixWindows = ".git\\";
@@ -80,10 +84,23 @@ public class SyncService(IProcessService processService)
 	/// <param name="branch">When non-empty, commits land on a branch of this name in each repo, created if missing and reused if it already exists, and the original checkout is restored afterwards.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
-	public Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, string branch, CancellationToken ct = default)
+	public Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, string branch, CancellationToken ct = default) =>
+		RunAsync(path, filenames, autoPush, branch, openPullRequest: false, ct);
+
+	/// <summary>
+	/// Runs the sync operation for the specified path and one or more filename patterns.
+	/// </summary>
+	/// <param name="path">The root path to scan recursively.</param>
+	/// <param name="filenames">One or more filename patterns to scan for.</param>
+	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
+	/// <param name="branch">When non-empty, commits land on a branch of this name in each repo, created if missing and reused if it already exists, and the original checkout is restored afterwards.</param>
+	/// <param name="openPullRequest">When true, a pull request is opened in each repo whose sync branch was pushed. Requires <paramref name="branch"/>, since there is nothing to open a pull request from otherwise.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
+	public Task<int> RunAsync(AbsoluteDirectoryPath path, IReadOnlyList<string> filenames, bool autoPush, string branch, bool openPullRequest, CancellationToken ct = default)
 	{
 		Ensure.NotNull(path);
-		return RunAsync([path.ToString()], filenames, autoPush, branch, exclusions: [], ct);
+		return RunAsync([path.ToString()], filenames, autoPush, branch, exclusions: [], openPullRequest, ct);
 	}
 
 	/// <summary>
@@ -97,16 +114,48 @@ public class SyncService(IProcessService processService)
 	/// <param name="exclusions">Directory names, or paths, whose contents are left out of the scan.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
+	public Task<int> RunAsync(
+		IReadOnlyList<string> roots,
+		IReadOnlyList<string> filenames,
+		bool autoPush,
+		string branch,
+		IReadOnlyList<string> exclusions,
+		CancellationToken ct = default) =>
+		RunAsync(roots, filenames, autoPush, branch, exclusions, openPullRequest: false, ct);
+
+	/// <summary>
+	/// Runs the sync operation over one or more roots, each either a workspace to walk or a single
+	/// repository, skipping anything under an excluded directory.
+	/// </summary>
+	/// <param name="roots">The directories to scan recursively. Overlapping roots are scanned once.</param>
+	/// <param name="filenames">One or more filename patterns to scan for.</param>
+	/// <param name="autoPush">When true, repos whose unpushed commits are all authored by KtsuTools are pushed without prompting.</param>
+	/// <param name="branch">When non-empty, commits land on a branch of this name in each repo, created if missing and reused if it already exists, and the original checkout is restored afterwards.</param>
+	/// <param name="exclusions">Directory names, or paths, whose contents are left out of the scan.</param>
+	/// <param name="openPullRequest">When true, a pull request is opened in each repo whose sync branch was pushed. Requires <paramref name="branch"/>, since there is nothing to open a pull request from otherwise.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
 	public async Task<int> RunAsync(
 		IReadOnlyList<string> roots,
 		IReadOnlyList<string> filenames,
 		bool autoPush,
 		string branch,
 		IReadOnlyList<string> exclusions,
+		bool openPullRequest,
 		CancellationToken ct = default)
 	{
 		Ensure.NotNull(roots);
 		ct.ThrowIfCancellationRequested();
+
+		string branchName = branch?.Trim() ?? string.Empty;
+
+		// Checked before the scan rather than after it, so an unusable flag combination is reported
+		// without first walking the workspace and prompting through every difference.
+		if (openPullRequest && string.IsNullOrEmpty(branchName))
+		{
+			AnsiConsole.MarkupLine("[red]--pr requires --branch: there is nothing to open a pull request from when sync commits onto the checked-out branch.[/]");
+			return 1;
+		}
 
 		List<string> scanRoots = [.. roots
 			.Where(r => !string.IsNullOrWhiteSpace(r))
@@ -154,30 +203,93 @@ public class SyncService(IProcessService processService)
 
 		HashSet<string> commitDirectories = [];
 		HashSet<string> expandedFilesToSync = [];
+		List<SyncedFile> syncedFiles = [];
 
 		expandedFilesToSync.UnionWith(uniqueFilenames);
 
 		foreach (string uniqueFilename in uniqueFilenames)
 		{
 			ct.ThrowIfCancellationRequested();
-			await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, ct).ConfigureAwait(false);
+			SyncedFile? synced = await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, ct).ConfigureAwait(false);
+			if (synced is not null)
+			{
+				syncedFiles.Add(synced);
+			}
 		}
-
-		string branchName = branch?.Trim() ?? string.Empty;
 
 		IReadOnlyList<BranchSwitch> branchSwitches =
 			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, branchName).ConfigureAwait(false);
 
+		IReadOnlyList<string> pushed = [];
 		try
 		{
-			await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
+			pushed = await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
 		}
 		finally
 		{
 			RestoreBranches(branchSwitches);
 		}
 
+		// Opened after the branches are restored, since it only reads the remote and the working
+		// tree should be back where the user left it regardless of how the pull requests go.
+		if (openPullRequest)
+		{
+			await OpenPullRequestsAsync(pushed, branchName, branchSwitches, syncedFiles, ct).ConfigureAwait(false);
+		}
+
 		return 0;
+	}
+
+	/// <summary>
+	/// Opens a pull request for each repository whose sync branch was pushed.
+	/// </summary>
+	/// <param name="pushedRepoRoots">Working directories of the repositories that were pushed.</param>
+	/// <param name="branchName">The sync branch.</param>
+	/// <param name="branchSwitches">The recorded switches, which carry the branch each repo was on before the sync.</param>
+	/// <param name="syncedFiles">The files the sync copied.</param>
+	/// <param name="ct">Cancellation token.</param>
+	internal async Task OpenPullRequestsAsync(
+		IReadOnlyList<string> pushedRepoRoots,
+		string branchName,
+		IReadOnlyList<BranchSwitch> branchSwitches,
+		IReadOnlyList<SyncedFile> syncedFiles,
+		CancellationToken ct)
+	{
+		if (pushedRepoRoots.Count == 0)
+		{
+			return;
+		}
+
+		if (gitHubService is null)
+		{
+			AnsiConsole.MarkupLine("[yellow]Skipping pull requests: no GitHub service is available.[/]");
+			return;
+		}
+
+		Dictionary<string, string> baseBranchByRepoRoot = BaseBranchesFor(branchSwitches);
+
+		SyncPullRequestOpener opener = new(processService, gitHubService);
+		await opener.OpenAsync(pushedRepoRoots, branchName, baseBranchByRepoRoot, syncedFiles, ct).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Maps each repository to the branch it was on before the sync, which is what a pull request
+	/// from the sync branch targets. A detached HEAD is recorded as a sha rather than a branch and
+	/// is left out, since a pull request cannot target a commit.
+	/// </summary>
+	/// <param name="branchSwitches">The switches recorded when the sync branch was checked out.</param>
+	/// <returns>The base branch for each repository root.</returns>
+	internal static Dictionary<string, string> BaseBranchesFor(IReadOnlyList<BranchSwitch> branchSwitches)
+	{
+		Dictionary<string, string> baseBranches = new(StringComparer.Ordinal);
+
+		foreach (BranchSwitch branchSwitch in branchSwitches
+			.Where(s => !string.Equals(s.OriginalBranch, s.OriginalTipSha, StringComparison.Ordinal)))
+		{
+			baseBranches[branchSwitch.RepoRoot] = branchSwitch.OriginalBranch;
+		}
+
+		return baseBranches;
 	}
 
 	/// <summary>
@@ -385,7 +497,7 @@ public class SyncService(IProcessService processService)
 				StringSplitOptions.RemoveEmptyEntries);
 	}
 
-	private static async Task ProcessUniqueFilenameAsync(
+	private static async Task<SyncedFile?> ProcessUniqueFilenameAsync(
 		string uniqueFilename,
 		Collection<string> fileEnumeration,
 		IReadOnlyList<string> roots,
@@ -418,15 +530,18 @@ public class SyncService(IProcessService processService)
 
 		if (results.Count > 1)
 		{
-			await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, ct).ConfigureAwait(false);
+			return await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, ct).ConfigureAwait(false);
 		}
-		else if (results.Count == 1)
+
+		if (results.Count == 1)
 		{
 			AnsiConsole.MarkupLine($"[green]All files in sync for:[/] {uniqueFilename.EscapeMarkup()}");
 		}
+
+		return null;
 	}
 
-	private static async Task HandleMultipleHashGroupsAsync(
+	private static async Task<SyncedFile?> HandleMultipleHashGroupsAsync(
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
 		IReadOnlyList<string> roots,
@@ -443,10 +558,9 @@ public class SyncService(IProcessService processService)
 
 		string syncHash = PromptForSyncHash(sortedResults);
 
-		if (!string.IsNullOrWhiteSpace(syncHash))
-		{
-			await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, ct).ConfigureAwait(false);
-		}
+		return string.IsNullOrWhiteSpace(syncHash)
+			? null
+			: await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, ct).ConfigureAwait(false);
 	}
 
 	internal static Dictionary<string, DateTime> CalculateOldestModificationDates(
@@ -512,7 +626,7 @@ public class SyncService(IProcessService processService)
 		return selection == "(skip)" ? string.Empty : selection;
 	}
 
-	private static async Task SyncFilesToHashAsync(
+	private static async Task<SyncedFile?> SyncFilesToHashAsync(
 		string syncHash,
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
@@ -528,7 +642,7 @@ public class SyncService(IProcessService processService)
 		{
 			AnsiConsole.MarkupLine("[red]Hash not found in results.[/]");
 			await Task.CompletedTask.ConfigureAwait(false);
-			return;
+			return null;
 		}
 
 		string sourceDir = sourceDirectories[0];
@@ -550,17 +664,21 @@ public class SyncService(IProcessService processService)
 
 		bool confirmed = await AnsiConsole.ConfirmAsync("Proceed with sync?", defaultValue: false, ct).ConfigureAwait(false);
 
-		if (confirmed)
+		if (!confirmed)
 		{
-			AnsiConsole.WriteLine();
-			foreach (string dir in destinationDirectories)
-			{
-				ct.ThrowIfCancellationRequested();
-				string destinationFile = Path.Join(dir, fileName);
-				AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
-				File.Copy(sourceFile, destinationFile, overwrite: true);
-			}
+			return null;
 		}
+
+		AnsiConsole.WriteLine();
+		foreach (string dir in destinationDirectories)
+		{
+			ct.ThrowIfCancellationRequested();
+			string destinationFile = Path.Join(dir, fileName);
+			AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
+			File.Copy(sourceFile, destinationFile, overwrite: true);
+		}
+
+		return new SyncedFile(fileName, syncHash, sourceDir);
 	}
 
 	private static bool IsGitRepoPath(string repoPath) =>
@@ -830,7 +948,7 @@ public class SyncService(IProcessService processService)
 		}
 	}
 
-	internal async Task PushToRemoteAsync(
+	internal async Task<IReadOnlyList<string>> PushToRemoteAsync(
 		HashSet<string> commitDirectories,
 		bool autoPush,
 		string branchName,
@@ -845,7 +963,7 @@ public class SyncService(IProcessService processService)
 
 		if (pushDirectories.Count == 0)
 		{
-			return;
+			return [];
 		}
 
 		AnsiConsole.WriteLine();
@@ -862,15 +980,21 @@ public class SyncService(IProcessService processService)
 
 		if (!confirmed)
 		{
-			return;
+			return [];
 		}
 
 		AnsiConsole.WriteLine();
+		List<string> pushed = [];
 		foreach (string dir in pushDirectories)
 		{
 			ct.ThrowIfCancellationRequested();
-			await PushDirectoryAsync(dir, branchName, ct).ConfigureAwait(false);
+			if (await PushDirectoryAsync(dir, branchName, ct).ConfigureAwait(false))
+			{
+				pushed.Add(dir);
+			}
 		}
+
+		return pushed;
 	}
 
 	internal static Collection<string> FindPushableBranchDirectories(IReadOnlyList<BranchSwitch> branchSwitches)
@@ -920,7 +1044,7 @@ public class SyncService(IProcessService processService)
 		return pushDirectories;
 	}
 
-	internal async Task PushDirectoryAsync(string repoRoot, string branchName, CancellationToken ct)
+	internal async Task<bool> PushDirectoryAsync(string repoRoot, string branchName, CancellationToken ct)
 	{
 		AnsiConsole.MarkupLine($"[green]Pushing:[/] {repoRoot.EscapeMarkup()}");
 
@@ -936,7 +1060,7 @@ public class SyncService(IProcessService processService)
 				AnsiConsole.MarkupLine($"[red]Pull failed for:[/] {repoRoot.EscapeMarkup()}");
 				AnsiConsole.MarkupLine($"[red]{pullMessage.EscapeMarkup()}[/]");
 				AnsiConsole.MarkupLine("[yellow]Skipping push to avoid non-fast-forward; resolve conflicts manually.[/]");
-				return;
+				return false;
 			}
 		}
 
@@ -944,12 +1068,12 @@ public class SyncService(IProcessService processService)
 		if (push.ExitCode == 0)
 		{
 			AnsiConsole.MarkupLine($"[green]Successfully pushed:[/] {repoRoot.EscapeMarkup()}");
+			return true;
 		}
-		else
-		{
-			string pushMessage = push.Errors.Count > 0 ? string.Join('\n', push.Errors) : string.Join('\n', push.Output);
-			AnsiConsole.MarkupLine($"[red]Error pushing:[/] {pushMessage.EscapeMarkup()}");
-		}
+
+		string pushMessage = push.Errors.Count > 0 ? string.Join('\n', push.Errors) : string.Join('\n', push.Output);
+		AnsiConsole.MarkupLine($"[red]Error pushing:[/] {pushMessage.EscapeMarkup()}");
+		return false;
 	}
 
 	/// <summary>
