@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 using KtsuTools.Core.Services.GitHub;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Sync;
-using LibGit2Sharp;
 
 [TestClass]
 public class SyncPullRequestsTests
@@ -355,13 +354,13 @@ public class SyncPullRequestsTests
 	}
 
 	[TestMethod]
-	public void RemoteUrlOfIsNullForADirectoryThatIsNotARepository()
+	public async Task RemoteUrlOfIsNullForADirectoryThatIsNotARepository()
 	{
 		string notARepo = Path.Join(Path.GetTempPath(), $"ktsu_sync_pr_bare_{Guid.NewGuid():N}");
 		Directory.CreateDirectory(notARepo);
 		try
 		{
-			Assert.IsNull(SyncPullRequestOpener.RemoteUrlOf(notARepo));
+			Assert.IsNull(await SyncPullRequestOpener.RemoteUrlOfAsync(notARepo).ConfigureAwait(false));
 		}
 		finally
 		{
@@ -370,11 +369,11 @@ public class SyncPullRequestsTests
 	}
 
 	[TestMethod]
-	public void RemoteUrlOfIsNullForARepositoryWithNoOrigin()
+	public async Task RemoteUrlOfIsNullForARepositoryWithNoOrigin()
 	{
 		using TempRemoteRepo repo = TempRemoteRepo.WithoutARemote();
 
-		Assert.IsNull(SyncPullRequestOpener.RemoteUrlOf(repo.Root));
+		Assert.IsNull(await SyncPullRequestOpener.RemoteUrlOfAsync(repo.Root).ConfigureAwait(false));
 	}
 
 	[TestMethod]
@@ -668,10 +667,7 @@ public class SyncPullRequestsTests
 		{
 			TempRemoteRepo created = WithoutARemote();
 
-			using (Repository repo = new(created.Root))
-			{
-				_ = repo.Network.Remotes.Add("origin", remoteUrl);
-			}
+			TestGit.AddRemote(created.Root, "origin", remoteUrl);
 
 			return created;
 		}
@@ -680,7 +676,7 @@ public class SyncPullRequestsTests
 		{
 			string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_pr_{Guid.NewGuid():N}");
 			Directory.CreateDirectory(root);
-			_ = Repository.Init(root);
+			TestGit.Init(root);
 			return new TempRemoteRepo(root);
 		}
 
