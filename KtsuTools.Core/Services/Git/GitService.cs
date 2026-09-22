@@ -40,7 +40,11 @@ public class GitService(IGitClient gitClient) : IGitService
 	{
 		try
 		{
-			GitRepository repo = await OpenAsync(repoPath, ct).ConfigureAwait(false);
+			if (await OpenOrNullAsync(repoPath, ct).ConfigureAwait(false) is not GitRepository repo)
+			{
+				return false;
+			}
+
 			return (await repo.Pull().TryExecuteAsync(ct).ConfigureAwait(false)).Success;
 		}
 		catch (GitException)
@@ -53,7 +57,10 @@ public class GitService(IGitClient gitClient) : IGitService
 	{
 		try
 		{
-			GitRepository repo = await OpenAsync(repoPath, ct).ConfigureAwait(false);
+			if (await OpenOrNullAsync(repoPath, ct).ConfigureAwait(false) is not GitRepository repo)
+			{
+				return false;
+			}
 
 			if (!(await repo.Add().All().TryExecuteAsync(ct).ConfigureAwait(false)).Success)
 			{
@@ -73,7 +80,10 @@ public class GitService(IGitClient gitClient) : IGitService
 	{
 		try
 		{
-			GitRepository repo = await OpenAsync(repoPath, ct).ConfigureAwait(false);
+			if (await OpenOrNullAsync(repoPath, ct).ConfigureAwait(false) is not GitRepository repo)
+			{
+				return false;
+			}
 
 			GitResult<GitStatus> status = await repo.Status().TryExecuteAsync(ct).ConfigureAwait(false);
 			if (status is not { Success: true, Value.IsDetached: false } || status.Value.Branch is null)
@@ -105,7 +115,11 @@ public class GitService(IGitClient gitClient) : IGitService
 	{
 		try
 		{
-			GitRepository repo = await OpenAsync(repoPath, ct).ConfigureAwait(false);
+			if (await OpenOrNullAsync(repoPath, ct).ConfigureAwait(false) is not GitRepository repo)
+			{
+				return [];
+			}
+
 			GitResult<GitStatus> result = await repo.Status().TryExecuteAsync(ct).ConfigureAwait(false);
 
 			return result is { Success: true, Value: not null }
@@ -122,7 +136,11 @@ public class GitService(IGitClient gitClient) : IGitService
 	{
 		try
 		{
-			GitRepository repo = await OpenAsync(repoPath, ct).ConfigureAwait(false);
+			if (await OpenOrNullAsync(repoPath, ct).ConfigureAwait(false) is not GitRepository repo)
+			{
+				return string.Empty;
+			}
+
 			GitResult<GitStatus> result = await repo.Status().TryExecuteAsync(ct).ConfigureAwait(false);
 
 			return result is { Success: true, Value.IsDetached: false }
@@ -141,16 +159,16 @@ public class GitService(IGitClient gitClient) : IGitService
 
 		try
 		{
+			if (DirectoryOrNull(targetPath) is not AbsoluteDirectoryPath destination)
+			{
+				return false;
+			}
+
 			GitRepositoryRemotePath source = GitRepositoryRemotePath.Create<GitRepositoryRemotePath>(url.AbsoluteUri);
-			AbsoluteDirectoryPath destination = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(targetPath);
 
 			return (await gitClient.Clone(source, destination).TryExecuteAsync(ct).ConfigureAwait(false)).Success;
 		}
 		catch (GitException)
-		{
-			return false;
-		}
-		catch (FormatException)
 		{
 			return false;
 		}
@@ -160,22 +178,50 @@ public class GitService(IGitClient gitClient) : IGitService
 	{
 		try
 		{
-			return await gitClient
-				.IsRepositoryAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(path), ct)
-				.ConfigureAwait(false);
+			return DirectoryOrNull(path) is AbsoluteDirectoryPath directory
+				&& await gitClient.IsRepositoryAsync(directory, ct).ConfigureAwait(false);
 		}
 		catch (GitException)
 		{
 			return false;
 		}
-		catch (FormatException)
-		{
-			return false;
-		}
 	}
 
-	private Task<GitRepository> OpenAsync(string repoPath, CancellationToken ct) =>
-		gitClient.OpenAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(repoPath), ct);
+	/// <summary>
+	/// Opens the repository at a path, or answers <see langword="null"/> when the path cannot name
+	/// one.
+	/// </summary>
+	/// <param name="repoPath">The repository working directory.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>The opened repository, or <see langword="null"/>.</returns>
+	private async Task<GitRepository?> OpenOrNullAsync(string repoPath, CancellationToken ct) =>
+		DirectoryOrNull(repoPath) is AbsoluteDirectoryPath directory
+			? await gitClient.OpenAsync(directory, ct).ConfigureAwait(false)
+			: null;
+
+	/// <summary>
+	/// Reads a string as an absolute directory, or answers <see langword="null"/> when it is not
+	/// one.
+	/// </summary>
+	/// <remarks>
+	/// A relative or otherwise malformed path is refused by <c>AbsoluteDirectoryPath</c> with an
+	/// <see cref="ArgumentException"/>, which is not a <see cref="GitException"/> and so would
+	/// otherwise leave this class by a route its callers do not expect. They were written against
+	/// an implementation that answered for any string it was handed.
+	/// </remarks>
+	/// <param name="path">The path to read.</param>
+	/// <returns>The directory, or <see langword="null"/>.</returns>
+	private static AbsoluteDirectoryPath? DirectoryOrNull(string path)
+	{
+		try
+		{
+			return AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(path);
+		}
+		catch (ArgumentException)
+		{
+			return null;
+		}
+	}
 
 	/// <summary>
 	/// Renders one status entry as "state: path", the shape callers already display.

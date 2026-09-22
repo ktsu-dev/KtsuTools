@@ -251,6 +251,78 @@ public class SyncServiceTests
 		Assert.AreEqual(secondOriginalBranch, switches[1].OriginalBranch);
 	}
 
+	/// <summary>
+	/// The no-branch half of the auto-push decision: a repository is pushed without asking only
+	/// when it is ahead of its upstream and every commit it is ahead by was written by the sync.
+	/// </summary>
+	/// <returns>A task that completes when the assertions have run.</returns>
+	[TestMethod]
+	public async Task FindPushableDirectoriesTakesOnlyRepositoriesAheadByTheSyncsOwnCommits()
+	{
+		string remote = CreateCanonicalTempDirectory("ktsu_sync_remote");
+		string clones = CreateCanonicalTempDirectory("ktsu_sync_clones");
+
+		try
+		{
+			TestGit.InitBare(remote);
+
+			// A repository the remote has already seen, so each clone below has an upstream and
+			// git can say how far ahead it is.
+			string seed = Path.Join(clones, "seed");
+			Directory.CreateDirectory(seed);
+			TestGit.Init(seed);
+			await File.WriteAllTextAsync(Path.Join(seed, "shared.txt"), "original").ConfigureAwait(false);
+			_ = TestGit.Commit(seed, "shared.txt", "Add shared.txt", "A Human");
+			TestGit.AddRemote(seed, "origin", remote);
+			_ = TestGit.Run(seed, "push", "origin", "main");
+
+			string pushable = Path.Join(clones, "pushable");
+			string handEdited = Path.Join(clones, "hand-edited");
+			string untouched = Path.Join(clones, "untouched");
+
+			TestGit.Clone(remote, pushable);
+			TestGit.Clone(remote, handEdited);
+			TestGit.Clone(remote, untouched);
+
+			await File.WriteAllTextAsync(Path.Join(pushable, "shared.txt"), "synced").ConfigureAwait(false);
+			_ = TestGit.Commit(pushable, "shared.txt", "Sync shared.txt", SyncGit.CommitAuthorName);
+
+			await File.WriteAllTextAsync(Path.Join(handEdited, "shared.txt"), "hand written").ConfigureAwait(false);
+			_ = TestGit.Commit(handEdited, "shared.txt", "Edit shared.txt", "A Human");
+
+			IReadOnlyList<string> pushDirectories =
+			[
+				.. await SyncGit.FindPushableDirectoriesAsync([pushable, handEdited, untouched]).ConfigureAwait(false)
+			];
+
+			Assert.AreEqual(1, pushDirectories.Count, "Only the repository the sync itself moved may be pushed unasked.");
+			Assert.AreEqual(pushable, pushDirectories[0]);
+		}
+		finally
+		{
+			DeleteGitTree(clones);
+			DeleteGitTree(remote);
+		}
+	}
+
+	[TestMethod]
+	public async Task RepoRootForIsNullForAPathThatNamesNothing()
+	{
+		Assert.IsNull(await SyncGit.RepoRootForAsync(string.Empty).ConfigureAwait(false));
+
+		string outside = CreateCanonicalTempDirectory("ktsu_sync_norepo");
+		try
+		{
+			Assert.IsNull(
+				await SyncGit.RepoRootForAsync(outside).ConfigureAwait(false),
+				"A directory that is not inside a repository has no root to report.");
+		}
+		finally
+		{
+			DeleteGitTree(outside);
+		}
+	}
+
 	[TestMethod]
 	public async Task CommitFilesAttributesItsCommitsToTheSyncSoTheyCanBePushedAutomatically()
 	{

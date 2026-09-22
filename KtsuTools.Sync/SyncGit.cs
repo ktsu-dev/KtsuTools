@@ -350,7 +350,7 @@ internal static class SyncGit
 		{
 			return null;
 		}
-		catch (FormatException)
+		catch (ArgumentException)
 		{
 			return null;
 		}
@@ -391,7 +391,7 @@ internal static class SyncGit
 				? AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(path)
 				: AbsoluteFilePath.Create<AbsoluteFilePath>(path).AbsoluteDirectoryPath;
 		}
-		catch (FormatException)
+		catch (ArgumentException)
 		{
 			return null;
 		}

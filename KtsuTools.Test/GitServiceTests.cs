@@ -203,6 +203,30 @@ public class GitServiceTests
 			"The pull should have brought the other side's commit into the working tree.");
 	}
 
+	/// <summary>
+	/// A path git would never accept is refused by the service rather than thrown out of it, which
+	/// is the same contract as a path that is merely not a repository.
+	/// </summary>
+	/// <returns>A task that completes when the assertions have run.</returns>
+	[TestMethod]
+	public async Task AMalformedPathIsRefusedRatherThanThrown()
+	{
+		GitService service = new();
+
+		// Not an absolute path, so it cannot be read as one before git is ever reached.
+		const string malformed = "not/an/absolute/path";
+
+		Assert.IsFalse(await service.IsRepositoryAsync(malformed).ConfigureAwait(false));
+		Assert.IsFalse(await service.CommitAsync(malformed, "A message").ConfigureAwait(false));
+		Assert.IsFalse(await service.PullAsync(malformed).ConfigureAwait(false));
+		Assert.IsFalse(await service.PushAsync(malformed).ConfigureAwait(false));
+		Assert.AreEqual(string.Empty, await service.GetCurrentBranchAsync(malformed).ConfigureAwait(false));
+		Assert.AreEqual(0, (await service.GetStatusAsync(malformed).ConfigureAwait(false)).Count);
+
+		using TempRepo source = TempRepo.WithInitialCommit();
+		Assert.IsFalse(await service.CloneAsync(new Uri(source.Root), malformed).ConfigureAwait(false));
+	}
+
 	[TestMethod]
 	public async Task GetCurrentBranchIsEmptyWhenHeadIsDetached()
 	{
