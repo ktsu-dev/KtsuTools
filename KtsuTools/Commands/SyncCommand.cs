@@ -4,10 +4,8 @@ namespace KtsuTools.Commands;
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Sync;
 using Spectre.Console;
@@ -32,6 +30,31 @@ public sealed class SyncCommand(SyncService syncService, SyncConfigService confi
 		[CommandOption("--path <PATH>")]
 		[Description("The root path to recursively scan")]
 		public string Path { get; init; } = string.Empty;
+
+		/// <summary>
+		/// Gets explicit repository paths to sync, as an alternative to walking a single workspace.
+		/// </summary>
+		[CommandOption("--repo <PATH>")]
+		[Description("Path of a repository to sync. Repeat the flag or pass a comma-separated list to name several, and combine it with --path to add them to a workspace scan.")]
+#pragma warning disable CA1819 // Properties should not return arrays - Spectre.Console.Cli binds multi-value options via T[] only.
+		public string[] Repo { get; init; } = [];
+#pragma warning restore CA1819
+
+		/// <summary>
+		/// Gets the path of a file listing repository paths, one per line.
+		/// </summary>
+		[CommandOption("--repo-list <FILE>")]
+		[Description("File listing repository paths, one per line, ignoring blank lines and # comments. A relative entry resolves against the file's own directory.")]
+		public string RepoList { get; init; } = string.Empty;
+
+		/// <summary>
+		/// Gets the directories to leave out of the scan.
+		/// </summary>
+		[CommandOption("--exclude <DIR>")]
+		[Description("Directory to leave out of the scan. A bare name excludes every directory so named; a path excludes that one directory. Repeat the flag or pass a comma-separated list.")]
+#pragma warning disable CA1819 // Properties should not return arrays - Spectre.Console.Cli binds multi-value options via T[] only.
+		public string[] Exclude { get; init; } = [];
+#pragma warning restore CA1819
 
 		/// <summary>
 		/// Gets the filename patterns to scan for. May be specified multiple times or comma-separated.
@@ -111,9 +134,14 @@ public sealed class SyncCommand(SyncService syncService, SyncConfigService confi
 			return 1;
 		}
 
-		string path = string.IsNullOrWhiteSpace(options.Path)
-			? await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]", cancellationToken).ConfigureAwait(false)
-			: options.Path;
+		// A saved configuration supplies only --path; --repo, --repo-list and --exclude stay flag-only for now.
+		IReadOnlyList<string> roots = SyncService.ResolveRoots(options.Path, settings.Repo, settings.RepoList);
+		if (roots.Count == 0)
+		{
+			// Only ask when nothing at all was named; --repo and --repo-list already answer the question.
+			string enteredRoot = await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]", cancellationToken).ConfigureAwait(false);
+			roots = SyncService.ResolveRoots(enteredRoot, repos: null, repoListFile: null);
+		}
 
 		Collection<string> filenames = options.Filenames;
 		if (filenames.Count == 0)
@@ -123,7 +151,8 @@ public sealed class SyncCommand(SyncService syncService, SyncConfigService confi
 		}
 
 		using CtrlCScope scope = new();
-		AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(path));
-		return await syncService.RunAsync(rootPath, filenames, options.AutoPush, options.Branch, options.OpenPullRequest, scope.Token).ConfigureAwait(false);
+		return await syncService
+			.RunAsync(roots, filenames, options.AutoPush, options.Branch, settings.Exclude, options.OpenPullRequest, scope.Token)
+			.ConfigureAwait(false);
 	}
 }

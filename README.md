@@ -86,6 +86,27 @@ ktools sync --path c:/dev/ktsu-dev --filename .editorconfig --branch sync/editor
 With `--auto-push`, a `--branch` run pushes that branch and sets its upstream, so the sync lands
 somewhere a pull request can be opened from rather than on the default branch.
 
+`--path` assumes every repository you want to sync sits under one parent, and that everything under
+that parent should be synced. Where neither holds, name the repositories instead, with `--repo`
+repeated or comma-separated, or with `--repo-list` pointing at a file of paths one per line:
+
+```bash
+ktools sync --repo c:/dev/ktsu-dev/Semantics --repo c:/dev/3k/Engine --filename .editorconfig
+ktools sync --repo-list c:/dev/ktsu-repos.txt --filename .editorconfig
+```
+
+A list file ignores blank lines and `#` comments, and resolves a relative entry against its own
+directory. `--path` keeps working unchanged and combines with both, so a workspace scan can be
+topped up with clones from elsewhere, and a file reached through two roots is still synced once.
+
+`--exclude` drops directories from the scan, which is what keeps third-party clones inside a
+workspace out of a `--path` run. A bare name excludes every directory so named; a path excludes
+that one directory:
+
+```bash
+ktools sync --path c:/dev --exclude third-party,node_modules --filename .editorconfig
+```
+
 Pass `--pr` to open that pull request in each repository the branch was pushed to, which is what
 turns a thirty-repository sync into something reviewable rather than thirty branches waiting for
 someone to raise them by hand.
