@@ -191,13 +191,12 @@ internal static class SyncGit
 					.Select(e => Normalize(Path.Join(repoRoot, e.Path.ToString()))),
 				PathComparer);
 
-			foreach (string filePath in expandedFilesToSync.Select(name => Path.Join(directoryPath, name)))
+			foreach (string filePath in expandedFilesToSync
+				.Select(name => Path.Join(directoryPath, name))
+				.Where(candidate => changed.Contains(Normalize(candidate))))
 			{
-				if (changed.Contains(Normalize(filePath)))
-				{
-					commitFiles.Add(filePath);
-					AnsiConsole.MarkupLine($"[yellow]{filePath.EscapeMarkup()}[/] has outstanding changes");
-				}
+				commitFiles.Add(filePath);
+				AnsiConsole.MarkupLine($"[yellow]{filePath.EscapeMarkup()}[/] has outstanding changes");
 			}
 		}
 
