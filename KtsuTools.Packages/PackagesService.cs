@@ -93,6 +93,122 @@ public class PackagesService(IProcessService processService)
 	}
 
 	/// <summary>
+	/// Reports <c>PackageReference</c>s that the declaring project's source never refers to.
+	/// </summary>
+	public Task<int> FindUnusedAsync(AbsoluteDirectoryPath path, bool showBuildTimeOnly = false, CancellationToken ct = default)
+	{
+		Ensure.NotNull(path);
+		return FindUnusedInternalAsync(path.ToString(), showBuildTimeOnly, ct);
+	}
+
+	/// <summary>
+	/// Reports <c>PackageReference</c>s that a single project's source never refers to.
+	/// </summary>
+	public Task<int> FindUnusedAsync(AbsoluteFilePath path, bool showBuildTimeOnly = false, CancellationToken ct = default)
+	{
+		Ensure.NotNull(path);
+		return FindUnusedInternalAsync(path.ToString(), showBuildTimeOnly, ct);
+	}
+
+	private Task<int> FindUnusedInternalAsync(string fullPath, bool showBuildTimeOnly, CancellationToken ct)
+	{
+		_ = processService;
+		ct.ThrowIfCancellationRequested();
+
+		if (!Directory.Exists(fullPath) && !File.Exists(fullPath))
+		{
+			AnsiConsole.MarkupLine($"[red]Error: Path '{fullPath.EscapeMarkup()}' does not exist.[/]");
+			return Task.FromResult(1);
+		}
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(fullPath);
+
+		if (report.ProjectsScanned == 0)
+		{
+			AnsiConsole.MarkupLine("[yellow]No .csproj files found.[/]");
+			return Task.FromResult(0);
+		}
+
+		RenderUnusedReport(report, fullPath, showBuildTimeOnly);
+		return Task.FromResult(0);
+	}
+
+	private static void RenderUnusedReport(UnusedPackageReport report, string fullPath, bool showBuildTimeOnly)
+	{
+		AnsiConsole.MarkupLine($"[blue]Scanned {report.ProjectsScanned} project(s).[/]");
+
+		List<PackageFinding> unused = [.. report.Unused];
+
+		if (unused.Count == 0)
+		{
+			AnsiConsole.MarkupLine("[green]No unused package references found.[/]");
+		}
+		else
+		{
+			Table table = new();
+			table.AddColumn("Project");
+			table.AddColumn("Package");
+			table.Border = TableBorder.Rounded;
+
+			foreach (PackageFinding finding in unused.OrderBy(f => f.ProjectPath, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(f => f.PackageId, StringComparer.OrdinalIgnoreCase))
+			{
+				table.AddRow(DisplayPath(finding.ProjectPath, fullPath).EscapeMarkup(), finding.PackageId.EscapeMarkup());
+			}
+
+			AnsiConsole.Write(table);
+			AnsiConsole.MarkupLine($"[yellow]{unused.Count} package reference(s) appear unused.[/]");
+		}
+
+		if (report.OrphanedPackageVersions.Count > 0)
+		{
+			AnsiConsole.MarkupLine($"[yellow]{report.OrphanedPackageVersions.Count} PackageVersion entry(s) in Directory.Packages.props are not referenced by any project:[/]");
+
+			foreach (string packageId in report.OrphanedPackageVersions)
+			{
+				AnsiConsole.MarkupLine($"  {packageId.EscapeMarkup()}");
+			}
+		}
+
+		if (showBuildTimeOnly)
+		{
+			RenderBuildTimeOnly(report, fullPath);
+		}
+
+		AnsiConsole.MarkupLine("[grey]Reported only. Removing a reference stays a human decision.[/]");
+	}
+
+	private static void RenderBuildTimeOnly(UnusedPackageReport report, string fullPath)
+	{
+		List<PackageFinding> buildTime = [.. report.BuildTimeOnly];
+
+		if (buildTime.Count == 0)
+		{
+			return;
+		}
+
+		Table table = new();
+		table.AddColumn("Project");
+		table.AddColumn("Package");
+		table.AddColumn("Held back because");
+		table.Border = TableBorder.Rounded;
+
+		foreach (PackageFinding finding in buildTime.OrderBy(f => f.ProjectPath, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(f => f.PackageId, StringComparer.OrdinalIgnoreCase))
+		{
+			table.AddRow(
+				DisplayPath(finding.ProjectPath, fullPath).EscapeMarkup(),
+				finding.PackageId.EscapeMarkup(),
+				finding.Reason.EscapeMarkup());
+		}
+
+		AnsiConsole.Write(table);
+	}
+
+	private static string DisplayPath(string projectPath, string fullPath) =>
+		Directory.Exists(fullPath) ? Path.GetRelativePath(fullPath, projectPath) : Path.GetFileName(projectPath);
+
+	/// <summary>
 	/// Migrates projects to Central Package Management.
 	/// </summary>
 	public async Task<int> MigrateToCpmAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)

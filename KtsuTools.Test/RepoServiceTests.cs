@@ -348,42 +348,7 @@ public class RepoServiceTests
 		}
 	}
 
-	/// <summary>
-	/// Runs <paramref name="action"/> with both stdout and Spectre's console redirected into one
-	/// buffer, so a test can read what the verb actually printed. The console is global, so these
-	/// tests do not run in parallel.
-	/// </summary>
-	private static async Task<string> CaptureConsoleAsync(Func<Task> action)
-	{
-		using StringWriter writer = new();
-		IAnsiConsole originalConsole = AnsiConsole.Console;
-		TextWriter originalOut = Console.Out;
-
-		try
-		{
-			Console.SetOut(writer);
-
-			IAnsiConsole console = AnsiConsole.Create(new AnsiConsoleSettings
-			{
-				Ansi = AnsiSupport.No,
-				ColorSystem = ColorSystemSupport.NoColors,
-				Out = new AnsiConsoleOutput(writer),
-			});
-
-			// Without a width the table collapses to an ellipsis, since there is no terminal to measure.
-			console.Profile.Width = 200;
-			AnsiConsole.Console = console;
-
-			await action().ConfigureAwait(false);
-		}
-		finally
-		{
-			AnsiConsole.Console = originalConsole;
-			Console.SetOut(originalOut);
-		}
-
-		return writer.ToString();
-	}
+	private static Task<string> CaptureConsoleAsync(Func<Task> action) => ConsoleCapture.CaptureAsync(action);
 
 	[TestMethod]
 	public void GroupSolutionsByRepositoryIgnoresDuplicateCacheEntries()
