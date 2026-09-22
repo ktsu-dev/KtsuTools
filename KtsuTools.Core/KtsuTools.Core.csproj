@@ -9,10 +9,11 @@
 
   <ItemGroup>
     <PackageReference Include="ktsu.Semantics.Paths" />
+    <PackageReference Include="ktsu.Semantics.Strings" />
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Spectre.Console.Ansi" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="LibGit2Sharp" />
+    <PackageReference Include="ktsu.GitIntegration" />
     <PackageReference Include="Octokit" />
     <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="ktsu.CredentialCache" />

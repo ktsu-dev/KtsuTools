@@ -14,8 +14,6 @@ using System.Threading.Tasks;
 using KtsuTools.Core.Services.GitHub;
 using KtsuTools.Core.Services.Process;
 
-using LibGit2Sharp;
-
 using Spectre.Console;
 
 /// <summary>
@@ -92,7 +90,7 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 		{
 			ct.ThrowIfCancellationRequested();
 
-			string? remoteUrl = RemoteUrlOf(repoRoot);
+			string? remoteUrl = await RemoteUrlOfAsync(repoRoot).ConfigureAwait(false);
 			GitHubSlug? slug = ParseGitHubSlug(remoteUrl);
 			if (slug is null)
 			{
@@ -219,18 +217,8 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 	/// </summary>
 	/// <param name="repoRoot">The repository working directory.</param>
 	/// <returns>The remote URL, or <see langword="null"/> when there is no <c>origin</c>.</returns>
-	internal static string? RemoteUrlOf(string repoRoot)
-	{
-		try
-		{
-			using Repository repo = new(repoRoot);
-			return repo.Network.Remotes[RemoteName]?.Url;
-		}
-		catch (LibGit2SharpException)
-		{
-			return null;
-		}
-	}
+	internal static Task<string?> RemoteUrlOfAsync(string repoRoot) =>
+		SyncGit.RemoteUrlOfAsync(repoRoot, RemoteName);
 
 	/// <summary>
 	/// Reads the owner and repository name out of a GitHub remote URL, in any of the forms git

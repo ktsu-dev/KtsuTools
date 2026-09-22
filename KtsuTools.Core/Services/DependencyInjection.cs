@@ -2,6 +2,8 @@
 
 namespace KtsuTools.Core.Services;
 
+using ktsu.GitIntegration;
+
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.GitHub;
 using KtsuTools.Core.Services.Process;
@@ -12,6 +14,9 @@ public static class DependencyInjection
 {
 	public static IServiceCollection AddCoreServices(this IServiceCollection services)
 	{
+		// Registers IGitClient, which GitService resolves through.
+		services.AddGitIntegration();
+
 		services.AddSingleton<IGitService, GitService>();
 		services.AddSingleton<IGitHubService, GitHubService>();
 		services.AddSingleton<IProcessService, ProcessService>();

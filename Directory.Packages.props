@@ -11,7 +11,6 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
     <!-- Git and GitHub -->
-    <PackageVersion Include="LibGit2Sharp" Version="0.32.0" />
     <PackageVersion Include="Octokit" Version="14.0.0" />
     <!-- Diff and Merge -->
     <PackageVersion Include="DiffPlex" Version="1.9.0" />
@@ -28,6 +27,7 @@
     <PackageVersion Include="ktsu.AppDataStorage" Version="1.17.2" />
     <PackageVersion Include="ktsu.Coder" Version="3.14.3" />
     <PackageVersion Include="ktsu.Extensions" Version="1.6.12" />
+    <PackageVersion Include="ktsu.GitIntegration" Version="3.3.0" />
     <PackageVersion Include="ktsu.RunCommand" Version="1.5.19" />
     <PackageVersion Include="ktsu.Frontmatter" Version="1.2.25" />
     <PackageVersion Include="ktsu.TextFilter" Version="1.5.48" />
