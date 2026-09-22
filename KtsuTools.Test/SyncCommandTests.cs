@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Commands;
 using KtsuTools.Core.Services.Process;
+using KtsuTools.Core.Services.Settings;
 using KtsuTools.Sync;
 using Moq;
 using Spectre.Console.Cli;
@@ -89,7 +90,14 @@ public class SyncCommandTests
 	private static async Task<(int Exit, string Output)> ExecuteAsync(SyncCommand.Settings settings)
 	{
 		SyncService service = new(new Mock<IProcessService>().Object);
-		ICommand<SyncCommand.Settings> command = new SyncCommand(service);
+
+		// None of these cases names a saved configuration, so an empty store is enough to construct the command.
+		using SyncConfigSettings store = new();
+		Mock<ISettingsService> settingsService = new();
+		settingsService.Setup(s => s.LoadOrCreate<SyncConfigSettings>()).Returns(store);
+		SyncConfigService configService = new(settingsService.Object);
+
+		ICommand<SyncCommand.Settings> command = new SyncCommand(service, configService);
 		CommandContext context = new([], new NoRemainingArguments(), "sync", data: null);
 		int exit = 0;
 

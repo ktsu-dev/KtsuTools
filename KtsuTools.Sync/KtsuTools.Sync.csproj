@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Spectre.Console.Ansi" />
+    <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="ktsu.Extensions" />
     <PackageReference Include="LibGit2Sharp" />
     <PackageReference Include="ktsu.Semantics.Paths" />

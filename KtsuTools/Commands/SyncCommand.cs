@@ -2,10 +2,8 @@
 
 namespace KtsuTools.Commands;
 
-using System;
-using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Core.UI;
@@ -16,9 +14,10 @@ using Spectre.Console.Cli;
 /// <summary>
 /// Command that synchronizes file contents across repositories.
 /// </summary>
-public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncCommand.Settings>
+public sealed class SyncCommand(SyncService syncService, SyncConfigService configService) : AsyncCommand<SyncCommand.Settings>
 {
 	private readonly SyncService syncService = syncService;
+	private readonly SyncConfigService configService = configService;
 
 	/// <summary>
 	/// Settings for the sync command.
@@ -87,9 +86,18 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 		[Description("Open a pull request in each repo whose sync branch was pushed, using the gh CLI when it is installed and the GitHub API otherwise. Requires --branch.")]
 		public bool OpenPullRequest { get; init; }
 
+		/// <summary>
+		/// Gets the name of a saved configuration supplying the path, filenames and options.
+		/// </summary>
+		[CommandOption("--config <NAME>")]
+		[Description("Run a saved configuration by name (use 'sync-config save' to create one). Explicit flags override its values.")]
+		public string ConfigName { get; init; } = string.Empty;
+
 		/// <inheritdoc/>
 		public override ValidationResult Validate() =>
-			OpenPullRequest && string.IsNullOrWhiteSpace(Branch)
+			// A saved configuration can supply the branch, and it is not loaded until the run starts, so only a run
+			// that names no configuration can be rejected here.
+			OpenPullRequest && string.IsNullOrWhiteSpace(Branch) && string.IsNullOrWhiteSpace(ConfigName)
 				? ValidationResult.Error("--pr requires --branch: there is nothing to open a pull request from when sync commits onto the checked-out branch.")
 				: ValidationResult.Success();
 	}
@@ -99,31 +107,52 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 	{
 		Ensure.NotNull(settings);
 
-		IReadOnlyList<string> roots = SyncService.ResolveRoots(settings.Path, settings.Repo, settings.RepoList);
+		SyncConfigEntry? saved = null;
+		if (!string.IsNullOrWhiteSpace(settings.ConfigName))
+		{
+			saved = configService.Get(settings.ConfigName);
+			if (saved is null)
+			{
+				AnsiConsole.MarkupLine($"[red]Error: no sync configuration named '{settings.ConfigName.EscapeMarkup()}'. Run 'sync-config list' to see saved configurations.[/]");
+				return 1;
+			}
+
+			AnsiConsole.MarkupLine($"[dim]Running sync configuration '{settings.ConfigName.EscapeMarkup()}'.[/]");
+		}
+
+		SyncRunOptions options = SyncConfigResolver.Resolve(
+			saved,
+			settings.Path,
+			settings.Filename,
+			settings.AutoPush,
+			settings.Branch,
+			settings.OpenPullRequest);
+
+		if (options.OpenPullRequest && string.IsNullOrWhiteSpace(options.Branch))
+		{
+			AnsiConsole.MarkupLine("[red]Error: --pr requires a branch, and neither the flags nor the saved configuration named one.[/]");
+			return 1;
+		}
+
+		// A saved configuration supplies only --path; --repo, --repo-list and --exclude stay flag-only for now.
+		IReadOnlyList<string> roots = SyncService.ResolveRoots(options.Path, settings.Repo, settings.RepoList);
 		if (roots.Count == 0)
 		{
 			// Only ask when nothing at all was named; --repo and --repo-list already answer the question.
-			string entered = await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]", cancellationToken).ConfigureAwait(false);
-			roots = SyncService.ResolveRoots(entered, repos: null, repoListFile: null);
+			string enteredRoot = await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]", cancellationToken).ConfigureAwait(false);
+			roots = SyncService.ResolveRoots(enteredRoot, repos: null, repoListFile: null);
 		}
 
-		List<string> filenames = ExpandFilenames(settings.Filename);
+		Collection<string> filenames = options.Filenames;
 		if (filenames.Count == 0)
 		{
 			string entered = await AnsiConsole.AskAsync<string>("[bold]Filename pattern(s) to scan for (comma-separated):[/]", cancellationToken).ConfigureAwait(false);
-			filenames = ExpandFilenames([entered]);
+			filenames = SyncConfigResolver.ExpandFilenames([entered]);
 		}
 
 		using CtrlCScope scope = new();
 		return await syncService
-			.RunAsync(roots, filenames, settings.AutoPush, settings.Branch, settings.Exclude, settings.OpenPullRequest, scope.Token)
+			.RunAsync(roots, filenames, options.AutoPush, options.Branch, settings.Exclude, options.OpenPullRequest, scope.Token)
 			.ConfigureAwait(false);
 	}
-
-	private static List<string> ExpandFilenames(IEnumerable<string> raw) =>
-		[.. raw
-			.Where(v => v is not null)
-			.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-			.Where(v => !string.IsNullOrWhiteSpace(v))
-			.Distinct(StringComparer.Ordinal)];
 }
