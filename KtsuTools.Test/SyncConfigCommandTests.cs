@@ -261,7 +261,7 @@ public sealed class SyncConfigCommandTests : IDisposable
 	[DoNotParallelize]
 	public async Task SyncingAConfigurationRunsWithoutTheFlagsItSupplies()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_sync_config_{Guid.NewGuid():N}");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_config_{Guid.NewGuid():N}");
 		_ = Directory.CreateDirectory(root);
 
 		try
@@ -295,7 +295,7 @@ public sealed class SyncConfigCommandTests : IDisposable
 	[DoNotParallelize]
 	public async Task AnExplicitFilenameOverridesTheSavedOne()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_sync_override_{Guid.NewGuid():N}");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_sync_override_{Guid.NewGuid():N}");
 		_ = Directory.CreateDirectory(root);
 
 		try
