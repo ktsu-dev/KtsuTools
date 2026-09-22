@@ -102,6 +102,22 @@ used with a token from `GH_TOKEN` or `GITHUB_TOKEN`. A repository whose remote i
 named and skipped rather than failing the run, and a branch that already has an open pull request
 is left alone.
 
+A real sync run means retyping the same long filename list every time, so `sync-config` saves one
+under a name, on the same `ktsu.AppDataStorage` path as saved merge batches rather than in a
+second config format.
+
+```bash
+ktools sync-config save org-shared c:/dev/ktsu-dev --filename .editorconfig,.gitignore --branch sync/shared
+ktools sync --config org-shared
+```
+
+`sync-config list`, `sync-config show <name>` and `sync-config delete <name>` round out the verbs,
+matching `merge-batch`. Flags given alongside `--config` override the saved values, so
+`ktools sync --config org-shared --filename Directory.Build.props` reuses the saved path and branch
+for a one-off file. The two boolean flags are the exception: an absent `--auto-push` or `--pr` is
+indistinguishable from one passed as false, so they can only turn a saved `false` on. Save a second
+configuration for the quieter run.
+
 ## Command Groups
 
 | Group | Module | What it does |
@@ -111,7 +127,7 @@ is left alone.
 | `packages` | `KtsuTools.Packages` | NuGet package maintenance — `update-packages`, `migrate-cpm` |
 | `dedup` | `KtsuTools.FileDedupe` | Duplicate file detection and removal — `scan`, `dry-run`, `dedupe`, `stats` |
 | `merge-batch` | `KtsuTools.Merge` | Iterative multi-version file merging — `merge`, `merge-history` |
-| `sync` | `KtsuTools.Sync` | Synchronize shared file contents across directories |
+| `sync` | `KtsuTools.Sync` | Synchronize shared file contents across directories — `sync`, `sync-config` |
 | `markdown` | `KtsuTools.Markdown` | Markdown processing and linting — `lint` |
 | `memfrag` | `KtsuTools.MemFrag` | Memory fragmentation analysis |
 | `project` | `KtsuTools.Project` | Project and solution operations — `build`, `clean` |

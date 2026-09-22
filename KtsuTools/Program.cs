@@ -43,6 +43,7 @@ internal static class Program
 		services.AddSingleton<MachineMonitorService>();
 		services.AddSingleton<ProjectService>();
 		services.AddSingleton<SyncService>();
+		services.AddSingleton<SyncConfigService>();
 		services.AddSingleton<FileDedupeService>();
 
 		TypeRegistrar registrar = new(services);
@@ -207,7 +208,29 @@ internal static class Program
 
 			config.AddCommand<SyncCommand>("sync")
 				.WithDescription("Synchronize file contents across repositories")
-				.WithExample("sync", "--path", "c:/dev/ktsu-dev", "--filename", ".editorconfig");
+				.WithExample("sync", "--path", "c:/dev/ktsu-dev", "--filename", ".editorconfig")
+				.WithExample("sync", "--config", "org-shared");
+
+			config.AddBranch("sync-config", syncConfig =>
+			{
+				syncConfig.SetDescription("Manage saved sync configurations");
+
+				syncConfig.AddCommand<SyncConfigSaveCommand>("save")
+					.WithDescription("Save a named set of sync inputs")
+					.WithExample("sync-config", "save", "org-shared", "c:/dev/ktsu-dev", "--filename", ".editorconfig,.gitignore");
+
+				syncConfig.AddCommand<SyncConfigListCommand>("list")
+					.WithDescription("List all saved sync configurations")
+					.WithExample("sync-config", "list");
+
+				syncConfig.AddCommand<SyncConfigShowCommand>("show")
+					.WithDescription("Show details for a saved sync configuration")
+					.WithExample("sync-config", "show", "org-shared");
+
+				syncConfig.AddCommand<SyncConfigDeleteCommand>("delete")
+					.WithDescription("Delete a saved sync configuration")
+					.WithExample("sync-config", "delete", "org-shared");
+			});
 
 			config.AddBranch("dedup", dedup =>
 			{
