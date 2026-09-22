@@ -33,7 +33,8 @@ internal static class SyncGit
 
 	// These helpers are static, so the client they share is too. It holds no per-repository state:
 	// every call names the repository it acts on.
-	private static readonly GitClient Git = new(new RunCommandGitProcessRunner(new GitOptions()));
+	private static readonly GitClient Git =
+		new(new SyncIdentityGitProcessRunner(new RunCommandGitProcessRunner(new GitOptions())));
 
 	// Windows paths differ only in case, so two spellings of one directory are the same file there
 	// and two different files everywhere else.
@@ -405,4 +406,41 @@ internal static class SyncGit
 	/// <returns>The normalized path.</returns>
 	private static string Normalize(string path) =>
 		path.Replace('\\', '/').TrimEnd('/');
+
+	/// <summary>
+	/// Runs git with the sync's identity supplied on the command line.
+	/// </summary>
+	/// <remarks>
+	/// <para>
+	/// <c>--author</c> names who wrote a commit, but git still needs a <em>committer</em>, and it
+	/// takes that from configuration rather than from any commit option. On a machine with no
+	/// <c>user.name</c> set — a CI runner, most often — <c>git commit</c> refuses outright with
+	/// "empty ident name ... not allowed", so the sync could not commit at all.
+	/// </para>
+	/// <para>
+	/// The LibGit2Sharp implementation this replaced passed one explicit signature as both author
+	/// and committer, so it never read configuration and never depended on the machine having an
+	/// identity. Supplying both here through <c>-c</c> keeps that behaviour, and does it without
+	/// writing to the user's config or to the environment — the repositories sync operates on
+	/// belong to someone else, and mutating either would outlive the run.
+	/// </para>
+	/// </remarks>
+	/// <param name="inner">The runner that actually starts git.</param>
+	private sealed class SyncIdentityGitProcessRunner(IGitProcessRunner inner) : IGitProcessRunner
+	{
+		private static readonly string[] Identity =
+		[
+			"-c", $"user.name={CommitAuthorName}",
+			"-c", $"user.email={CommitAuthorName}",
+		];
+
+		public Task<GitProcessResult> RunAsync(GitProcessRequest request, CancellationToken cancellationToken)
+		{
+			Ensure.NotNull(request);
+
+			return inner.RunAsync(
+				request with { Arguments = [.. Identity, .. request.Arguments] },
+				cancellationToken);
+		}
+	}
 }

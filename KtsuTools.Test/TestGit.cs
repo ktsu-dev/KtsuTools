@@ -69,11 +69,22 @@ internal static class TestGit
 	];
 
 	/// <summary>
-	/// Creates a repository with a deterministic initial branch name.
+	/// Creates a repository with a deterministic initial branch name and its own identity.
 	/// </summary>
+	/// <remarks>
+	/// The identity is written into the repository rather than relied upon from the machine,
+	/// because a CI runner usually has none and <c>git commit</c> refuses without one. Code under
+	/// test that commits through git's configured identity — as <c>GitService.CommitAsync</c> does,
+	/// matching what it did through libgit2 — needs the fixture to look like a real checkout on a
+	/// developer's machine, which always has one.
+	/// </remarks>
 	/// <param name="repoRoot">The directory to initialize.</param>
-	internal static void Init(string repoRoot) =>
+	internal static void Init(string repoRoot)
+	{
 		_ = Run(repoRoot, "init", "--initial-branch", "main");
+		_ = Run(repoRoot, "config", "user.name", "A Human");
+		_ = Run(repoRoot, "config", "user.email", "human@example.test");
+	}
 
 	/// <summary>
 	/// Stages one file and commits it under the given author.
