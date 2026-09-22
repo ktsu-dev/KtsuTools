@@ -56,6 +56,19 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 		[CommandOption("--branch <NAME>")]
 		[Description("Commit onto a branch of this name in each repo, created if missing and reused if it already exists, restoring the original branch afterwards.")]
 		public string Branch { get; init; } = string.Empty;
+
+		/// <summary>
+		/// Gets a value indicating whether to open a pull request in each repo whose sync branch was pushed.
+		/// </summary>
+		[CommandOption("--pr")]
+		[Description("Open a pull request in each repo whose sync branch was pushed, using the gh CLI when it is installed and the GitHub API otherwise. Requires --branch.")]
+		public bool OpenPullRequest { get; init; }
+
+		/// <inheritdoc/>
+		public override ValidationResult Validate() =>
+			OpenPullRequest && string.IsNullOrWhiteSpace(Branch)
+				? ValidationResult.Error("--pr requires --branch: there is nothing to open a pull request from when sync commits onto the checked-out branch.")
+				: ValidationResult.Success();
 	}
 
 	/// <inheritdoc/>
@@ -76,7 +89,7 @@ public sealed class SyncCommand(SyncService syncService) : AsyncCommand<SyncComm
 
 		using CtrlCScope scope = new();
 		AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(path));
-		return await syncService.RunAsync(rootPath, filenames, settings.AutoPush, settings.Branch, scope.Token).ConfigureAwait(false);
+		return await syncService.RunAsync(rootPath, filenames, settings.AutoPush, settings.Branch, settings.OpenPullRequest, scope.Token).ConfigureAwait(false);
 	}
 
 	private static List<string> ExpandFilenames(IEnumerable<string> raw) =>
