@@ -1,7 +1,6 @@
-## v1.10.1 (patch)
+## v1.10.2 (patch)
 
-Changes since v1.10.0:
+Changes since v1.10.1:
 
-- Bump the ktsu group with 11 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
-- Bump ktsu.AppDataStorage and 15 others ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- Bump the ktsu group with 16 updates ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
