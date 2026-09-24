@@ -42,7 +42,7 @@
     <!-- MSTest.TestAdapter, MSTest.TestFramework and Microsoft.Testing.Extensions.CodeCoverage
          are supplied by MSTest.Sdk (pinned in global.json). Declaring them here as well makes
          NuGet fail restore with NU1506 (duplicate PackageVersion items). -->
-    <PackageVersion Include="Moq" Version="4.20.72" />
+    <PackageVersion Include="Moq" Version="4.21.0" />
     <PackageVersion Include="FluentAssertions" Version="8.11.0" />
   </ItemGroup>
 </Project>
