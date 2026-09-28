@@ -112,8 +112,12 @@ public static class ImageService
 		try
 		{
 			AnsiConsole.MarkupLine($"Processing [blue]{Path.GetFileName(file).EscapeMarkup()}[/]...");
-			ProcessSingleImage(file, outputPath, targetColor, size, padding);
-			return true;
+			if (ProcessSingleImage(file, outputPath, targetColor, size, padding))
+			{
+				return true;
+			}
+
+			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: it has no opaque pixels to crop to.[/]");
 		}
 		catch (ImageProcessingException e)
 		{
@@ -127,13 +131,18 @@ public static class ImageService
 		{
 			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: {e.Message.EscapeMarkup()}[/]");
 		}
+		catch (ArgumentException e)
+		{
+			// A size or padding the image cannot satisfy fails this one file, not the rest of the batch.
+			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: {e.Message.EscapeMarkup()}[/]");
+		}
 
 		return false;
 	}
 
-	private static void ProcessSingleImage(string filePath, string outputPath, Rgba32 targetColor, int size, int padding)
+	private static bool ProcessSingleImage(string filePath, string outputPath, Rgba32 targetColor, int size, int padding)
 	{
-		Image<Rgba32> image = Image.Load<Rgba32>(filePath);
+		using Image<Rgba32> image = Image.Load<Rgba32>(filePath);
 
 		// Convert to black and white
 		image.Mutate(ctx => ctx.BlackWhite());
@@ -145,10 +154,15 @@ public static class ImageService
 		maxValue = isBlack ? (byte)255 : maxValue;
 
 		// Recolor pixels and find tight bounding box of non-transparent content
-		Rectangle bounds = RecolorAndFindBounds(image, targetColor, maxValue, isBlack);
+		Rectangle? bounds = RecolorAndFindBounds(image, targetColor, maxValue, isBlack);
+		if (bounds is null)
+		{
+			return false;
+		}
 
 		// Crop, pad to square, resize, and add final padding
-		CropResizeAndSave(image, filePath, outputPath, bounds, size, padding);
+		CropResizeAndSave(image, filePath, outputPath, bounds.Value, size, padding);
+		return true;
 	}
 
 	private static byte FindMaxTonalValue(Image<Rgba32> image)
@@ -176,7 +190,10 @@ public static class ImageService
 		return maxValue;
 	}
 
-	private static Rectangle RecolorAndFindBounds(Image<Rgba32> image, Rgba32 targetColor, byte maxValue, bool isBlack)
+	/// <summary>
+	/// Recolors the image and returns the bounding box of its opaque pixels, or null when it has none.
+	/// </summary>
+	private static Rectangle? RecolorAndFindBounds(Image<Rgba32> image, Rgba32 targetColor, byte maxValue, bool isBlack)
 	{
 		int top = image.Height;
 		int left = image.Width;
@@ -213,9 +230,13 @@ public static class ImageService
 			}
 		});
 
-		int minWidth = right - left;
-		int minHeight = bottom - top;
-		return new Rectangle(left, top, minWidth, minHeight);
+		if (right < left || bottom < top)
+		{
+			return null;
+		}
+
+		// right and bottom are the indices of the last opaque column and row, so both are inclusive.
+		return new Rectangle(left, top, right - left + 1, bottom - top + 1);
 	}
 
 	private static byte ComputeNewValue(Rgba32 pixel, byte maxValue, bool isBlack) =>
