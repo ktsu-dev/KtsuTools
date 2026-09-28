@@ -132,12 +132,7 @@ internal static partial class MarkdownLint
 		for (int i = 0; i < lines.Length; i++)
 		{
 			string line = lines[i];
-			if (fenced[i])
-			{
-				consecutiveBlank = 0;
-				result.Add(line);
-			}
-			else if (string.IsNullOrWhiteSpace(line))
+			if (!fenced[i] && string.IsNullOrWhiteSpace(line))
 			{
 				consecutiveBlank++;
 				if (consecutiveBlank <= maximum)
