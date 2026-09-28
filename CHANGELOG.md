@@ -1,6 +1,8 @@
-## v1.10.4
+## v1.10.5-pre.1 (prerelease)
 
-No significant changes detected since v1.10.4.
+Changes since v1.10.4:
+
+- Bump Polyfill from 11.4.0 to 11.4.1 ([@dependabot[bot]](https://github.com/dependabot[bot]))
 
 ## v1.10.4 (patch)
 
@@ -189,8 +191,10 @@ Changes since v1.0.0:
 
 - Update copyright headers to reflect 2023-2026 ktsu-dev contributors across all relevant files ([@matt-edmondson](https://github.com/matt-edmondson))
 - Add COPYRIGHT.md file with copyright notice ([@matt-edmondson](https://github.com/matt-edmondson))
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 - Update line endings and add InternalsVisibleTo attribute for test projects ([@matt-edmondson](https://github.com/matt-edmondson))
 - Sync global.json ([@KtsuTools](https://github.com/KtsuTools))
+- Sync .github\workflows\dotnet.yml ([@KtsuTools](https://github.com/KtsuTools))
 - Sync global.json ([@KtsuTools](https://github.com/KtsuTools))
 - [patch] Fix build: restore failure, SDK analyzer errors, Spectre.Console API break ([@matt-edmondson](https://github.com/matt-edmondson))
 - Update NuGet package versions in Directory.Packages.props ([@matt-edmondson](https://github.com/matt-edmondson))
