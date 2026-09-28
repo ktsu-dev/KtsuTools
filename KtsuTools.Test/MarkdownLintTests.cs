@@ -39,4 +39,83 @@ public class MarkdownLintTests
 		Assert.IsFalse(result.Contains(" " + Environment.NewLine, StringComparison.Ordinal),
 			"Expected trailing whitespace to be removed.");
 	}
+	[TestMethod]
+	[DataRow("```", "```")]
+	[DataRow("```csharp", "```")]
+	[DataRow("~~~", "~~~")]
+	[DataRow("````md", "````")]
+	public void FormatMarkdownLeavesFencedCodeUnchanged(string openingFence, string closingFence)
+	{
+		string input = Lines(
+			"# Sample",
+			string.Empty,
+			openingFence,
+			"#!/usr/bin/env python",
+			"#include<stdio.h>",
+			"#pragma once",
+			"#region Setup",
+			"def first():",
+			"    pass",
+			string.Empty,
+			string.Empty,
+			string.Empty,
+			"def second():",
+			"    pass",
+			"/**",
+			" * Doc comment",
+			" + not a list",
+			" */",
+			closingFence);
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(input, result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownKeepsShorterFenceInsideLongerFence()
+	{
+		string input = Lines(
+			"````md",
+			"```",
+			"#include<stdio.h>",
+			"```",
+			"#pragma once",
+			"````");
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(input, result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownResumesFixingAfterAFenceCloses()
+	{
+		string input = Lines(
+			"```",
+			"#include<stdio.h>",
+			"```",
+			"##Heading",
+			"* item");
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(Lines("```", "#include<stdio.h>", "```", "## Heading", "- item"), result);
+	}
+
+	[TestMethod]
+	[DataRow("* * *")]
+	[DataRow("- - -")]
+	[DataRow("_ _ _")]
+	[DataRow("***")]
+	public void FormatMarkdownPreservesThematicBreaks(string thematicBreak)
+	{
+		string input = Lines("Above", string.Empty, thematicBreak, string.Empty, "Below");
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(input, result);
+	}
+
+	private static string Lines(params string[] lines) => string.Join(Environment.NewLine, lines) + Environment.NewLine;
 }
