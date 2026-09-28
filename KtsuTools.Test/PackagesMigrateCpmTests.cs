@@ -89,7 +89,9 @@ public class PackagesMigrateCpmTests
 		Assert.AreEqual("4.5.5", versions["System.Memory"]);
 		Assert.AreEqual("13.0.1", versions["Newtonsoft.Json"]);
 
-		string props = await File.ReadAllTextAsync(PropsPath).ConfigureAwait(false);
+		// The raw strings above carry whatever line endings the checkout gave this file, and the merge
+		// keeps the props file's own, so compare layout independently of them.
+		string props = (await File.ReadAllTextAsync(PropsPath).ConfigureAwait(false)).ReplaceLineEndings("\n");
 		StringAssert.Contains(props, "<!-- Pinned for the analyzers. -->");
 		StringAssert.Contains(props, "<CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>");
 		StringAssert.Contains(props, "Condition=\"'$(TargetFramework)' == 'net472'\"");
@@ -140,7 +142,9 @@ public class PackagesMigrateCpmTests
 
 		Assert.AreEqual(0, exitCode);
 		Assert.AreEqual("13.0.1", ReadPackageVersions()["Newtonsoft.Json"]);
-		string props = await File.ReadAllTextAsync(PropsPath).ConfigureAwait(false);
+		// The raw strings above carry whatever line endings the checkout gave this file, and the merge
+		// keeps the props file's own, so compare layout independently of them.
+		string props = (await File.ReadAllTextAsync(PropsPath).ConfigureAwait(false)).ReplaceLineEndings("\n");
 		StringAssert.Contains(props, "<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>");
 		StringAssert.Contains(props, "  </PropertyGroup>\n  <ItemGroup>\n    <PackageVersion Include=\"Newtonsoft.Json\" Version=\"13.0.1\" />\n  </ItemGroup>\n</Project>");
 	}
