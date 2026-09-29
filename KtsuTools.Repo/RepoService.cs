@@ -1170,16 +1170,30 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		}
 	}
 
-	private static List<string> DiscoverSolutionFiles(string directory)
+	/// <summary>
+	/// Finds the top-level <c>.sln</c> and <c>.slnx</c> solutions under <paramref name="directory"/>,
+	/// one per folder, skipping solutions that sit inside another solution's folder.
+	/// </summary>
+	internal static List<string> DiscoverSolutionFiles(string directory)
 	{
 		try
 		{
-			string[] allSlnFiles = Directory.GetFiles(directory, "*.sln", SearchOption.AllDirectories);
+			// Match extensions exactly: on Windows '*.sln' also matches '.slnx', on Linux and macOS it does not.
+			List<string> allSlnFiles = [.. Directory.EnumerateFiles(directory, "*.sln*", SearchOption.AllDirectories)
+				.Where(IsSolutionFile)];
+
+			// 'dotnet build' in a folder with two solutions is ambiguous, so keep one per folder, preferring .slnx.
+			List<string> onePerDirectory = [.. allSlnFiles
+				.GroupBy(sln => Path.GetDirectoryName(sln) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+				.Select(group => group
+					.OrderBy(sln => string.Equals(Path.GetExtension(sln), ".slnx", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+					.ThenBy(sln => Path.GetFileName(sln), StringComparer.OrdinalIgnoreCase)
+					.First())];
 
 			// Filter out nested solutions (solutions in subdirectories of other solutions)
 			List<string> topLevelSlns = [];
 
-			foreach (string sln in allSlnFiles)
+			foreach (string sln in onePerDirectory)
 			{
 				string? slnDir = Path.GetDirectoryName(sln);
 				if (slnDir is null)
@@ -1187,12 +1201,12 @@ public class RepoService(IGitService gitService, IProcessService processService,
 					continue;
 				}
 
-				bool isNested = allSlnFiles.Any(otherSln =>
+				bool isNested = onePerDirectory.Any(otherSln =>
 				{
 					string? otherDir = Path.GetDirectoryName(otherSln);
 					return otherDir is not null &&
 						   !string.Equals(otherDir, slnDir, StringComparison.OrdinalIgnoreCase) &&
-						   slnDir.StartsWith(otherDir, StringComparison.OrdinalIgnoreCase);
+						   RepositoryContains(otherDir, sln);
 				});
 
 				if (!isNested)
@@ -1207,6 +1221,17 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		{
 			return [];
 		}
+		catch (DirectoryNotFoundException)
+		{
+			return [];
+		}
+	}
+
+	private static bool IsSolutionFile(string path)
+	{
+		string extension = Path.GetExtension(path);
+		return string.Equals(extension, ".sln", StringComparison.OrdinalIgnoreCase) ||
+			string.Equals(extension, ".slnx", StringComparison.OrdinalIgnoreCase);
 	}
 
 	/// <summary>
