@@ -354,6 +354,39 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public async Task CommitFilesLeavesTheUsersStagedWorkOutOfTheSyncCommit()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string originalBranch = repo.CurrentBranch;
+		string originalTip = repo.HeadSha;
+		repo.Write("mywork.txt", "in progress");
+		_ = TestGit.Run(repo.Root, "add", "mywork.txt");
+		repo.Write("shared.txt", "synced content");
+
+		IReadOnlyList<SyncService.BranchSwitch> switches = await SyncService.CommitFilesAsync(
+			[Path.Join(repo.Root, "shared.txt")],
+			"sync/shared").ConfigureAwait(false);
+
+		string committedOnSyncBranch = TestGit.Run(repo.Root, "log", "--name-only", "--format=", $"{originalTip}..sync/shared");
+		IReadOnlyList<string> pushDirectories =
+			[.. await SyncService.FindPushableBranchDirectoriesAsync(switches).ConfigureAwait(false)];
+
+		await SyncService.RestoreBranchesAsync(switches).ConfigureAwait(false);
+
+		Assert.IsFalse(
+			committedOnSyncBranch.Contains("mywork.txt", StringComparison.Ordinal),
+			"The user's staged file must not be swept into a commit authored by the sync.");
+		Assert.AreEqual(0, pushDirectories.Count, "Nothing of the user's may be pushed without asking.");
+		Assert.AreEqual(originalBranch, repo.CurrentBranch);
+		Assert.AreEqual(originalTip, repo.TipOf(originalBranch));
+		Assert.AreEqual("in progress", repo.Read("mywork.txt"), "The user's work must still be in the working tree.");
+		StringAssert.Contains(
+			TestGit.Run(repo.Root, "diff", "--cached", "--name-only"),
+			"mywork.txt",
+			"The user's work must still be staged on the branch they were on.");
+	}
+
+	[TestMethod]
 	public async Task CommitFilesWithoutABranchCommitsOntoTheCheckedOutBranch()
 	{
 		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
