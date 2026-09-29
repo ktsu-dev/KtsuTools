@@ -221,6 +221,16 @@ internal static class SyncGit
 		string relativeFilePath = filePath.Replace(repoRoot, "", StringComparison.Ordinal);
 		RelativeFilePath stagedPath = RelativeFilePath.Create<RelativeFilePath>(relativeFilePath.TrimStart('/', '\\'));
 
+		// git commit takes the whole index, so anything the user already staged would go into the
+		// sync's commit under the sync's author, and could then be pushed as the sync's own work.
+		IReadOnlyList<string> otherStaged = await OtherStagedPathsAsync(repo, stagedPath.ToString()).ConfigureAwait(false);
+		if (otherStaged.Count > 0)
+		{
+			AnsiConsole.MarkupLine($"[yellow]Skipping commit (other changes are staged):[/] {filePath.EscapeMarkup()}");
+			AnsiConsole.MarkupLine($"[yellow]  Staged in {repoRoot.EscapeMarkup()}: {string.Join(", ", otherStaged).EscapeMarkup()}[/]");
+			return;
+		}
+
 		if (!(await repo.Add().ForPath(stagedPath).TryExecuteAsync().ConfigureAwait(false)).Success)
 		{
 			AnsiConsole.MarkupLine($"[red]Could not stage:[/] {filePath.EscapeMarkup()}");
@@ -256,6 +266,30 @@ internal static class SyncGit
 			AnsiConsole.MarkupLine($"[red]{error.EscapeMarkup()}[/]");
 		}
 	}
+
+	/// <summary>
+	/// The paths staged in <paramref name="repo"/> other than <paramref name="syncedPath"/>.
+	/// </summary>
+	private static async Task<IReadOnlyList<string>> OtherStagedPathsAsync(GitRepository repo, string syncedPath)
+	{
+		GitResult<GitStatus> status = await repo.Status().TryExecuteAsync().ConfigureAwait(false);
+		if (status is not { Success: true, Value: not null })
+		{
+			return [];
+		}
+
+		string synced = NormalizeSeparators(syncedPath);
+
+		return
+		[
+			.. status.Value.Entries
+				.Where(entry => entry.IndexState is not (GitFileState.Unmodified or GitFileState.Untracked or GitFileState.Ignored))
+				.Select(entry => NormalizeSeparators(entry.Path.ToString()))
+				.Where(path => !string.Equals(path, synced, StringComparison.Ordinal))
+		];
+	}
+
+	private static string NormalizeSeparators(string path) => path.Replace('\\', '/');
 
 	/// <summary>
 	/// The repositories holding commits that are ahead of their upstream and were all written by
