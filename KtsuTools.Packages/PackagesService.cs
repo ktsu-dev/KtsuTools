@@ -546,10 +546,9 @@ public class PackagesService(IProcessService processService)
 			: doc.Declaration + (doc.FirstNode is XText ? string.Empty : "\n");
 		string text = declaration + doc.ToString(SaveOptions.DisableFormatting);
 
-		// Parsing normalizes line endings to \n, so put back the ones the file was written with.
-		return originalContent.Contains("\r\n", StringComparison.Ordinal)
-			? text.ReplaceLineEndings("\r\n")
-			: text;
+		// Parsing normalizes line endings to \n and ToString writes Environment.NewLine, so put back
+		// the ones the file was written with.
+		return text.ReplaceLineEndings(originalContent.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n");
 	}
 
 	/// <summary>
