@@ -110,4 +110,57 @@ public class FileDedupeServiceTests
 			}
 		}
 	}
+
+	[TestMethod]
+	public async Task DedupeKeepsAFileThatASymlinkPointsAt()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"ktsu_dedup_filelink_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			string photo = Path.Combine(root, "photo.jpg");
+			string link = Path.Combine(root, "p");
+			await File.WriteAllTextAsync(photo, "pixels").ConfigureAwait(false);
+			File.CreateSymbolicLink(link, "photo.jpg");
+
+			FileDedupeService service = new();
+			DedupePlan plan = await service.PlanAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root)).ConfigureAwait(false);
+			service.DeleteRedundant(plan);
+
+			Assert.AreEqual(0, plan.Removals.Count, "A link and the file it points at are one file, not two copies.");
+			Assert.IsTrue(File.Exists(photo), "The only real copy must survive.");
+			Assert.AreEqual("pixels", await File.ReadAllTextAsync(link).ConfigureAwait(false), "The link must still resolve.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task DedupeDoesNotReachAFileTwiceThroughADirectorySymlink()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"ktsu_dedup_dirlink_{Guid.NewGuid():N}");
+		string sub = Path.Combine(root, "sub");
+		string other = Path.Combine(root, "other");
+		Directory.CreateDirectory(sub);
+		Directory.CreateDirectory(other);
+		try
+		{
+			string report = Path.Combine(sub, "report.pdf");
+			await File.WriteAllTextAsync(report, "pages").ConfigureAwait(false);
+			Directory.CreateSymbolicLink(Path.Combine(other, "s"), Path.Combine("..", "sub"));
+
+			FileDedupeService service = new();
+			DedupePlan plan = await service.PlanAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root)).ConfigureAwait(false);
+			service.DeleteRedundant(plan);
+
+			Assert.AreEqual(0, plan.Removals.Count, "The same file seen through a directory link is not a duplicate.");
+			Assert.IsTrue(File.Exists(report), "The only real copy must survive.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
 }
