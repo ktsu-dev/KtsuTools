@@ -266,8 +266,16 @@ public class PackagesService(IProcessService processService)
 					collectTask.Increment(1);
 				}
 
-				ProgressTask createTask = progressContext.AddTask("[green]Creating Directory.Packages.props[/]", maxValue: 1);
-				await CreatePackagesPropsAsync(propsPath, allPackages, ct).ConfigureAwait(false);
+				ProgressTask createTask = progressContext.AddTask("[green]Writing Directory.Packages.props[/]", maxValue: 1);
+				if (File.Exists(propsPath))
+				{
+					await MergePackagesPropsAsync(propsPath, allPackages, ct).ConfigureAwait(false);
+				}
+				else
+				{
+					await CreatePackagesPropsAsync(propsPath, allPackages, ct).ConfigureAwait(false);
+				}
+
 				createTask.Increment(1);
 
 				ProgressTask removeTask = progressContext.AddTask("[green]Removing versions from project files[/]", maxValue: projectFiles.Count);
@@ -455,6 +463,99 @@ public class PackagesService(IProcessService processService)
 							new XAttribute(VersionAttribute, kvp.Value))))));
 
 		await File.WriteAllTextAsync(propsPath, doc.ToString(), ct).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Adds the collected versions to an existing Directory.Packages.props without disturbing anything
+	/// already in it.
+	/// </summary>
+	/// <remarks>
+	/// An entry that is already managed centrally keeps its version unless a project asked for a higher
+	/// one. Everything else in the file, such as comments, properties, GlobalPackageReference items and
+	/// conditional ItemGroups, is left exactly as it was. New entries go into the first unconditional
+	/// ItemGroup that already holds PackageVersion items, or into a new ItemGroup when there is none.
+	/// </remarks>
+	private static async Task MergePackagesPropsAsync(string propsPath, Dictionary<string, string> packages, CancellationToken ct)
+	{
+		string content = await File.ReadAllTextAsync(propsPath, ct).ConfigureAwait(false);
+		XDocument doc = XDocument.Parse(content, LoadOptions.PreserveWhitespace);
+		XElement project = doc.Root ?? throw new InvalidDataException($"{propsPath} has no root element.");
+		XNamespace ns = project.Name.Namespace;
+
+		List<XElement> existing = [.. project.Descendants(ns + "PackageVersion")];
+		XElement? itemGroup = existing
+			.Select(e => e.Parent)
+			.FirstOrDefault(parent => parent is not null && parent.Name == ns + "ItemGroup" && parent.Attribute("Condition") is null);
+
+		foreach ((string packageName, string version) in packages.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
+		{
+			List<XElement> matches = [.. existing.Where(e => string.Equals(e.Attribute("Include")?.Value, packageName, StringComparison.OrdinalIgnoreCase))];
+
+			if (matches.Count > 0)
+			{
+				foreach (XElement match in matches)
+				{
+					string? currentVersion = match.Attribute(VersionAttribute)?.Value;
+					if (currentVersion is not null && CompareVersions(version, currentVersion) > 0)
+					{
+						match.SetAttributeValue(VersionAttribute, version);
+					}
+				}
+
+				continue;
+			}
+
+			XElement entry = new(ns + "PackageVersion",
+				new XAttribute("Include", packageName),
+				new XAttribute(VersionAttribute, version));
+
+			if (itemGroup is null)
+			{
+				itemGroup = new XElement(ns + "ItemGroup");
+				AppendIndented(project, itemGroup);
+			}
+
+			AppendIndented(itemGroup, entry);
+			existing.Add(entry);
+		}
+
+		// Parsing normalizes line endings to \n, so put back the ones the file was written with.
+		string declaration = doc.Declaration is null ? string.Empty : doc.Declaration + "\n";
+		string merged = declaration + doc.ToString(SaveOptions.DisableFormatting);
+		if (content.Contains("\r\n", StringComparison.Ordinal))
+		{
+			merged = merged.ReplaceLineEndings("\r\n");
+		}
+
+		await File.WriteAllTextAsync(propsPath, merged, ct).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Appends an element on its own line, copying the indentation already used around the parent so
+	/// a whitespace-preserving document stays readable.
+	/// </summary>
+	private static void AppendIndented(XElement parent, XElement child)
+	{
+		string parentIndent = parent.PreviousNode is XText { Value: string before } && string.IsNullOrWhiteSpace(before)
+			? before
+			: "\n";
+		XElement? lastSibling = parent.Elements().LastOrDefault();
+
+		if (lastSibling is not null)
+		{
+			string separator = lastSibling.PreviousNode is XText { Value: string text } && string.IsNullOrWhiteSpace(text)
+				? text
+				: parentIndent + "  ";
+			lastSibling.AddAfterSelf(new XText(separator), child);
+			return;
+		}
+
+		if (parent.LastNode is XText { Value: string closing } trailing && string.IsNullOrWhiteSpace(closing))
+		{
+			trailing.Remove();
+		}
+
+		parent.Add(new XText(parentIndent + "  "), child, new XText(parentIndent));
 	}
 
 	private static async Task RemoveVersionsFromProjectAsync(string projectFile, CancellationToken ct)
