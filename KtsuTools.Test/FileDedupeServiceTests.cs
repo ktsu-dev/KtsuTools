@@ -114,12 +114,12 @@ public class FileDedupeServiceTests
 	[TestMethod]
 	public async Task DedupeKeepsAFileThatASymlinkPointsAt()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_dedup_filelink_{Guid.NewGuid():N}");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_dedup_filelink_{Guid.NewGuid():N}");
 		Directory.CreateDirectory(root);
 		try
 		{
-			string photo = Path.Combine(root, "photo.jpg");
-			string link = Path.Combine(root, "p");
+			string photo = Path.Join(root, "photo.jpg");
+			string link = Path.Join(root, "p");
 			await File.WriteAllTextAsync(photo, "pixels").ConfigureAwait(false);
 			File.CreateSymbolicLink(link, "photo.jpg");
 
@@ -140,16 +140,16 @@ public class FileDedupeServiceTests
 	[TestMethod]
 	public async Task DedupeDoesNotReachAFileTwiceThroughADirectorySymlink()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_dedup_dirlink_{Guid.NewGuid():N}");
-		string sub = Path.Combine(root, "sub");
-		string other = Path.Combine(root, "other");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_dedup_dirlink_{Guid.NewGuid():N}");
+		string sub = Path.Join(root, "sub");
+		string other = Path.Join(root, "other");
 		Directory.CreateDirectory(sub);
 		Directory.CreateDirectory(other);
 		try
 		{
-			string report = Path.Combine(sub, "report.pdf");
+			string report = Path.Join(sub, "report.pdf");
 			await File.WriteAllTextAsync(report, "pages").ConfigureAwait(false);
-			Directory.CreateSymbolicLink(Path.Combine(other, "s"), Path.Combine("..", "sub"));
+			Directory.CreateSymbolicLink(Path.Join(other, "s"), Path.Join("..", "sub"));
 
 			FileDedupeService service = new();
 			DedupePlan plan = await service.PlanAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root)).ConfigureAwait(false);
