@@ -14,6 +14,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Process;
+using NuGet.Versioning;
 using Spectre.Console;
 
 /// <summary>
@@ -319,14 +320,16 @@ public class PackagesService(IProcessService processService)
 		{
 			ct.ThrowIfCancellationRequested();
 
-			string? latestVersion = await GetLatestVersionAsync(packageName, includePrerelease, source, ct).ConfigureAwait(false);
-
-			if (latestVersion is null || latestVersion == currentVersion)
+			if (!NuGetVersion.TryParse(currentVersion, out _))
 			{
+				// A property, a range or a floating version is a deliberate declaration, not a pin to bump.
+				AnsiConsole.MarkupLine($"  [grey]{relativePath.EscapeMarkup()}: {packageName.EscapeMarkup()} {currentVersion.EscapeMarkup()} skipped (not a concrete version)[/]");
 				continue;
 			}
 
-			if (CompareVersions(latestVersion, currentVersion) <= 0)
+			string? latestVersion = await GetLatestVersionAsync(packageName, includePrerelease, source, ct).ConfigureAwait(false);
+
+			if (latestVersion is null || !IsUpgrade(currentVersion, latestVersion))
 			{
 				continue;
 			}
@@ -373,7 +376,12 @@ public class PackagesService(IProcessService processService)
 		return packages;
 	}
 
-	private static async Task UpdatePackageVersionInFileAsync(string projectFile, string packageName, string newVersion, CancellationToken ct)
+	/// <summary>
+	/// Sets <paramref name="newVersion"/> on every reference to <paramref name="packageName"/> whose
+	/// current version is a concrete, older version. Properties, ranges and floating versions are left
+	/// alone, and the XML declaration and line endings are written back as they were.
+	/// </summary>
+	internal static async Task UpdatePackageVersionInFileAsync(string projectFile, string packageName, string newVersion, CancellationToken ct)
 	{
 		try
 		{
@@ -384,13 +392,16 @@ public class PackagesService(IProcessService processService)
 			foreach (XElement packageRef in packageRefs)
 			{
 				string? name = packageRef.Attribute("Include")?.Value;
-				if (string.Equals(name, packageName, StringComparison.OrdinalIgnoreCase))
+				string? currentVersion = packageRef.Attribute(VersionAttribute)?.Value;
+				if (string.Equals(name, packageName, StringComparison.OrdinalIgnoreCase) &&
+					currentVersion is not null &&
+					IsUpgrade(currentVersion, newVersion))
 				{
 					packageRef.SetAttributeValue(VersionAttribute, newVersion);
 				}
 			}
 
-			await File.WriteAllTextAsync(projectFile, doc.ToString(), ct).ConfigureAwait(false);
+			await File.WriteAllTextAsync(projectFile, SerializeLikeOriginal(doc, content), ct).ConfigureAwait(false);
 		}
 		catch (Exception ex) when (ex is IOException or System.Xml.XmlException)
 		{
@@ -496,7 +507,7 @@ public class PackagesService(IProcessService processService)
 				foreach (XElement match in matches)
 				{
 					string? currentVersion = match.Attribute(VersionAttribute)?.Value;
-					if (currentVersion is not null && CompareVersions(version, currentVersion) > 0)
+					if (currentVersion is not null && IsUpgrade(currentVersion, version))
 					{
 						match.SetAttributeValue(VersionAttribute, version);
 					}
@@ -519,15 +530,25 @@ public class PackagesService(IProcessService processService)
 			existing.Add(entry);
 		}
 
-		// Parsing normalizes line endings to \n, so put back the ones the file was written with.
-		string declaration = doc.Declaration is null ? string.Empty : doc.Declaration + "\n";
-		string merged = declaration + doc.ToString(SaveOptions.DisableFormatting);
-		if (content.Contains("\r\n", StringComparison.Ordinal))
-		{
-			merged = merged.ReplaceLineEndings("\r\n");
-		}
+		await File.WriteAllTextAsync(propsPath, SerializeLikeOriginal(doc, content), ct).ConfigureAwait(false);
+	}
 
-		await File.WriteAllTextAsync(propsPath, merged, ct).ConfigureAwait(false);
+	/// <summary>
+	/// Writes a whitespace-preserving document back out with the XML declaration and the line endings
+	/// of the text it was parsed from.
+	/// </summary>
+	private static string SerializeLikeOriginal(XDocument doc, string originalContent)
+	{
+		// ToString drops the declaration. The whitespace that followed it is still a node of the
+		// document, so only add a line break when there is none.
+		string declaration = doc.Declaration is null
+			? string.Empty
+			: doc.Declaration + (doc.FirstNode is XText ? string.Empty : "\n");
+		string text = declaration + doc.ToString(SaveOptions.DisableFormatting);
+
+		// Parsing normalizes line endings to \n and ToString writes Environment.NewLine, so put back
+		// the ones the file was written with.
+		return text.ReplaceLineEndings(originalContent.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n");
 	}
 
 	/// <summary>
@@ -594,25 +615,31 @@ public class PackagesService(IProcessService processService)
 		return [];
 	}
 
-	private static int CompareVersions(string version1, string version2)
+	/// <summary>
+	/// Compares two versions by NuGet's SemVer rules, prerelease labels included. A version that is not
+	/// concrete, such as <c>$(Property)</c>, a range or <c>4.*</c>, sorts below any concrete one and
+	/// equal to another non-concrete one, so it never displaces a real version.
+	/// </summary>
+	internal static int CompareVersions(string version1, string version2)
 	{
-		string v1Clean = version1.Split('-')[0];
-		string v2Clean = version2.Split('-')[0];
-		string[] parts1 = v1Clean.Split('.');
-		string[] parts2 = v2Clean.Split('.');
-		int maxParts = Math.Max(parts1.Length, parts2.Length);
+		bool parsed1 = NuGetVersion.TryParse(version1, out NuGetVersion? v1);
+		bool parsed2 = NuGetVersion.TryParse(version2, out NuGetVersion? v2);
 
-		for (int i = 0; i < maxParts; i++)
+		return (parsed1, parsed2) switch
 		{
-			int p1 = i < parts1.Length && int.TryParse(parts1[i], out int v1) ? v1 : 0;
-			int p2 = i < parts2.Length && int.TryParse(parts2[i], out int v2) ? v2 : 0;
-
-			if (p1 != p2)
-			{
-				return p1.CompareTo(p2);
-			}
-		}
-
-		return 0;
+			(true, true) => v1!.CompareTo(v2),
+			(true, false) => 1,
+			(false, true) => -1,
+			_ => 0,
+		};
 	}
+
+	/// <summary>
+	/// Whether moving from <paramref name="currentVersion"/> to <paramref name="latestVersion"/> is an
+	/// upgrade. Only a concrete current version can be upgraded.
+	/// </summary>
+	internal static bool IsUpgrade(string currentVersion, string latestVersion) =>
+		NuGetVersion.TryParse(currentVersion, out NuGetVersion? current) &&
+		NuGetVersion.TryParse(latestVersion, out NuGetVersion? latest) &&
+		latest > current;
 }
