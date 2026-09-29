@@ -125,12 +125,14 @@ internal static partial class MarkdownLint
 		}
 
 		string[] lines = content.Split(Environment.NewLine);
+		bool[] fenced = FindFencedLines(lines);
 		List<string> result = [];
 		int consecutiveBlank = 0;
 
-		foreach (string line in lines)
+		for (int i = 0; i < lines.Length; i++)
 		{
-			if (string.IsNullOrWhiteSpace(line))
+			string line = lines[i];
+			if (!fenced[i] && string.IsNullOrWhiteSpace(line))
 			{
 				consecutiveBlank++;
 				if (consecutiveBlank <= maximum)
@@ -156,9 +158,13 @@ internal static partial class MarkdownLint
 		}
 
 		string[] lines = content.Split(Environment.NewLine);
+		bool[] fenced = FindFencedLines(lines);
 		for (int i = 0; i < lines.Length; i++)
 		{
-			lines[i] = NormalizeHeadingLine(lines[i]);
+			if (!fenced[i])
+			{
+				lines[i] = NormalizeHeadingLine(lines[i]);
+			}
 		}
 
 		return string.Join(Environment.NewLine, lines);
@@ -204,8 +210,14 @@ internal static partial class MarkdownLint
 		int indent = GetConfigInt(config, "MD007", "indent", 2);
 
 		string[] lines = content.Split(Environment.NewLine);
+		bool[] fenced = FindFencedLines(lines);
 		for (int i = 0; i < lines.Length; i++)
 		{
+			if (fenced[i] || ThematicBreakRegex().IsMatch(lines[i]))
+			{
+				continue;
+			}
+
 			string trimmed = lines[i].TrimStart();
 			if (trimmed.Length > 1 && trimmed[1] == ' ' && (trimmed[0] is '*' or '+' or '-'))
 			{
@@ -217,6 +229,65 @@ internal static partial class MarkdownLint
 		}
 
 		return string.Join(Environment.NewLine, lines);
+	}
+
+	/// <summary>
+	/// Marks every line that belongs to a fenced code block, including the opening and closing fences.
+	/// </summary>
+	/// <remarks>
+	/// A fence opens with three or more backticks or tildes and closes on a line holding only the same
+	/// character, repeated at least as many times. A fence that never closes runs to the end of the
+	/// document, as CommonMark specifies. Code is never rewritten, the same way markdownlint's own
+	/// MD004, MD012 and MD018 leave code blocks alone.
+	/// </remarks>
+	private static bool[] FindFencedLines(string[] lines)
+	{
+		bool[] fenced = new bool[lines.Length];
+		char fenceChar = '\0';
+		int fenceLength = 0;
+
+		for (int i = 0; i < lines.Length; i++)
+		{
+			string trimmed = lines[i].Trim();
+
+			if (fenceLength == 0)
+			{
+				int runLength = CountLeadingRun(trimmed);
+				if (runLength >= 3 && !(trimmed[0] == '`' && trimmed[runLength..].Contains('`', StringComparison.Ordinal)))
+				{
+					fenceChar = trimmed[0];
+					fenceLength = runLength;
+					fenced[i] = true;
+				}
+
+				continue;
+			}
+
+			fenced[i] = true;
+			if (trimmed.Length >= fenceLength && trimmed[0] == fenceChar
+				&& CountLeadingRun(trimmed) == trimmed.Length)
+			{
+				fenceLength = 0;
+			}
+		}
+
+		return fenced;
+	}
+
+	private static int CountLeadingRun(string text)
+	{
+		if (text.Length == 0 || text[0] is not ('`' or '~'))
+		{
+			return 0;
+		}
+
+		int length = 1;
+		while (length < text.Length && text[length] == text[0])
+		{
+			length++;
+		}
+
+		return length;
 	}
 
 	private static char GetListMarkerStyle(Dictionary<string, JsonElement>? config)
@@ -326,6 +397,9 @@ internal static partial class MarkdownLint
 
 		return true;
 	}
+
+	[GeneratedRegex(@"^ {0,3}([-*_])( *\1){2,} *$")]
+	private static partial Regex ThematicBreakRegex();
 
 	[GeneratedRegex(@"//.*?(\r?\n|$)")]
 	private static partial Regex RemoveLineCommentsRegex();
