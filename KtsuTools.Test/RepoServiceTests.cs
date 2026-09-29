@@ -420,6 +420,79 @@ public class RepoServiceTests
 	}
 
 	[TestMethod]
+	public void DiscoverSolutionFilesKeepsASiblingWithASharedPrefix()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_discover_prefix_{Guid.NewGuid():N}");
+		string repoSln = Path.Join(root, "Repo", "Repo.sln");
+		string toolsSln = Path.Join(root, "RepoTools", "RepoTools.sln");
+
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(repoSln)!);
+			Directory.CreateDirectory(Path.GetDirectoryName(toolsSln)!);
+			File.WriteAllText(repoSln, string.Empty);
+			File.WriteAllText(toolsSln, string.Empty);
+
+			List<string> solutions = RepoService.DiscoverSolutionFiles(root);
+
+			CollectionAssert.AreEquivalent(new[] { repoSln, toolsSln }, solutions, "'RepoTools' is a sibling of 'Repo', not nested in it.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public void DiscoverSolutionFilesFindsSlnxAndSkipsNestedSolutions()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_discover_slnx_{Guid.NewGuid():N}");
+		string slnx = Path.Join(root, "Repo", "Repo.slnx");
+		string nested = Path.Join(root, "Repo", "sub", "Nested.slnx");
+		string notASolution = Path.Join(root, "Other", "Other.slnbak");
+
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(nested)!);
+			Directory.CreateDirectory(Path.GetDirectoryName(notASolution)!);
+			File.WriteAllText(slnx, string.Empty);
+			File.WriteAllText(nested, string.Empty);
+			File.WriteAllText(notASolution, string.Empty);
+
+			List<string> solutions = RepoService.DiscoverSolutionFiles(root);
+
+			CollectionAssert.AreEquivalent(new[] { slnx }, solutions);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public void DiscoverSolutionFilesKeepsOneSolutionPerFolderPreferringSlnx()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_discover_both_{Guid.NewGuid():N}");
+		string sln = Path.Join(root, "Repo", "Repo.sln");
+		string slnx = Path.Join(root, "Repo", "Repo.slnx");
+
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(sln)!);
+			File.WriteAllText(sln, string.Empty);
+			File.WriteAllText(slnx, string.Empty);
+
+			List<string> solutions = RepoService.DiscoverSolutionFiles(root);
+
+			CollectionAssert.AreEquivalent(new[] { slnx }, solutions, "A bare 'dotnet build' in a folder with two solutions is ambiguous.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
 	public void GroupSolutionsByRepositoryReportsSolutionsNoRepositoryContains()
 	{
 		string root = Path.Join(Path.GetTempPath(), "ktsu_group_orphan");
