@@ -68,7 +68,7 @@ public class FileDedupeService
 			return new DedupePlan([], [], []);
 		}
 
-		string[] files = Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+		ReadOnlyCollection<string> files = EnumerateRegularFiles(root);
 
 		ConcurrentDictionary<string, ConcurrentBag<(string Path, long Size)>> byHash = new();
 
@@ -100,6 +100,25 @@ public class FileDedupeService
 		}
 
 		return new DedupePlan(groups, keepers, removals);
+	}
+
+	/// <summary>
+	/// Lists the regular files under <paramref name="root"/>. Symbolic links and other reparse
+	/// points are skipped, and directory links are not descended into: a link hashes the same as
+	/// its target, so keeping it in the scan would put the only real copy of a file up for deletion.
+	/// </summary>
+	/// <param name="root">The directory to scan.</param>
+	/// <returns>The full paths of the regular files found.</returns>
+	public static ReadOnlyCollection<string> EnumerateRegularFiles(string root)
+	{
+		EnumerationOptions options = new()
+		{
+			RecurseSubdirectories = true,
+			AttributesToSkip = FileAttributes.ReparsePoint,
+			IgnoreInaccessible = true,
+		};
+
+		return new([.. Directory.EnumerateFiles(root, "*", options).Where(file => new FileInfo(file).LinkTarget is null)]);
 	}
 
 	/// <summary>

@@ -31,7 +31,7 @@ public sealed class DedupStatsCommand(FileDedupeService dedupeService) : AsyncCo
 		AnsiConsole.MarkupLine($"[bold]Dedup stats[/] - {path.ToString().EscapeMarkup()}");
 
 		int filesScanned = Directory.Exists(path.ToString())
-			? Directory.GetFiles(path.ToString(), "*", SearchOption.AllDirectories).Length
+			? FileDedupeService.EnumerateRegularFiles(path.ToString()).Count
 			: 0;
 
 		DedupePlan plan = await dedupeService.PlanAsync(path, scope.Token).ConfigureAwait(false);
