@@ -191,9 +191,13 @@ internal static class SyncGit
 					.Select(e => Normalize(Path.Join(repoRoot, e.Path.ToString()))),
 				PathComparer);
 
+			// Git reports the root with every symlink resolved, so a candidate reached through a
+			// linked path has to be resolved too before the two spellings can be compared.
+			string canonicalDirectory = CanonicalDirectoryOf(directoryPath);
+
 			foreach (string filePath in expandedFilesToSync
-				.Select(name => Path.Join(directoryPath, name))
-				.Where(candidate => changed.Contains(Normalize(candidate))))
+				.Where(name => changed.Contains(Normalize(Path.Join(canonicalDirectory, name))))
+				.Select(name => Path.Join(directoryPath, name)))
 			{
 				commitFiles.Add(filePath);
 				AnsiConsole.MarkupLine($"[yellow]{filePath.EscapeMarkup()}[/] has outstanding changes");
@@ -218,8 +222,10 @@ internal static class SyncGit
 		}
 
 		GitRepository repo = await OpenAsync(repoRoot).ConfigureAwait(false);
-		string relativeFilePath = filePath.Replace(repoRoot, "", StringComparison.Ordinal);
-		RelativeFilePath stagedPath = RelativeFilePath.Create<RelativeFilePath>(relativeFilePath.TrimStart('/', '\\'));
+		// The root comes back from git with symlinks resolved, so the file has to be resolved the
+		// same way or a linked path is not inside the root it belongs to.
+		string relativeFilePath = NormalizeSeparators(Path.GetRelativePath(repoRoot, CanonicalFilePathOf(filePath)));
+		RelativeFilePath stagedPath = RelativeFilePath.Create<RelativeFilePath>(relativeFilePath);
 
 		// git commit takes the whole index, so anything the user already staged would go into the
 		// sync's commit under the sync's author, and could then be pushed as the sync's own work.
@@ -427,6 +433,52 @@ internal static class SyncGit
 		catch (ArgumentException)
 		{
 			return null;
+		}
+	}
+
+	/// <summary>
+	/// A file path with every symlinked directory above it resolved. The file itself is left as it
+	/// is, since a link committed to a repository is the link and not what it points at.
+	/// </summary>
+	/// <param name="filePath">The absolute file path to resolve.</param>
+	/// <returns>The path as git would spell it.</returns>
+	private static string CanonicalFilePathOf(string filePath)
+	{
+		string fullPath = Path.GetFullPath(filePath);
+		return Path.Join(CanonicalDirectoryOf(Path.GetDirectoryName(fullPath) ?? fullPath), Path.GetFileName(fullPath));
+	}
+
+	/// <summary>
+	/// Resolves a directory path one component at a time, since only a path that is itself a link
+	/// resolves, and on macOS it is the /tmp or /var prefix that is the link rather than the
+	/// directory below it.
+	/// </summary>
+	/// <param name="directory">The absolute directory path to resolve.</param>
+	/// <returns>The path with every symlinked component replaced by its target.</returns>
+	internal static string CanonicalDirectoryOf(string directory)
+	{
+		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+
+		// The root ("/" or "C:\") is never a link, and asking its parent for one would not terminate.
+		if (Path.GetDirectoryName(fullPath) is not string parent)
+		{
+			return fullPath;
+		}
+
+		string resolved = Path.Join(CanonicalDirectoryOf(parent), Path.GetFileName(fullPath));
+
+		try
+		{
+			// A target can itself sit below a link, so it is resolved again rather than trusted.
+			return Directory.ResolveLinkTarget(resolved, returnFinalTarget: true) is FileSystemInfo target
+				? CanonicalDirectoryOf(target.FullName)
+				: resolved;
+		}
+		catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+		{
+			// A link loop or an unreadable link has no real path to give; its own spelling is the
+			// best there is, and failing to match it is no worse than before resolving anything.
+			return resolved;
 		}
 	}
 
