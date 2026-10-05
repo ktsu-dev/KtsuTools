@@ -1,6 +1,7 @@
-## v1.10.8-pre.1 (prerelease)
+## v1.10.8 (patch)
 
 Changes since v1.10.7:
 
-- Bump Polyfill from 11.4.1 to 11.4.3 ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- Cover the link-loop path in CanonicalDirectoryOf ([@Claude](https://github.com/Claude))
+- Find and commit synced files reached through a symlinked path [patch] ([@Claude](https://github.com/Claude))
 
