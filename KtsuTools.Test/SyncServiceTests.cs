@@ -447,6 +447,38 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void CanonicalDirectoryOfLeavesALinkLoopAsItIsRatherThanThrowing()
+	{
+		string root = CreateCanonicalTempDirectory("ktsu_sync_loop");
+		string first = Path.Join(root, "first");
+		string second = Path.Join(root, "second");
+		try
+		{
+			Directory.CreateSymbolicLink(first, second);
+			Directory.CreateSymbolicLink(second, first);
+
+			Assert.AreEqual(first, SyncGit.CanonicalDirectoryOf(first), "A loop has no real path, so its own spelling stands.");
+		}
+		finally
+		{
+			// Windows removes a directory link as a directory, everywhere else as a file.
+			foreach (string link in new[] { first, second })
+			{
+				if (OperatingSystem.IsWindows())
+				{
+					Directory.Delete(link);
+				}
+				else
+				{
+					File.Delete(link);
+				}
+			}
+
+			DeleteGitTree(root);
+		}
+	}
+
+	[TestMethod]
 	public async Task SwitchReposToBranchSkipsARepositoryWithNothingToBranchFrom()
 	{
 		using TempGitRepo committed = TempGitRepo.WithInitialCommit();

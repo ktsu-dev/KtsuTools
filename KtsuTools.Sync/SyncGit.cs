@@ -445,9 +445,7 @@ internal static class SyncGit
 	private static string CanonicalFilePathOf(string filePath)
 	{
 		string fullPath = Path.GetFullPath(filePath);
-		return Path.GetDirectoryName(fullPath) is string directory
-			? Path.Join(CanonicalDirectoryOf(directory), Path.GetFileName(fullPath))
-			: fullPath;
+		return Path.Join(CanonicalDirectoryOf(Path.GetDirectoryName(fullPath) ?? fullPath), Path.GetFileName(fullPath));
 	}
 
 	/// <summary>
@@ -457,7 +455,7 @@ internal static class SyncGit
 	/// </summary>
 	/// <param name="directory">The absolute directory path to resolve.</param>
 	/// <returns>The path with every symlinked component replaced by its target.</returns>
-	private static string CanonicalDirectoryOf(string directory)
+	internal static string CanonicalDirectoryOf(string directory)
 	{
 		string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
 
@@ -476,12 +474,10 @@ internal static class SyncGit
 				? CanonicalDirectoryOf(target.FullName)
 				: resolved;
 		}
-		catch (IOException)
+		catch (Exception e) when (e is IOException or UnauthorizedAccessException)
 		{
-			return resolved;
-		}
-		catch (UnauthorizedAccessException)
-		{
+			// A link loop or an unreadable link has no real path to give; its own spelling is the
+			// best there is, and failing to match it is no worse than before resolving anything.
 			return resolved;
 		}
 	}
