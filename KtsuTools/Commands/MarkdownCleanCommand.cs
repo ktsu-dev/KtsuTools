@@ -31,7 +31,7 @@ public sealed class MarkdownCleanCommand(MarkdownService markdownService) : Asyn
 		public bool StandardizeLineEndings { get; init; } = true;
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		AnsiConsole.MarkupLine("[bold]Markdown Clean[/]");

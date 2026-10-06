@@ -19,7 +19,7 @@ public sealed class MergeBatchDeleteCommand(MergeBatchService batchService) : As
 		public required string Name { get; init; }
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();

@@ -19,7 +19,7 @@ public sealed class ProjectCommand(ProjectService projectService) : AsyncCommand
 		public string Owner { get; init; } = "ktsu-dev";
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 
