@@ -404,6 +404,81 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public async Task SyncFindsAndCommitsFilesReachedThroughASymlinkedPath()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string linkParent = CreateCanonicalTempDirectory("ktsu_sync_link");
+		string linkedRoot = Path.Join(linkParent, "repo");
+		try
+		{
+			// Git resolves the link and reports the real root, the way every workspace under /tmp or
+			// /var on macOS is reported, while the scan keeps the linked spelling it was given.
+			Directory.CreateSymbolicLink(linkedRoot, repo.Root);
+			string originalTip = repo.HeadSha;
+			repo.Write("shared.txt", "synced content");
+
+			Collection<string> changed = await SyncGit.FindChangedFilesAsync(
+				new HashSet<string>([linkedRoot], StringComparer.Ordinal),
+				new HashSet<string>(["shared.txt"], StringComparer.Ordinal)).ConfigureAwait(false);
+
+			CollectionAssert.AreEqual(
+				new[] { Path.Join(linkedRoot, "shared.txt") },
+				changed.ToArray(),
+				"A changed file must be reported whichever spelling of its directory the scan used.");
+
+			_ = await SyncService.CommitFilesAsync(changed, string.Empty).ConfigureAwait(false);
+
+			Assert.AreNotEqual(originalTip, repo.HeadSha, "The file reached through the link must be committed.");
+			Assert.AreEqual(
+				"shared.txt",
+				TestGit.Run(repo.Root, "log", "-1", "--name-only", "--format=").Trim(),
+				"The commit must stage the file at its path inside the repository.");
+		}
+		finally
+		{
+			// Removing the link first keeps the cleanup from reaching through it into the repository.
+			if (Directory.Exists(linkedRoot))
+			{
+				Directory.Delete(linkedRoot);
+			}
+
+			DeleteGitTree(linkParent);
+		}
+	}
+
+	[TestMethod]
+	public void CanonicalDirectoryOfLeavesALinkLoopAsItIsRatherThanThrowing()
+	{
+		string root = CreateCanonicalTempDirectory("ktsu_sync_loop");
+		string first = Path.Join(root, "first");
+		string second = Path.Join(root, "second");
+		try
+		{
+			Directory.CreateSymbolicLink(first, second);
+			Directory.CreateSymbolicLink(second, first);
+
+			Assert.AreEqual(first, SyncGit.CanonicalDirectoryOf(first), "A loop has no real path, so its own spelling stands.");
+		}
+		finally
+		{
+			// Windows removes a directory link as a directory, everywhere else as a file.
+			foreach (string link in new[] { first, second })
+			{
+				if (OperatingSystem.IsWindows())
+				{
+					Directory.Delete(link);
+				}
+				else
+				{
+					File.Delete(link);
+				}
+			}
+
+			DeleteGitTree(root);
+		}
+	}
+
+	[TestMethod]
 	public async Task SwitchReposToBranchSkipsARepositoryWithNothingToBranchFrom()
 	{
 		using TempGitRepo committed = TempGitRepo.WithInitialCommit();
