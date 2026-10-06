@@ -132,7 +132,10 @@ internal static class SyncGit
 	/// </summary>
 	/// <param name="repoRoot">The repository working directory.</param>
 	/// <param name="baseTipSha">The tip the sync branch was based on.</param>
-	/// <returns>The author name of each commit added on top of the base, newest first.</returns>
+	/// <returns>
+	/// The author name of each commit added on top of the base, newest first, and empty for a commit
+	/// git recorded no name on, so such a commit still counts against the sync having made them all.
+	/// </returns>
 	internal static async Task<IReadOnlyList<string>> CommitAuthorsSinceBaseAsync(string repoRoot, string baseTipSha)
 	{
 		GitRepository repo = await OpenAsync(repoRoot).ConfigureAwait(false);
@@ -146,7 +149,7 @@ internal static class SyncGit
 			await repo.Log().ForRevision(revision).TryExecuteAsync().ConfigureAwait(false);
 
 		return commits is { Success: true, Value: not null }
-			? [.. commits.Value.Select(c => c.Author.Name.ToString())]
+			? [.. commits.Value.Select(c => c.Author.Name?.ToString() ?? string.Empty)]
 			: [];
 	}
 
@@ -319,7 +322,7 @@ internal static class SyncGit
 				await repo.Log().Take(aheadBy).TryExecuteAsync().ConfigureAwait(false);
 
 			bool canPush = commits is { Success: true, Value: not null }
-				&& commits.Value.All(commit => commit.Author.Name.ToString() == CommitAuthorName);
+				&& commits.Value.All(commit => commit.Author.Name?.ToString() == CommitAuthorName);
 
 			if (canPush)
 			{
