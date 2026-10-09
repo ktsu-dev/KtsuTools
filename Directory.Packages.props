@@ -35,6 +35,13 @@
     <PackageVersion Include="ktsu.Semantics.Paths" Version="5.11.3" />
     <PackageVersion Include="ktsu.Semantics.Strings" Version="5.11.3" />
     <PackageVersion Include="ktsu.CredentialCache" Version="1.3.62" />
+    <!-- Not used directly. ktsu.GitIntegration (through 4.1.9) depends on
+         ktsu.Essentials.FileSystemProviders.Native 2.0.0, built against
+         Testably.Abstractions.FileSystem.Interface 10.0.0. ktsu.AppDataStorage 1.18.1 raises that
+         interface to 10.4.0, which adds IFileSystem.RandomAccess, so the 2.0.0 provider fails to
+         load with TypeLoadException. 2.10.7 is built against 10.4.0. Drop this once GitIntegration
+         depends on a matching Essentials. -->
+    <PackageVersion Include="ktsu.Essentials.FileSystemProviders.Native" Version="2.10.7" />
     <!-- SDK-required packages -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
     <PackageVersion Include="Microsoft.SourceLink.AzureRepos.Git" Version="10.0.401" />
