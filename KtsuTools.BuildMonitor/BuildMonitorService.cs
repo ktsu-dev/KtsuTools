@@ -78,7 +78,7 @@ public class BuildMonitorService(IGitHubService gitHubService)
 				{
 				}
 
-				ticker.Stop();
+				await ticker.StopAsync().ConfigureAwait(false);
 			}).ConfigureAwait(false);
 	}
 
