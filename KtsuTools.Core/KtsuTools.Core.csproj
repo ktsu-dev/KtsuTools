@@ -14,6 +14,8 @@
     <PackageReference Include="Spectre.Console.Ansi" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="ktsu.GitIntegration" />
+    <!-- Lifts GitIntegration's provider to one built against the Testably interface in use; see Directory.Packages.props -->
+    <PackageReference Include="ktsu.Essentials.FileSystemProviders.Native" />
     <PackageReference Include="Octokit" />
     <PackageReference Include="ktsu.AppDataStorage" />
     <PackageReference Include="ktsu.CredentialCache" />
