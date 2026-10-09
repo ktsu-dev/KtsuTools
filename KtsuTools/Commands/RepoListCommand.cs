@@ -37,7 +37,7 @@ public sealed class RepoListCommand(RepoService repoService) : AsyncCommand<Repo
 				: ValidationResult.Error($"Unknown format '{Format}'. Use 'table' or 'json'.");
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
