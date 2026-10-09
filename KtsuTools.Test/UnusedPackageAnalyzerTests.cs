@@ -107,6 +107,26 @@ public class UnusedPackageAnalyzerTests
 	}
 
 	[TestMethod]
+	public void DoesNotTreatAOneSegmentRootNamespaceAsAParent()
+	{
+		// "using System;" is in almost every file, so it must not vouch for every System.* package.
+		WriteProject(
+			"Sample",
+			"""
+			    <PackageReference Include="System.CommandLine" Version="2.0.0" />
+			    <PackageReference Include="System.Text.Json" Version="9.0.0" />
+			    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+			""",
+			("Program.cs", "using System;\nusing Microsoft;\nusing Microsoft.Extensions.Logging;\n\nnamespace Sample; internal static class Program { private static void Main() => Console.WriteLine(); }"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "System.CommandLine").Usage);
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "System.Text.Json").Usage);
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Microsoft.Extensions.Logging.Abstractions").Usage);
+	}
+
+	[TestMethod]
 	public void TreatsAGluedIdSuffixAsUse()
 	{
 		// LibreHardwareMonitorLib ships the LibreHardwareMonitor.* namespaces.

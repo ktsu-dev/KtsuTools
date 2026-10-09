@@ -317,9 +317,11 @@ internal static partial class UnusedPackageAnalyzer
 		/// namespace counts when it equals the package id, sits beneath it
 		/// (<c>Foo.Bar</c> for package <c>Foo</c>), or is a parent of it
 		/// (<c>Microsoft.Extensions.Logging</c> for package
-		/// <c>Microsoft.Extensions.Logging.Abstractions</c>). Failing that, the raw source is
-		/// checked for the id itself, which catches fully-qualified use and
-		/// <c>$(Pkg...)</c>-style references.
+		/// <c>Microsoft.Extensions.Logging.Abstractions</c>). A parent namespace has to have at
+		/// least two segments, because a root such as <c>System</c> or <c>Microsoft</c> is
+		/// imported almost everywhere and would otherwise vouch for every <c>System.*</c> or
+		/// <c>Microsoft.*</c> package. Failing that, the raw source is checked for the id itself,
+		/// which catches fully-qualified use and <c>$(Pkg...)</c>-style references.
 		/// </remarks>
 		internal bool References(string packageId)
 		{
@@ -329,7 +331,7 @@ internal static partial class UnusedPackageAnalyzer
 				{
 					if (string.Equals(ns, candidate, StringComparison.OrdinalIgnoreCase)
 						|| ns.StartsWith(candidate + ".", StringComparison.OrdinalIgnoreCase)
-						|| candidate.StartsWith(ns + ".", StringComparison.OrdinalIgnoreCase))
+						|| (ns.Contains('.', StringComparison.Ordinal) && candidate.StartsWith(ns + ".", StringComparison.OrdinalIgnoreCase)))
 					{
 						return true;
 					}
