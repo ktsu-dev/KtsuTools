@@ -123,7 +123,7 @@ public class MemFragService
 					{
 					}
 
-					ticker.Stop();
+					await ticker.StopAsync().ConfigureAwait(false);
 				}).ConfigureAwait(false);
 		}
 
