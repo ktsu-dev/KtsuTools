@@ -7,4 +7,18 @@
     <PackageReference Include="Microsoft.SourceLink.AzureRepos.Git" PrivateAssets="all" />
     <PackageReference Include="Polyfill" PrivateAssets="all" />
   </ItemGroup>
+  <!--
+    SixLabors.ImageSharp 3.1.12 is the last 3.1.x release and carries these advisories; no 3.1.x
+    release patches them. The fix is 4.x, which moved to a split licence, so the package is pinned to
+    3.1.x deliberately and these are accepted until ImageSharp is upgraded or replaced. Each advisory
+    is named individually so a new one still fails the restore. Revisit this list on every ImageSharp
+    bump, and keep it the only place these are declared: a second copy fails restore with NU1508.
+  -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j3p4-wp97-rph4" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j9gm-c75j-xc9q" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-jjfr-hcj7-qf5w" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-gwg2-r3hj-4w44" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-wmxv-xphr-5c9g" />
+  </ItemGroup>
 </Project>
