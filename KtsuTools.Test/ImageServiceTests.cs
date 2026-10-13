@@ -122,6 +122,64 @@ public class ImageServiceTests
 		}
 	}
 
+	[TestMethod]
+	public async Task ProcessAsyncNamesTheOutputOfAJpegInputPngAndLeavesTheOriginalInPlace()
+	{
+		string root = CreateTempDirectory();
+		try
+		{
+			string photo = Path.Combine(root, "photo.jpg");
+			using (Image<Rgba32> jpeg = new(8, 6, new Rgba32(255, 255, 255, 255)))
+			{
+				await jpeg.SaveAsJpegAsync(photo).ConfigureAwait(false);
+			}
+
+			byte[] original = await File.ReadAllBytesAsync(photo).ConfigureAwait(false);
+
+			// Output into the input directory: the case where the original used to be overwritten.
+			int processed = await ProcessAsync(root, root).ConfigureAwait(false);
+
+			Assert.AreEqual(1, processed);
+			CollectionAssert.AreEqual(original, await File.ReadAllBytesAsync(photo).ConfigureAwait(false), "The JPEG input must not be overwritten.");
+			string png = Path.Combine(root, "photo.png");
+			Assert.IsTrue(File.Exists(png), "A PNG output must carry the .png extension.");
+			Assert.IsInstanceOfType<SixLabors.ImageSharp.Formats.Png.PngFormat>(await Image.DetectFormatAsync(png).ConfigureAwait(false));
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ProcessAsyncSkipsAnInputWhoseOutputNameIsAlreadyTaken()
+	{
+		string root = CreateTempDirectory();
+		try
+		{
+			string input = Path.Combine(root, "in");
+			string output = Path.Combine(root, "out");
+			Directory.CreateDirectory(input);
+			using (Image<Rgba32> jpeg = new(5, 5, new Rgba32(255, 255, 255, 255)))
+			{
+				await jpeg.SaveAsJpegAsync(Path.Combine(input, "icon.jpg")).ConfigureAwait(false);
+			}
+
+			SavePng(Path.Combine(input, "icon.png"), width: 10, height: 10, new Rectangle(1, 1, 3, 3));
+
+			int processed = await ProcessAsync(input, output).ConfigureAwait(false);
+
+			Assert.AreEqual(1, processed, "Only one of two inputs that map to icon.png may be written.");
+			Assert.AreEqual("icon.png", Path.GetFileName(Directory.GetFiles(output).Single()));
+			using Image<Rgba32> result = await Image.LoadAsync<Rgba32>(Path.Combine(output, "icon.png")).ConfigureAwait(false);
+			Assert.AreEqual(5, result.Width, "The first input in name order (icon.jpg) keeps the name; icon.png must not overwrite it.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	private static Task<int> ProcessAsync(string input, string output) =>
 		ImageService.ProcessAsync(
 			AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(input),
