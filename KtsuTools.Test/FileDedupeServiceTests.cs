@@ -114,16 +114,16 @@ public class FileDedupeServiceTests
 	[TestMethod]
 	public async Task DedupeLeavesEmptyFilesAlone()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_dedup_empty_{Guid.NewGuid():N}");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_dedup_empty_{Guid.NewGuid():N}");
 		Directory.CreateDirectory(root);
 		try
 		{
 			string[] empties =
 			[
-				Path.Combine(root, "pkg", "__init__.py"),
-				Path.Combine(root, "pkg", "a", "__init__.py"),
-				Path.Combine(root, "pkg", "b", "__init__.py"),
-				Path.Combine(root, "logs", ".gitkeep"),
+				Path.Join(root, "pkg", "__init__.py"),
+				Path.Join(root, "pkg", "a", "__init__.py"),
+				Path.Join(root, "pkg", "b", "__init__.py"),
+				Path.Join(root, "logs", ".gitkeep"),
 			];
 			foreach (string empty in empties)
 			{
@@ -131,8 +131,8 @@ public class FileDedupeServiceTests
 				await File.WriteAllBytesAsync(empty, []).ConfigureAwait(false);
 			}
 
-			string keeper = Path.Combine(root, "a.txt");
-			string duplicate = Path.Combine(root, "aaa.txt");
+			string keeper = Path.Join(root, "a.txt");
+			string duplicate = Path.Join(root, "aaa.txt");
 			await File.WriteAllTextAsync(keeper, "same").ConfigureAwait(false);
 			await File.WriteAllTextAsync(duplicate, "same").ConfigureAwait(false);
 
