@@ -62,6 +62,20 @@ public class MergeServiceTests
 	}
 
 	[TestMethod]
+	[DataRow(BlockChoice.UseVersion1, "foo=1")]
+	[DataRow(BlockChoice.UseVersion2, "foo=2")]
+	[DataRow(BlockChoice.UseBoth, "foo=1", "foo=2")]
+	[DataRow(BlockChoice.Skip, "foo=1")]
+	public void ApplyBlockChoiceResolvesASingleLineConflict(BlockChoice choice, params string[] expected)
+	{
+		List<string> merged = ["line 4"];
+
+		MergeService.ApplyBlockChoice(merged, ["foo=1"], ["foo=2"], choice);
+
+		CollectionAssert.AreEqual(new List<string> { "line 4" }.Concat(expected).ToList(), merged, $"{choice} resolved the block wrongly.");
+	}
+
+	[TestMethod]
 	public void DiffStyleParserAcceptsCanonicalNames()
 	{
 		Assert.IsTrue(DiffStyleParser.TryParse("side-by-side", out DiffStyle side));

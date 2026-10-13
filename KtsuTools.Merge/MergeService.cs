@@ -35,7 +35,7 @@ public enum BlockChoice
 	/// <summary>Use both versions.</summary>
 	UseBoth,
 
-	/// <summary>Skip this block.</summary>
+	/// <summary>Skip this block, leaving it as version 1 has it.</summary>
 	Skip,
 }
 
@@ -393,9 +393,23 @@ public class MergeService
 				.Title("Choose resolution:")
 				.AddChoices(BlockChoice.UseVersion1, BlockChoice.UseVersion2, BlockChoice.UseBoth, BlockChoice.Skip));
 
+		ApplyBlockChoice(mergedLines, deletedLines, insertedLines, choice);
+	}
+
+	/// <summary>
+	/// Appends the lines a resolved conflict block contributes to the merged result.
+	/// </summary>
+	/// <param name="mergedLines">The merged result so far.</param>
+	/// <param name="deletedLines">The block as version 1 has it.</param>
+	/// <param name="insertedLines">The block as version 2 has it.</param>
+	/// <param name="choice">How the block was resolved.</param>
+	internal static void ApplyBlockChoice(List<string> mergedLines, string[] deletedLines, string[] insertedLines, BlockChoice choice)
+	{
 		switch (choice)
 		{
 			case BlockChoice.UseVersion1:
+			case BlockChoice.Skip:
+				// Skipping leaves the block as it is in version 1; it must not drop both sides.
 				mergedLines.AddRange(deletedLines);
 				break;
 			case BlockChoice.UseVersion2:
@@ -404,8 +418,6 @@ public class MergeService
 			case BlockChoice.UseBoth:
 				mergedLines.AddRange(deletedLines);
 				mergedLines.AddRange(insertedLines);
-				break;
-			case BlockChoice.Skip:
 				break;
 		}
 	}
