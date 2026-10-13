@@ -112,6 +112,52 @@ public class FileDedupeServiceTests
 	}
 
 	[TestMethod]
+	public async Task DedupeLeavesEmptyFilesAlone()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"ktsu_dedup_empty_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			string[] empties =
+			[
+				Path.Combine(root, "pkg", "__init__.py"),
+				Path.Combine(root, "pkg", "a", "__init__.py"),
+				Path.Combine(root, "pkg", "b", "__init__.py"),
+				Path.Combine(root, "logs", ".gitkeep"),
+			];
+			foreach (string empty in empties)
+			{
+				Directory.CreateDirectory(Path.GetDirectoryName(empty)!);
+				await File.WriteAllBytesAsync(empty, []).ConfigureAwait(false);
+			}
+
+			string keeper = Path.Combine(root, "a.txt");
+			string duplicate = Path.Combine(root, "aaa.txt");
+			await File.WriteAllTextAsync(keeper, "same").ConfigureAwait(false);
+			await File.WriteAllTextAsync(duplicate, "same").ConfigureAwait(false);
+
+			FileDedupeService service = new();
+			AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+			DedupePlan plan = await service.PlanAsync(path).ConfigureAwait(false);
+
+			Assert.AreEqual(1, plan.Groups.Count, "Only the real duplicate pair forms a group; empty files share no content.");
+			Assert.AreEqual(duplicate, plan.Removals.Single());
+
+			Assert.AreEqual(1, service.DeleteRedundant(plan));
+			Assert.IsTrue(File.Exists(keeper));
+			Assert.IsFalse(File.Exists(duplicate));
+			foreach (string empty in empties)
+			{
+				Assert.IsTrue(File.Exists(empty), $"{empty} must survive dedupe.");
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
 	public async Task DedupeKeepsAFileThatASymlinkPointsAt()
 	{
 		string root = Path.Join(Path.GetTempPath(), $"ktsu_dedup_filelink_{Guid.NewGuid():N}");
