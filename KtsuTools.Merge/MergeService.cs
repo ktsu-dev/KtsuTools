@@ -340,8 +340,20 @@ public class MergeService
 		}
 	}
 
-	private static string InteractiveMerge(string content1, string content2)
+	/// <summary>
+	/// Merges two versions line by line, asking <paramref name="chooseBlock"/> how to resolve each
+	/// block where they differ.
+	/// </summary>
+	/// <param name="content1">Version 1.</param>
+	/// <param name="content2">Version 2.</param>
+	/// <param name="chooseBlock">
+	/// Picks the resolution for a block from its version 1 and version 2 lines. Defaults to asking
+	/// the user.
+	/// </param>
+	/// <returns>The merged content.</returns>
+	internal static string InteractiveMerge(string content1, string content2, Func<string[], string[], BlockChoice>? chooseBlock = null)
 	{
+		chooseBlock ??= PromptForBlockChoice;
 		Differ differ = new();
 		DiffPlex.Model.DiffResult diffResult = differ.CreateLineDiffs(content1, content2, false);
 
@@ -364,7 +376,7 @@ public class MergeService
 			string[] deletedLines = [.. lines1.Skip(block.DeleteStartA).Take(block.DeleteCountA)];
 			string[] insertedLines = [.. lines2.Skip(block.InsertStartB).Take(block.InsertCountB)];
 
-			ResolveConflictBlock(mergedLines, deletedLines, insertedLines);
+			ResolveConflictBlock(mergedLines, deletedLines, insertedLines, chooseBlock);
 			currentLine1 = block.DeleteStartA + block.DeleteCountA;
 		}
 
@@ -382,19 +394,21 @@ public class MergeService
 		}
 	}
 
-	private static void ResolveConflictBlock(List<string> mergedLines, string[] deletedLines, string[] insertedLines)
+	private static void ResolveConflictBlock(List<string> mergedLines, string[] deletedLines, string[] insertedLines, Func<string[], string[], BlockChoice> chooseBlock)
 	{
 		AnsiConsole.Write(new Rule("[yellow]Conflict[/]").LeftJustified());
 		DisplayConflictSide(deletedLines, "red", "Version 1:");
 		DisplayConflictSide(insertedLines, "green", "Version 2:");
 
-		BlockChoice choice = AnsiConsole.Prompt(
+		BlockChoice choice = chooseBlock(deletedLines, insertedLines);
+		ApplyBlockChoice(mergedLines, deletedLines, insertedLines, choice);
+	}
+
+	private static BlockChoice PromptForBlockChoice(string[] deletedLines, string[] insertedLines) =>
+		AnsiConsole.Prompt(
 			new SelectionPrompt<BlockChoice>()
 				.Title("Choose resolution:")
 				.AddChoices(BlockChoice.UseVersion1, BlockChoice.UseVersion2, BlockChoice.UseBoth, BlockChoice.Skip));
-
-		ApplyBlockChoice(mergedLines, deletedLines, insertedLines, choice);
-	}
 
 	/// <summary>
 	/// Appends the lines a resolved conflict block contributes to the merged result.
