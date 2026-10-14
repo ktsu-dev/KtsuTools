@@ -124,6 +124,8 @@ public class FileDedupeService
 	/// <summary>
 	/// Hashes a single file and records it under its SHA256. Files that cannot be read
 	/// (locked, deleted mid-scan, access denied) are skipped rather than failing the scan.
+	/// Empty files are skipped too: they all hash alike, but they matter for existing
+	/// (<c>__init__.py</c>, <c>.gitkeep</c>, marker files) and removing one saves nothing.
 	/// </summary>
 	private static async ValueTask HashFileIntoAsync(
 		string file,
@@ -132,6 +134,11 @@ public class FileDedupeService
 	{
 		try
 		{
+			if (new FileInfo(file).Length == 0)
+			{
+				return;
+			}
+
 			FileStream stream = File.OpenRead(file);
 			await using (stream.ConfigureAwait(false))
 			{
