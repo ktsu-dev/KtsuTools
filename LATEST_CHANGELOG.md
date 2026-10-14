@@ -1,6 +1,10 @@
-## v1.10.11-pre.1 (prerelease)
+## v1.10.11 (patch)
 
 Changes since v1.10.10:
 
-- Bump MSTest.Sdk from 4.4.1 to 4.5.1 ([@dependabot[bot]](https://github.com/dependabot[bot]))
+- Pass svn-migrate's URL, target and authors file to git intact [patch] (matt-edmondson)
+- Test a skipped block through InteractiveMerge (Claude)
+- Build the new image tests' paths with Path.Join (Claude)
+- Keep version 1 when a merge block is skipped [patch] (Claude)
+- Write image process output as .png and never overwrite one input with another [patch] (Claude)
 
