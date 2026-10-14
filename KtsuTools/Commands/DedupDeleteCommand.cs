@@ -26,7 +26,7 @@ public sealed class DedupDeleteCommand(FileDedupeService dedupeService) : AsyncC
 		public bool AssumeYes { get; init; }
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();

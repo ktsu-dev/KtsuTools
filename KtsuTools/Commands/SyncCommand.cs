@@ -103,7 +103,7 @@ public sealed class SyncCommand(SyncService syncService, SyncConfigService confi
 	}
 
 	/// <inheritdoc/>
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 

@@ -17,7 +17,7 @@ public sealed class MemFragScanCommand(MemFragService memFragService) : AsyncCom
 		public required int ProcessId { get; init; }
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		return await memFragService.ScanAsync(settings.ProcessId, cancellationToken).ConfigureAwait(false);

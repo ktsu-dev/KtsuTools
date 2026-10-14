@@ -43,7 +43,7 @@ public abstract class RepoWorkspaceCommand(RepoService repoService) : AsyncComma
 	protected abstract Task<int> RunAsync(AbsoluteDirectoryPath path, CancellationToken ct);
 
 	/// <inheritdoc/>
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();
