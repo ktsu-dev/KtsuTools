@@ -1,7 +1,7 @@
-## v1.10.12 (patch)
+## v1.10.13-pre.1 (prerelease)
 
-Changes since v1.10.11:
+Changes since v1.10.12:
 
-- Build the empty-file test's paths with Path.Join (Claude)
-- Leave empty files out of dedupe [patch] (Claude)
+- Bump Polyfill from 11.4.3 to 11.4.5 (dependabot[bot])
+- Bump the microsoft group with 4 updates (dependabot[bot])
 
