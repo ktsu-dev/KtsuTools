@@ -1,7 +1,7 @@
-## v1.10.13-pre.1 (prerelease)
+## v1.10.13 (patch)
 
 Changes since v1.10.12:
 
-- Bump Polyfill from 11.4.3 to 11.4.5 (dependabot[bot])
-- Bump the microsoft group with 4 updates (dependabot[bot])
+- Use Path.Join for the .git probe in IsRepoNested (Claude)
+- Stop the nested-repo check at the scan root in sync [patch] (Claude)
 
