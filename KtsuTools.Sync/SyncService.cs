@@ -947,7 +947,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		while (!checkDir.IsRoot)
 		{
 			// A .git file marks a submodule or a worktree, which is a repository of its own.
-			string gitPath = Path.Combine(checkDir.ToString(), ".git");
+			string gitPath = Path.Join(checkDir.ToString(), ".git");
 			if (Directory.Exists(gitPath) || File.Exists(gitPath))
 			{
 				if (foundFirstRepo)
