@@ -409,7 +409,8 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		return
 		[
 			.. EnumerateCandidates(roots, patterns)
-				.Where(file => IsScannable(file, exclusions))
+				.Where(candidate => IsScannable(candidate.File, candidate.Root, exclusions))
+				.Select(candidate => candidate.File)
 				.Distinct(PathComparer)
 		];
 	}
@@ -420,8 +421,8 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// </summary>
 	/// <param name="roots">The absolute directories to scan recursively.</param>
 	/// <param name="patterns">The filename patterns to match.</param>
-	/// <returns>Absolute paths of the matched files.</returns>
-	private static IEnumerable<string> EnumerateCandidates(IReadOnlyList<string> roots, IReadOnlyList<string> patterns)
+	/// <returns>Absolute paths of the matched files, each with the root it was found under.</returns>
+	private static IEnumerable<(string File, string Root)> EnumerateCandidates(IReadOnlyList<string> roots, IReadOnlyList<string> patterns)
 	{
 		foreach (string root in roots)
 		{
@@ -429,7 +430,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			{
 				foreach (string file in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
 				{
-					yield return file;
+					yield return (file, root);
 				}
 			}
 		}
@@ -440,11 +441,12 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// directory and anything inside a repository nested in another repository.
 	/// </summary>
 	/// <param name="file">Absolute path of the matched file.</param>
+	/// <param name="root">The scan root the file was found under.</param>
 	/// <param name="exclusions">The normalized exclusion entries.</param>
 	/// <returns>True when the file belongs in the scan.</returns>
-	private static bool IsScannable(string file, IReadOnlyList<string> exclusions) =>
+	private static bool IsScannable(string file, string root, IReadOnlyList<string> exclusions) =>
 		!IsExcluded(file, exclusions)
-		&& !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath);
+		&& !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath, root);
 
 	/// <summary>
 	/// The form of a matched directory to show. It stays relative while a single workspace is being
@@ -930,16 +932,23 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// Checks if a directory path is inside a nested git repository (a repo inside another repo).
 	/// </summary>
 	/// <param name="directoryPath">The directory path to check.</param>
+	/// <param name="scanRoot">
+	/// The scan root the directory was found under. Only repositories at or below it count, so a repository
+	/// above the workspace (a dotfiles repo at the home directory, say) does not make every repository in it
+	/// nested. When null, the walk goes up to the filesystem root.
+	/// </param>
 	/// <returns>True if the directory is inside a nested git repo.</returns>
-	internal static bool IsRepoNested(AbsoluteDirectoryPath directoryPath)
+	internal static bool IsRepoNested(AbsoluteDirectoryPath directoryPath, string? scanRoot = null)
 	{
+		string? boundary = scanRoot is null ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(scanRoot));
 		AbsoluteDirectoryPath checkDir = directoryPath;
 		bool foundFirstRepo = false;
 
 		while (!checkDir.IsRoot)
 		{
-			string gitDirPath = Path.Combine(checkDir.ToString(), ".git");
-			if (Directory.Exists(gitDirPath))
+			// A .git file marks a submodule or a worktree, which is a repository of its own.
+			string gitPath = Path.Combine(checkDir.ToString(), ".git");
+			if (Directory.Exists(gitPath) || File.Exists(gitPath))
 			{
 				if (foundFirstRepo)
 				{
@@ -947,6 +956,11 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 				}
 
 				foundFirstRepo = true;
+			}
+
+			if (boundary is not null && PathComparer.Equals(Path.TrimEndingDirectorySeparator(checkDir.ToString()), boundary))
+			{
+				break;
 			}
 
 			checkDir = checkDir.Parent;
