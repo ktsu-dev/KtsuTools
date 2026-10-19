@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Core.UI;
 using KtsuTools.MemFrag;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 public sealed class MemFragMonitorCommand(MemFragService memFragService) : AsyncCommand<MemFragMonitorCommand.Settings>
@@ -21,6 +22,11 @@ public sealed class MemFragMonitorCommand(MemFragService memFragService) : Async
 		[Description("Refresh interval in milliseconds")]
 		[DefaultValue(1000)]
 		public int RefreshInterval { get; init; }
+
+		public override ValidationResult Validate() =>
+			RefreshInterval > 0
+				? ValidationResult.Success()
+				: ValidationResult.Error($"--refresh must be greater than zero milliseconds (got {RefreshInterval}).");
 	}
 
 	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
