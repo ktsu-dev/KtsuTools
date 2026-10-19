@@ -2,12 +2,15 @@
 
 namespace KtsuTools.Test;
 
+using KtsuTools.Commands;
 using KtsuTools.Image;
 
 using ktsu.Semantics.Paths;
 
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+
+using Spectre.Console;
 
 [TestClass]
 public class ImageServiceTests
@@ -178,6 +181,64 @@ public class ImageServiceTests
 		{
 			Directory.Delete(root, recursive: true);
 		}
+	}
+
+	[TestMethod]
+	public async Task ProcessAsyncRefusesNegativePaddingAndWritesNothing()
+	{
+		string root = CreateTempDirectory();
+		try
+		{
+			string input = Path.Join(root, "in");
+			string output = Path.Join(root, "out");
+			Directory.CreateDirectory(input);
+			SavePng(Path.Join(input, "a.png"), width: 40, height: 40, new Rectangle(0, 0, 40, 40));
+
+			int processed = await ImageService.ProcessAsync(
+				AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(input),
+				AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(output),
+				size: 32,
+				padding: -10).ConfigureAwait(false);
+
+			Assert.AreEqual(0, processed, "Negative padding would make the content, and so the icon, larger than --size.");
+			Assert.IsFalse(Directory.Exists(output), "The range checks run before the output directory is created.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	[DataRow(0)]
+	[DataRow(-5)]
+	public void SettingsRejectASizeBelowOneByNamingTheSize(int size)
+	{
+		ImageProcessCommand.Settings settings = new() { InputPath = "in", OutputPath = "out", Size = size, Padding = 0 };
+
+		ValidationResult result = settings.Validate();
+
+		Assert.IsFalse(result.Successful, "The padding message never mentioned the size that was wrong.");
+		Assert.AreEqual("--size must be at least 1", result.Message);
+	}
+
+	[TestMethod]
+	public void SettingsRejectNegativePadding()
+	{
+		ImageProcessCommand.Settings settings = new() { InputPath = "in", OutputPath = "out", Size = 32, Padding = -10 };
+
+		ValidationResult result = settings.Validate();
+
+		Assert.IsFalse(result.Successful);
+		Assert.AreEqual("--padding must be zero or greater", result.Message);
+	}
+
+	[TestMethod]
+	public void SettingsAcceptTheDefaults()
+	{
+		ImageProcessCommand.Settings settings = new() { InputPath = "in", OutputPath = "out", Size = 128, Padding = 0 };
+
+		Assert.IsTrue(settings.Validate().Successful);
 	}
 
 	private static Task<int> ProcessAsync(string input, string output) =>
