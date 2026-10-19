@@ -16,7 +16,7 @@ public sealed class DedupDryRunCommand(FileDedupeService dedupeService) : AsyncC
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("-p|--path <PATH>")]
+		[CommandOption("-p|--path <PATH>", isRequired: true)]
 		[Description("Directory to scan for duplicates")]
 		public required string Path { get; init; }
 	}

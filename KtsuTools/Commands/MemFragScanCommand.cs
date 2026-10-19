@@ -12,7 +12,7 @@ public sealed class MemFragScanCommand(MemFragService memFragService) : AsyncCom
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--pid <PID>")]
+		[CommandOption("--pid <PID>", isRequired: true)]
 		[Description("Process ID to scan for memory fragmentation")]
 		public required int ProcessId { get; init; }
 	}

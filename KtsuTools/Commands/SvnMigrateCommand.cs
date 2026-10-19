@@ -16,12 +16,12 @@ public sealed class SvnMigrateCommand(SvnMigrateService svnMigrateService) : Asy
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--svn-url <URL>")]
+		[CommandOption("--svn-url <URL>", isRequired: true)]
 		[Description("SVN repository URL to migrate from")]
 		[SuppressMessage("Design", "CA1056:UriPropertiesShouldNotBeStrings", Justification = "CLI argument must be a string")]
 		public required string SvnUrl { get; init; }
 
-		[CommandOption("--target <PATH>")]
+		[CommandOption("--target <PATH>", isRequired: true)]
 		[Description("Target directory for the migrated Git repository")]
 		public required string TargetPath { get; init; }
 
