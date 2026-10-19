@@ -260,7 +260,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	{
 		if (listing.Repositories.Count == 0)
 		{
-			AnsiConsole.MarkupLine("[yellow]No repositories cached. Run 'ktsu repo discover', or pass --refresh.[/]");
+			AnsiConsole.MarkupLine("[yellow]No repositories cached. Run 'ktools repo discover', or pass --refresh.[/]");
 			return;
 		}
 
