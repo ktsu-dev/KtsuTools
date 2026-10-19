@@ -965,6 +965,42 @@ public class RepoServiceTests
 	}
 
 	[TestMethod]
+	public async Task PullAllAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
+		AbsoluteDirectoryPath missingPath = MissingDirectory("pullmissingdir");
+
+		int exit = await service.PullAllAsync(missingPath).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not an empty workspace.");
+	}
+
+	[TestMethod]
+	public async Task BuildAndTestAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
+		AbsoluteDirectoryPath missingPath = MissingDirectory("buildmissingdir");
+
+		int exit = await service.BuildAndTestAsync(missingPath).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not a workspace with no solutions.");
+	}
+
+	[TestMethod]
+	public async Task UpdatePackagesAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
+		AbsoluteDirectoryPath missingPath = MissingDirectory("updatemissingdir");
+
+		int exit = await service.UpdatePackagesAsync(missingPath).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not a workspace with no solutions.");
+	}
+
+	private static AbsoluteDirectoryPath MissingDirectory(string prefix) =>
+		AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.Join(Path.GetTempPath(), $"ktsu_{prefix}_{Guid.NewGuid():N}"));
+
+	[TestMethod]
 	public async Task CountUnsmudgedPointersCountsOnlyPointerFiles()
 	{
 		string repo = Path.Join(Path.GetTempPath(), $"ktsu_lfspointer_{Guid.NewGuid():N}");

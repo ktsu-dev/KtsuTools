@@ -391,6 +391,11 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		Ensure.NotNull(path);
 
 		string fullPath = path.ToString();
+		if (!DirectoryExistsOrReport(fullPath))
+		{
+			return 1;
+		}
+
 		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
 
 		if (solutionFiles.Count == 0)
@@ -509,16 +514,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		_ = gitService;
 		Ensure.NotNull(path);
 
-		string fullPath = path.ToString();
-		ConcurrentBag<string> repos = [];
-		DiscoverGitReposRecursive(fullPath, repos);
-
-		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
-
-		if (sortedRepos.Count == 0)
+		if (TryDiscoverWorkspaceRepos(path.ToString(), out int nothingToPull) is not List<string> sortedRepos)
 		{
-			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
-			return 0;
+			return nothingToPull;
 		}
 
 		AnsiConsole.MarkupLine($"[blue]Pulling {sortedRepos.Count} repositories...[/]");
@@ -688,6 +686,22 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	private sealed record FetchOutcome(bool Failed, AheadBehind? Divergence);
 
 	/// <summary>
+	/// Reports a workspace path that does not exist, which is a caller error rather than an empty workspace.
+	/// </summary>
+	/// <param name="fullPath">The workspace root the verb was asked to scan.</param>
+	/// <returns><see langword="true"/> when the directory exists.</returns>
+	private static bool DirectoryExistsOrReport(string fullPath)
+	{
+		if (Directory.Exists(fullPath))
+		{
+			return true;
+		}
+
+		ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+		return false;
+	}
+
+	/// <summary>
 	/// Resolves the repositories a workspace-wide verb should operate on, in name order, and reports
 	/// the two cases where there is nothing to operate on.
 	/// </summary>
@@ -699,9 +713,8 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	/// <returns>The repositories in name order, or <see langword="null"/> when the caller should stop.</returns>
 	private static List<string>? TryDiscoverWorkspaceRepos(string fullPath, out int exitCode)
 	{
-		if (!Directory.Exists(fullPath))
+		if (!DirectoryExistsOrReport(fullPath))
 		{
-			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
 			exitCode = 1;
 			return null;
 		}
@@ -1072,6 +1085,11 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		Ensure.NotNull(path);
 
 		string fullPath = path.ToString();
+		if (!DirectoryExistsOrReport(fullPath))
+		{
+			return 1;
+		}
+
 		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
 
 		if (solutionFiles.Count == 0)
