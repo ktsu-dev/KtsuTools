@@ -2,6 +2,7 @@
 
 Changes since v1.10.13:
 
+- Create the codegen output folder and report a path that cannot be written [patch] (Claude)
 - Run the dedup verbs through a CommandApp in tests (Claude)
 - Share one settings type across the dedup verbs (Claude)
 - Have the parser enforce every required option so a missing one is named [patch] (Claude)
