@@ -49,211 +49,218 @@ internal static class Program
 		TypeRegistrar registrar = new(services);
 		CommandApp app = new(registrar);
 
-		app.Configure(config =>
+		app.Configure(ConfigureCommands);
+
+		return app.Run(args);
+	}
+
+	/// <summary>
+	/// Registers every command, branch and help example. Kept apart from <see cref="Main"/> so a test
+	/// can build the same tree and check that each example still parses against its settings.
+	/// </summary>
+	/// <param name="config">The configurator of the app being built.</param>
+	internal static void ConfigureCommands(IConfigurator config)
+	{
+		config.SetApplicationName(CliIdentity.Name);
+		config.SetApplicationVersion(CliIdentity.Version);
+
+		config.AddCommand<BuildMonitorCommand>("build-monitor")
+			.WithDescription("Monitor CI/CD builds from GitHub Actions")
+			.WithExample("build-monitor", "--owner", "ktsu-dev");
+
+		config.AddCommand<MergeCommand>("merge")
+			.WithDescription("N-way iterative file merge with interactive conflict resolution")
+			.WithExample("merge", "./repos", "*.yml")
+			.WithExample("merge", "--batch", "editorconfig-sync");
+
+		config.AddBranch("merge-batch", batch =>
 		{
-			config.SetApplicationName(CliIdentity.Name);
-			config.SetApplicationVersion(CliIdentity.Version);
+			batch.SetDescription("Manage saved merge batches");
 
-			config.AddCommand<BuildMonitorCommand>("build-monitor")
-				.WithDescription("Monitor CI/CD builds from GitHub Actions")
-				.WithExample("build-monitor", "--owner", "ktsu-dev");
+			batch.AddCommand<MergeBatchSaveCommand>("save")
+				.WithDescription("Save a named batch of merge inputs")
+				.WithExample("merge-batch", "save", "editorconfig-sync", "./repos", ".editorconfig");
 
-			config.AddCommand<MergeCommand>("merge")
-				.WithDescription("N-way iterative file merge with interactive conflict resolution")
-				.WithExample("merge", "./repos", "*.yml")
-				.WithExample("merge", "--batch", "editorconfig-sync");
+			batch.AddCommand<MergeBatchListCommand>("list")
+				.WithDescription("List all saved merge batches")
+				.WithExample("merge-batch", "list");
 
-			config.AddBranch("merge-batch", batch =>
+			batch.AddCommand<MergeBatchShowCommand>("show")
+				.WithDescription("Show details for a saved batch")
+				.WithExample("merge-batch", "show", "editorconfig-sync");
+
+			batch.AddCommand<MergeBatchDeleteCommand>("delete")
+				.WithDescription("Delete a saved batch")
+				.WithExample("merge-batch", "delete", "editorconfig-sync");
+		});
+
+		config.AddCommand<MergeHistoryCommand>("merge-history")
+			.WithDescription("Show recent ktools merge runs (most-recent first); --clear truncates")
+			.WithExample("merge-history")
+			.WithExample("merge-history", "--clear");
+
+		config.AddCommand<CodeGenCommand>("codegen")
+			.WithDescription("Generate code from AST/YAML definitions")
+			.WithExample("codegen", "--input", "ast.yaml", "--lang", "python");
+
+		config.AddCommand<GitCommand>("git")
+			.WithDescription("Run a git command in every repository under a directory")
+			.WithExample("git", "status")
+			.WithExample("git", "--", "fetch", "--prune");
+
+		config.AddBranch("repo", repo =>
+		{
+			repo.SetDescription("Batch operations across multiple repositories");
+
+			repo.AddCommand<RepoDiscoverCommand>("discover")
+				.WithDescription("Discover git repositories in a directory")
+				.WithExample("repo", "discover", "--path", "c:/dev/ktsu-dev");
+
+			repo.AddCommand<RepoListCommand>("list")
+				.WithDescription("List cached repositories and the solutions discovered within each")
+				.WithExample("repo", "list")
+				.WithExample("repo", "list", "--format", "json");
+
+			repo.AddCommand<RepoValidateCommand>("validate")
+				.WithDescription("Validate cached repository and solution paths, pruning stale entries")
+				.WithExample("repo", "validate")
+				.WithExample("repo", "validate", "--dry-run");
+
+			repo.AddCommand<RepoBuildCommand>("build")
+				.WithDescription("Build and test all discovered solutions")
+				.WithExample("repo", "build");
+
+			repo.AddCommand<RepoFetchCommand>("fetch")
+				.WithDescription("Git fetch all discovered repositories, reporting ahead/behind without touching any working tree")
+				.WithExample("repo", "fetch");
+
+			repo.AddCommand<RepoPullCommand>("pull")
+				.WithDescription("Git pull all discovered repositories")
+				.WithExample("repo", "pull");
+
+			repo.AddCommand<RepoUpdatePackagesCommand>("update-packages")
+				.WithDescription("Update NuGet packages across all repositories")
+				.WithExample("repo", "update-packages");
+
+			repo.AddBranch("lfs", lfs =>
 			{
-				batch.SetDescription("Manage saved merge batches");
+				lfs.SetDescription("Git LFS configuration across discovered repositories");
 
-				batch.AddCommand<MergeBatchSaveCommand>("save")
-					.WithDescription("Save a named batch of merge inputs")
-					.WithExample("merge-batch", "save", "editorconfig-sync", "./repos", ".editorconfig");
-
-				batch.AddCommand<MergeBatchListCommand>("list")
-					.WithDescription("List all saved merge batches")
-					.WithExample("merge-batch", "list");
-
-				batch.AddCommand<MergeBatchShowCommand>("show")
-					.WithDescription("Show details for a saved batch")
-					.WithExample("merge-batch", "show", "editorconfig-sync");
-
-				batch.AddCommand<MergeBatchDeleteCommand>("delete")
-					.WithDescription("Delete a saved batch")
-					.WithExample("merge-batch", "delete", "editorconfig-sync");
-			});
-
-			config.AddCommand<MergeHistoryCommand>("merge-history")
-				.WithDescription("Show recent ktools merge runs (most-recent first); --clear truncates")
-				.WithExample("merge-history")
-				.WithExample("merge-history", "--clear");
-
-			config.AddCommand<CodeGenCommand>("codegen")
-				.WithDescription("Generate code from AST/YAML definitions")
-				.WithExample("codegen", "--input", "ast.yaml", "--lang", "python");
-
-			config.AddCommand<GitCommand>("git")
-				.WithDescription("Run a git command in every repository under a directory")
-				.WithExample("git", "status")
-				.WithExample("git", "--", "fetch", "--prune");
-
-			config.AddBranch("repo", repo =>
-			{
-				repo.SetDescription("Batch operations across multiple repositories");
-
-				repo.AddCommand<RepoDiscoverCommand>("discover")
-					.WithDescription("Discover git repositories in a directory")
-					.WithExample("repo", "discover", "--path", "c:/dev/ktsu-dev");
-
-				repo.AddCommand<RepoListCommand>("list")
-					.WithDescription("List cached repositories and the solutions discovered within each")
-					.WithExample("repo", "list")
-					.WithExample("repo", "list", "--format", "json");
-
-				repo.AddCommand<RepoValidateCommand>("validate")
-					.WithDescription("Validate cached repository and solution paths, pruning stale entries")
-					.WithExample("repo", "validate")
-					.WithExample("repo", "validate", "--dry-run");
-
-				repo.AddCommand<RepoBuildCommand>("build")
-					.WithDescription("Build and test all discovered solutions")
-					.WithExample("repo", "build");
-
-				repo.AddCommand<RepoFetchCommand>("fetch")
-					.WithDescription("Git fetch all discovered repositories, reporting ahead/behind without touching any working tree")
-					.WithExample("repo", "fetch");
-
-				repo.AddCommand<RepoPullCommand>("pull")
-					.WithDescription("Git pull all discovered repositories")
-					.WithExample("repo", "pull");
-
-				repo.AddCommand<RepoUpdatePackagesCommand>("update-packages")
-					.WithDescription("Update NuGet packages across all repositories")
-					.WithExample("repo", "update-packages");
-
-				repo.AddBranch("lfs", lfs =>
-				{
-					lfs.SetDescription("Git LFS configuration across discovered repositories");
-
-					lfs.AddCommand<RepoLfsInstallCommand>("install")
-						.WithDescription("Run git lfs install --local across all discovered repositories, reporting any that still hold pointer files")
-						.WithExample("repo", "lfs", "install")
-						.WithExample("repo", "lfs", "install", "--path", "c:/dev/ktsu-dev");
-				});
-			});
-
-			config.AddBranch("packages", pkg =>
-			{
-				pkg.SetDescription("Package and SDK management");
-
-				pkg.AddCommand<PackagesUpdateCommand>("update")
-					.WithDescription("Update .NET packages and SDKs")
-					.WithExample("packages", "update", "--path", ".");
-
-				pkg.AddCommand<PackagesMigrateCpmCommand>("migrate-cpm")
-					.WithDescription("Convert to Central Package Management")
-					.WithExample("packages", "migrate-cpm", "--path", ".");
-
-				pkg.AddCommand<PackagesFindUnusedCommand>("find-unused")
-					.WithDescription("Report package references that no source refers to")
-					.WithExample("packages", "find-unused", "--path", ".");
-			});
-
-			config.AddBranch("markdown", md =>
-			{
-				md.SetDescription("Markdown processing and linting");
-
-				md.AddCommand<MarkdownCleanCommand>("clean")
-					.WithDescription("Clean and normalize markdown files")
-					.WithExample("markdown", "clean", "--path", ".");
-
-				md.AddCommand<MarkdownLintCommand>("lint")
-					.WithDescription("Lint markdown files for issues")
-					.WithExample("markdown", "lint", "--path", ".");
-			});
-
-			config.AddCommand<ImageProcessCommand>("image")
-				.WithDescription("Batch image processing (crop, recolor, resize)")
-				.WithExample("image", "--input", "./icons", "--size", "64");
-
-			config.AddBranch("memfrag", mem =>
-			{
-				mem.SetDescription("Memory fragmentation analysis");
-
-				mem.AddCommand<MemFragScanCommand>("scan")
-					.WithDescription("Scan a process for memory fragmentation")
-					.WithExample("memfrag", "scan", "--pid", "1234");
-
-				mem.AddCommand<MemFragMonitorCommand>("monitor")
-					.WithDescription("Monitor memory fragmentation in real-time")
-					.WithExample("memfrag", "monitor", "--pid", "1234");
-			});
-
-			config.AddCommand<MachineMonitorCommand>("machine-monitor")
-				.WithDescription("Real-time hardware monitoring dashboard")
-				.WithExample("machine-monitor");
-
-			config.AddCommand<ProjectCommand>("project")
-				.WithDescription("GitHub repository project management")
-				.WithExample("project", "--owner", "ktsu-dev");
-
-			config.AddCommand<ExplorerCommand>("explorer")
-				.WithDescription("TUI file explorer")
-				.WithExample("explorer", "--path", ".");
-
-			config.AddCommand<SvnMigrateCommand>("svn-migrate")
-				.WithDescription("Migrate SVN repository to Git")
-				.WithExample("svn-migrate", "--svn-url", "svn://...", "--target", "./repo");
-
-			config.AddCommand<SyncCommand>("sync")
-				.WithDescription("Synchronize file contents across repositories")
-				.WithExample("sync", "--path", "c:/dev/ktsu-dev", "--filename", ".editorconfig")
-				.WithExample("sync", "--config", "org-shared");
-
-			config.AddBranch("sync-config", syncConfig =>
-			{
-				syncConfig.SetDescription("Manage saved sync configurations");
-
-				syncConfig.AddCommand<SyncConfigSaveCommand>("save")
-					.WithDescription("Save a named set of sync inputs")
-					.WithExample("sync-config", "save", "org-shared", "c:/dev/ktsu-dev", "--filename", ".editorconfig,.gitignore");
-
-				syncConfig.AddCommand<SyncConfigListCommand>("list")
-					.WithDescription("List all saved sync configurations")
-					.WithExample("sync-config", "list");
-
-				syncConfig.AddCommand<SyncConfigShowCommand>("show")
-					.WithDescription("Show details for a saved sync configuration")
-					.WithExample("sync-config", "show", "org-shared");
-
-				syncConfig.AddCommand<SyncConfigDeleteCommand>("delete")
-					.WithDescription("Delete a saved sync configuration")
-					.WithExample("sync-config", "delete", "org-shared");
-			});
-
-			config.AddBranch("dedup", dedup =>
-			{
-				dedup.SetDescription("Find and remove duplicate files (shortest filename wins)");
-
-				dedup.AddCommand<DedupScanCommand>("scan")
-					.WithDescription("Display duplicate-content file groups")
-					.WithExample("dedup", "scan", "--path", ".");
-
-				dedup.AddCommand<DedupDryRunCommand>("dry-run")
-					.WithDescription("Preview which files would be deleted")
-					.WithExample("dedup", "dry-run", "--path", ".");
-
-				dedup.AddCommand<DedupDeleteCommand>("dedupe")
-					.WithDescription("Delete redundant duplicate files (prompts for confirmation)")
-					.WithExample("dedup", "dedupe", "--path", ".");
-
-				dedup.AddCommand<DedupStatsCommand>("stats")
-					.WithDescription("Show duplicate totals, wasted bytes, and breakdown by extension")
-					.WithExample("dedup", "stats", "--path", ".");
+				lfs.AddCommand<RepoLfsInstallCommand>("install")
+					.WithDescription("Run git lfs install --local across all discovered repositories, reporting any that still hold pointer files")
+					.WithExample("repo", "lfs", "install")
+					.WithExample("repo", "lfs", "install", "--path", "c:/dev/ktsu-dev");
 			});
 		});
 
-		return app.Run(args);
+		config.AddBranch("packages", pkg =>
+		{
+			pkg.SetDescription("Package and SDK management");
+
+			pkg.AddCommand<PackagesUpdateCommand>("update")
+				.WithDescription("Update .NET packages and SDKs")
+				.WithExample("packages", "update", "--path", ".");
+
+			pkg.AddCommand<PackagesMigrateCpmCommand>("migrate-cpm")
+				.WithDescription("Convert to Central Package Management")
+				.WithExample("packages", "migrate-cpm", "--path", ".");
+
+			pkg.AddCommand<PackagesFindUnusedCommand>("find-unused")
+				.WithDescription("Report package references that no source refers to")
+				.WithExample("packages", "find-unused", "--path", ".");
+		});
+
+		config.AddBranch("markdown", md =>
+		{
+			md.SetDescription("Markdown processing and linting");
+
+			md.AddCommand<MarkdownCleanCommand>("clean")
+				.WithDescription("Clean and normalize markdown files")
+				.WithExample("markdown", "clean", "--path", ".");
+
+			md.AddCommand<MarkdownLintCommand>("lint")
+				.WithDescription("Lint markdown files for issues")
+				.WithExample("markdown", "lint", "--path", ".");
+		});
+
+		config.AddCommand<ImageProcessCommand>("image")
+			.WithDescription("Batch image processing (crop, recolor, resize)")
+			.WithExample("image", "--input", "./icons", "--output", "./icons-out", "--size", "64");
+
+		config.AddBranch("memfrag", mem =>
+		{
+			mem.SetDescription("Memory fragmentation analysis");
+
+			mem.AddCommand<MemFragScanCommand>("scan")
+				.WithDescription("Scan a process for memory fragmentation")
+				.WithExample("memfrag", "scan", "--pid", "1234");
+
+			mem.AddCommand<MemFragMonitorCommand>("monitor")
+				.WithDescription("Monitor memory fragmentation in real-time")
+				.WithExample("memfrag", "monitor", "--pid", "1234");
+		});
+
+		config.AddCommand<MachineMonitorCommand>("machine-monitor")
+			.WithDescription("Real-time hardware monitoring dashboard")
+			.WithExample("machine-monitor");
+
+		config.AddCommand<ProjectCommand>("project")
+			.WithDescription("GitHub repository project management")
+			.WithExample("project", "--owner", "ktsu-dev");
+
+		config.AddCommand<ExplorerCommand>("explorer")
+			.WithDescription("TUI file explorer")
+			.WithExample("explorer", "--path", ".");
+
+		config.AddCommand<SvnMigrateCommand>("svn-migrate")
+			.WithDescription("Migrate SVN repository to Git")
+			.WithExample("svn-migrate", "--svn-url", "svn://...", "--target", "./repo");
+
+		config.AddCommand<SyncCommand>("sync")
+			.WithDescription("Synchronize file contents across repositories")
+			.WithExample("sync", "--path", "c:/dev/ktsu-dev", "--filename", ".editorconfig")
+			.WithExample("sync", "--config", "org-shared");
+
+		config.AddBranch("sync-config", syncConfig =>
+		{
+			syncConfig.SetDescription("Manage saved sync configurations");
+
+			syncConfig.AddCommand<SyncConfigSaveCommand>("save")
+				.WithDescription("Save a named set of sync inputs")
+				.WithExample("sync-config", "save", "org-shared", "c:/dev/ktsu-dev", "--filename", ".editorconfig,.gitignore");
+
+			syncConfig.AddCommand<SyncConfigListCommand>("list")
+				.WithDescription("List all saved sync configurations")
+				.WithExample("sync-config", "list");
+
+			syncConfig.AddCommand<SyncConfigShowCommand>("show")
+				.WithDescription("Show details for a saved sync configuration")
+				.WithExample("sync-config", "show", "org-shared");
+
+			syncConfig.AddCommand<SyncConfigDeleteCommand>("delete")
+				.WithDescription("Delete a saved sync configuration")
+				.WithExample("sync-config", "delete", "org-shared");
+		});
+
+		config.AddBranch("dedup", dedup =>
+		{
+			dedup.SetDescription("Find and remove duplicate files (shortest filename wins)");
+
+			dedup.AddCommand<DedupScanCommand>("scan")
+				.WithDescription("Display duplicate-content file groups")
+				.WithExample("dedup", "scan", "--path", ".");
+
+			dedup.AddCommand<DedupDryRunCommand>("dry-run")
+				.WithDescription("Preview which files would be deleted")
+				.WithExample("dedup", "dry-run", "--path", ".");
+
+			dedup.AddCommand<DedupDeleteCommand>("dedupe")
+				.WithDescription("Delete redundant duplicate files (prompts for confirmation)")
+				.WithExample("dedup", "dedupe", "--path", ".");
+
+			dedup.AddCommand<DedupStatsCommand>("stats")
+				.WithDescription("Show duplicate totals, wasted bytes, and breakdown by extension")
+				.WithExample("dedup", "stats", "--path", ".");
+		});
 	}
 }
