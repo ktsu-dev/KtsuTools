@@ -83,6 +83,13 @@ public static class ImageService
 
 	private static bool ValidateArguments(string inputPath, string outputPath, int size, int padding)
 	{
+		string? rangeError = ValidateSizeAndPadding(size, padding);
+		if (rangeError is not null)
+		{
+			AnsiConsole.MarkupLine($"[red]Error: {rangeError.EscapeMarkup()}[/]");
+			return false;
+		}
+
 		if (padding >= size / 2)
 		{
 			AnsiConsole.MarkupLine("[red]Error: Padding must be less than half the size of the image.[/]");
@@ -101,6 +108,27 @@ public static class ImageService
 		}
 
 		return true;
+	}
+
+	/// <summary>
+	/// Checks the ranges of <c>--size</c> and <c>--padding</c> on their own, before any file is touched.
+	/// Negative padding would make the content larger than <paramref name="size"/>, and the final pad
+	/// cannot shrink it, so the output would exceed the documented maximum.
+	/// </summary>
+	/// <returns>The message for the first value out of range, or <see langword="null"/> when both are valid.</returns>
+	internal static string? ValidateSizeAndPadding(int size, int padding)
+	{
+		if (size < 1)
+		{
+			return "--size must be at least 1";
+		}
+
+		if (padding < 0)
+		{
+			return "--padding must be zero or greater";
+		}
+
+		return null;
 	}
 
 	/// <summary>
