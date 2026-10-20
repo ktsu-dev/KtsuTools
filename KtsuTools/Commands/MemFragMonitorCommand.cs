@@ -7,13 +7,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.Core.UI;
 using KtsuTools.MemFrag;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 public sealed class MemFragMonitorCommand(MemFragService memFragService) : AsyncCommand<MemFragMonitorCommand.Settings>
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--pid <PID>")]
+		[CommandOption("--pid <PID>", isRequired: true)]
 		[Description("Process ID to monitor for memory fragmentation")]
 		public required int ProcessId { get; init; }
 
@@ -21,6 +22,11 @@ public sealed class MemFragMonitorCommand(MemFragService memFragService) : Async
 		[Description("Refresh interval in milliseconds")]
 		[DefaultValue(1000)]
 		public int RefreshInterval { get; init; }
+
+		public override ValidationResult Validate() =>
+			RefreshInterval > 0
+				? ValidationResult.Success()
+				: ValidationResult.Error($"--refresh must be greater than zero milliseconds (got {RefreshInterval}).");
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

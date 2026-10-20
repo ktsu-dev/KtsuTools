@@ -16,7 +16,7 @@ public sealed class MarkdownLintCommand(MarkdownService markdownService) : Async
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--path <PATH>")]
+		[CommandOption("--path <PATH>", isRequired: true)]
 		[Description("Path to markdown files to lint")]
 		public required string Path { get; init; }
 	}

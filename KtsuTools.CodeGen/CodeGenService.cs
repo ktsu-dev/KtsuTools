@@ -104,7 +104,25 @@ public class CodeGenService
 		if (outputFile is not null)
 		{
 			string outputPath = outputFile.ToString();
-			await File.WriteAllTextAsync(outputPath, generated, ct).ConfigureAwait(false);
+
+			// The output folder is made if it is not there yet, and a path that cannot be written —
+			// an existing folder, a read-only file — is reported rather than thrown after the work is done.
+			try
+			{
+				string? outputDirectory = Path.GetDirectoryName(outputPath);
+				if (!string.IsNullOrEmpty(outputDirectory))
+				{
+					Directory.CreateDirectory(outputDirectory);
+				}
+
+				await File.WriteAllTextAsync(outputPath, generated, ct).ConfigureAwait(false);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				AnsiConsole.MarkupLine($"[red]Error: Cannot write output to '{outputPath.EscapeMarkup()}': {ex.Message.EscapeMarkup()}[/]");
+				return 1;
+			}
+
 			AnsiConsole.MarkupLine($"[green]Generated code written to: {outputPath.EscapeMarkup()}[/]");
 			return 0;
 		}

@@ -14,13 +14,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.BuildMonitor;
 using KtsuTools.Core.UI;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService) : AsyncCommand<BuildMonitorCommand.Settings>
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--owner <OWNER>")]
+		[CommandOption("--owner <OWNER>", isRequired: true)]
 		[Description("GitHub owner or organization to monitor")]
 		public required string Owner { get; init; }
 
@@ -28,6 +29,11 @@ public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService)
 		[Description("Refresh interval in seconds")]
 		[DefaultValue(30)]
 		public int RefreshInterval { get; init; }
+
+		public override ValidationResult Validate() =>
+			RefreshInterval > 0
+				? ValidationResult.Success()
+				: ValidationResult.Error($"--refresh must be greater than zero seconds (got {RefreshInterval}).");
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

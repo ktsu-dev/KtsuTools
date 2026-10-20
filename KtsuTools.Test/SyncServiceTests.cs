@@ -770,6 +770,55 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void FindMatchingFilesFindsReposInAWorkspaceWhoseParentIsARepo()
+	{
+		using TempTree tree = TempTree.New();
+		_ = tree.CreateDirectory(".git");
+		string workspace = tree.CreateDirectory("dev");
+		string first = tree.WriteFile(Path.Join("dev", "repoA"), ".editorconfig");
+		string second = tree.WriteFile(Path.Join("dev", "repoB"), ".editorconfig");
+		_ = tree.CreateDirectory(Path.Join("dev", "repoA", ".git"));
+		_ = tree.CreateDirectory(Path.Join("dev", "repoB", ".git"));
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles([workspace], [".editorconfig"], []);
+
+		CollectionAssert.AreEquivalent(
+			new[] { first, second },
+			matches.ToArray(),
+			"A repository above the scan root must not make the repositories in the workspace nested.");
+	}
+
+	[TestMethod]
+	public void FindMatchingFilesStillSkipsARepoNestedInsideAnotherUnderTheScanRoot()
+	{
+		using TempTree tree = TempTree.New();
+		string kept = tree.WriteFile("outer", ".editorconfig");
+		_ = tree.WriteFile(Path.Join("outer", "inner"), ".editorconfig");
+		_ = tree.CreateDirectory(Path.Join("outer", ".git"));
+		_ = tree.CreateDirectory(Path.Join("outer", "inner", ".git"));
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles([tree.Root], [".editorconfig"], []);
+
+		Assert.AreEqual(1, matches.Count, "A repository inside another repository under the scan root is still nested.");
+		Assert.AreEqual(kept, matches[0]);
+	}
+
+	[TestMethod]
+	public void FindMatchingFilesSkipsASubmoduleMarkedByAGitFile()
+	{
+		using TempTree tree = TempTree.New();
+		string kept = tree.WriteFile("outer", ".editorconfig");
+		string submodule = Path.GetDirectoryName(tree.WriteFile(Path.Join("outer", "sub"), ".editorconfig"))!;
+		_ = tree.CreateDirectory(Path.Join("outer", ".git"));
+		File.WriteAllText(Path.Join(submodule, ".git"), "gitdir: ../.git/modules/sub");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles([tree.Root], [".editorconfig"], []);
+
+		Assert.AreEqual(1, matches.Count, "A .git file marks a submodule, which is a repository nested in its parent.");
+		Assert.AreEqual(kept, matches[0]);
+	}
+
+	[TestMethod]
 	public void FindMatchingFilesSkipsAnExcludedDirectoryName()
 	{
 		using TempTree tree = TempTree.New();

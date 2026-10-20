@@ -260,7 +260,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	{
 		if (listing.Repositories.Count == 0)
 		{
-			AnsiConsole.MarkupLine("[yellow]No repositories cached. Run 'ktsu repo discover', or pass --refresh.[/]");
+			AnsiConsole.MarkupLine("[yellow]No repositories cached. Run 'ktools repo discover', or pass --refresh.[/]");
 			return;
 		}
 
@@ -391,6 +391,11 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		Ensure.NotNull(path);
 
 		string fullPath = path.ToString();
+		if (!DirectoryExistsOrReport(fullPath))
+		{
+			return 1;
+		}
+
 		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
 
 		if (solutionFiles.Count == 0)
@@ -509,16 +514,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		_ = gitService;
 		Ensure.NotNull(path);
 
-		string fullPath = path.ToString();
-		ConcurrentBag<string> repos = [];
-		DiscoverGitReposRecursive(fullPath, repos);
-
-		List<string> sortedRepos = [.. repos.OrderBy(r => Path.GetFileName(r), StringComparer.OrdinalIgnoreCase)];
-
-		if (sortedRepos.Count == 0)
+		if (TryDiscoverWorkspaceRepos(path.ToString(), out int nothingToPull) is not List<string> sortedRepos)
 		{
-			AnsiConsole.MarkupLine("[yellow]No repositories found.[/]");
-			return 0;
+			return nothingToPull;
 		}
 
 		AnsiConsole.MarkupLine($"[blue]Pulling {sortedRepos.Count} repositories...[/]");
@@ -688,6 +686,22 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	private sealed record FetchOutcome(bool Failed, AheadBehind? Divergence);
 
 	/// <summary>
+	/// Reports a workspace path that does not exist, which is a caller error rather than an empty workspace.
+	/// </summary>
+	/// <param name="fullPath">The workspace root the verb was asked to scan.</param>
+	/// <returns><see langword="true"/> when the directory exists.</returns>
+	private static bool DirectoryExistsOrReport(string fullPath)
+	{
+		if (Directory.Exists(fullPath))
+		{
+			return true;
+		}
+
+		ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
+		return false;
+	}
+
+	/// <summary>
 	/// Resolves the repositories a workspace-wide verb should operate on, in name order, and reports
 	/// the two cases where there is nothing to operate on.
 	/// </summary>
@@ -699,9 +713,8 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	/// <returns>The repositories in name order, or <see langword="null"/> when the caller should stop.</returns>
 	private static List<string>? TryDiscoverWorkspaceRepos(string fullPath, out int exitCode)
 	{
-		if (!Directory.Exists(fullPath))
+		if (!DirectoryExistsOrReport(fullPath))
 		{
-			ErrorDisplay.ShowError($"Directory '{fullPath}' does not exist.");
 			exitCode = 1;
 			return null;
 		}
@@ -1072,6 +1085,11 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		Ensure.NotNull(path);
 
 		string fullPath = path.ToString();
+		if (!DirectoryExistsOrReport(fullPath))
+		{
+			return 1;
+		}
+
 		List<string> solutionFiles = DiscoverSolutionFiles(fullPath);
 
 		if (solutionFiles.Count == 0)
@@ -1083,6 +1101,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		AnsiConsole.MarkupLine($"[blue]Updating packages in {solutionFiles.Count} solution(s)...[/]");
 
 		int updatedCount = 0;
+		int failedCount = 0;
 
 		await AnsiConsole.Progress()
 			.AutoClear(false)
@@ -1100,45 +1119,91 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 					task.Description = $"[green]Updating {slnName.EscapeMarkup()}[/]";
 
-					updatedCount += await UpdateSolutionPackagesAsync(slnDir, slnName, includePrerelease, ct).ConfigureAwait(false);
+					(int updated, int failed) = await UpdateSolutionPackagesAsync(slnDir, slnName, includePrerelease, ct).ConfigureAwait(false);
+					updatedCount += updated;
+					failedCount += failed;
 					task.Increment(1);
 				}
 			}).ConfigureAwait(false);
 
-		AnsiConsole.MarkupLine($"[green]Done. Processed {solutionFiles.Count} solution(s).[/]");
-		return 0;
+		string color = failedCount > 0 ? "red" : "green";
+		AnsiConsole.MarkupLine($"[{color}]Done. Processed {solutionFiles.Count} solution(s) · {updatedCount} package(s) updated · {failedCount} failure(s).[/]");
+		return failedCount > 0 ? 1 : 0;
 	}
 
-	private async Task<int> UpdateSolutionPackagesAsync(string slnDir, string slnName, bool includePrerelease, CancellationToken ct)
+	/// <summary>
+	/// Updates every outdated package in the projects under <paramref name="slnDir"/> and restores them.
+	/// </summary>
+	/// <returns>The number of packages updated and the number of steps that failed.</returns>
+	private async Task<(int Updated, int Failed)> UpdateSolutionPackagesAsync(string slnDir, string slnName, bool includePrerelease, CancellationToken ct)
 	{
 		string[] projectFiles = Directory.GetFiles(slnDir, "*.csproj", SearchOption.AllDirectories);
 		int updatedCount = 0;
+		int failedCount = 0;
 
 		foreach (string proj in projectFiles)
 		{
-			updatedCount += await UpdateProjectOutdatedPackagesAsync(proj, slnDir, includePrerelease, ct).ConfigureAwait(false);
-			await processService.RunAsync(DotnetCommand, $"restore \"{proj}\"", slnDir, ct).ConfigureAwait(false);
+			(int updated, int failed) = await UpdateProjectOutdatedPackagesAsync(proj, slnDir, includePrerelease, ct).ConfigureAwait(false);
+			updatedCount += updated;
+			failedCount += failed;
+
+			ProcessResult restoreResult = await processService.RunAsync(DotnetCommand, $"restore \"{proj}\"", slnDir, ct).ConfigureAwait(false);
+			if (restoreResult.ExitCode != 0)
+			{
+				failedCount++;
+				WriteUpdateFailure($"restore {Path.GetFileName(proj)}", restoreResult);
+			}
 		}
 
-		AnsiConsole.MarkupLine($"  [green]OK[/] {slnName.EscapeMarkup()}");
-		return updatedCount;
+		string status = failedCount > 0 ? "[red]FAILED[/]" : "[green]OK[/]";
+		AnsiConsole.MarkupLine($"  {status} {slnName.EscapeMarkup()} ({updatedCount} updated, {failedCount} failed)");
+		return (updatedCount, failedCount);
 	}
 
-	private async Task<int> UpdateProjectOutdatedPackagesAsync(string projectFile, string workingDir, bool includePrerelease, CancellationToken ct)
+	private async Task<(int Updated, int Failed)> UpdateProjectOutdatedPackagesAsync(string projectFile, string workingDir, bool includePrerelease, CancellationToken ct)
 	{
+		string projectName = Path.GetFileName(projectFile);
 		string prereleaseArg = includePrerelease ? " --prerelease" : string.Empty;
 		string outdatedArgs = $"list \"{projectFile}\" package --outdated --format json{prereleaseArg}";
 
 		ProcessResult outdatedResult = await processService.RunAsync(DotnetCommand, outdatedArgs, workingDir, ct).ConfigureAwait(false);
 
-		if (outdatedResult.ExitCode != 0)
+		if (outdatedResult.ExitCode != 0 || !OutdatedPackage.TryParse(outdatedResult.Output, out IReadOnlyList<OutdatedPackage> outdated))
 		{
-			return 0;
+			WriteUpdateFailure($"list outdated packages in {projectName}", outdatedResult);
+			return (0, 1);
 		}
 
-		return outdatedResult.Output.Count(line =>
-			line.Contains("resolvedVersion", StringComparison.OrdinalIgnoreCase) &&
-			line.Contains("latestVersion", StringComparison.OrdinalIgnoreCase));
+		int updatedCount = 0;
+		int failedCount = 0;
+
+		foreach (OutdatedPackage package in outdated)
+		{
+			string addArgs = $"add \"{projectFile}\" package {package.Id} --version {package.LatestVersion}";
+			ProcessResult addResult = await processService.RunAsync(DotnetCommand, addArgs, workingDir, ct).ConfigureAwait(false);
+
+			if (addResult.ExitCode == 0)
+			{
+				updatedCount++;
+			}
+			else
+			{
+				failedCount++;
+				WriteUpdateFailure($"update {package.Id} to {package.LatestVersion} in {projectName}", addResult);
+			}
+		}
+
+		return (updatedCount, failedCount);
+	}
+
+	private static void WriteUpdateFailure(string step, ProcessResult result)
+	{
+		AnsiConsole.MarkupLine($"    [red]Failed to {step.EscapeMarkup()}[/]");
+
+		foreach (string line in result.Errors.Concat(result.Output).Where(l => !string.IsNullOrWhiteSpace(l)).Take(5))
+		{
+			AnsiConsole.MarkupLine($"      [dim]{line.EscapeMarkup()}[/]");
+		}
 	}
 
 	private static void DiscoverGitReposRecursive(string directory, ConcurrentBag<string> repos)

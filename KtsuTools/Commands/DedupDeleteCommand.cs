@@ -14,12 +14,8 @@ public sealed class DedupDeleteCommand(FileDedupeService dedupeService) : AsyncC
 {
 	private readonly FileDedupeService dedupeService = dedupeService;
 
-	public sealed class Settings : CommandSettings
+	public sealed class Settings : DedupSettings
 	{
-		[CommandOption("-p|--path <PATH>")]
-		[Description("Directory to scan for duplicates")]
-		public required string Path { get; init; }
-
 		[CommandOption("-y|--yes")]
 		[Description("Skip confirmation prompt")]
 		[DefaultValue(false)]

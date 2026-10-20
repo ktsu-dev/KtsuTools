@@ -16,7 +16,7 @@ public sealed class MarkdownCleanCommand(MarkdownService markdownService) : Asyn
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--path <PATH>")]
+		[CommandOption("--path <PATH>", isRequired: true)]
 		[Description("Path to markdown files to clean")]
 		public required string Path { get; init; }
 

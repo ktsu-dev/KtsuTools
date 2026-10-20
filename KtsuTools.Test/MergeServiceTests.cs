@@ -62,6 +62,36 @@ public class MergeServiceTests
 	}
 
 	[TestMethod]
+	[DataRow(BlockChoice.UseVersion1, "foo=1")]
+	[DataRow(BlockChoice.UseVersion2, "foo=2")]
+	[DataRow(BlockChoice.UseBoth, "foo=1", "foo=2")]
+	[DataRow(BlockChoice.Skip, "foo=1")]
+	public void ApplyBlockChoiceResolvesASingleLineConflict(BlockChoice choice, params string[] expected)
+	{
+		List<string> merged = ["line 4"];
+
+		MergeService.ApplyBlockChoice(merged, ["foo=1"], ["foo=2"], choice);
+
+		CollectionAssert.AreEqual(new List<string> { "line 4" }.Concat(expected).ToList(), merged, $"{choice} resolved the block wrongly.");
+	}
+
+	[TestMethod]
+	public async Task InteractiveMergeKeepsASkippedLine()
+	{
+		const string version1 = "line 1\nline 2\nline 3\nline 4\nfoo=1\nline 6";
+		const string version2 = "line 1\nline 2\nline 3\nline 4\nfoo=2\nline 6";
+		string merged = string.Empty;
+
+		await ConsoleCapture.CaptureAsync(() =>
+		{
+			merged = MergeService.InteractiveMerge(version1, version2, (_, _) => BlockChoice.Skip);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		Assert.AreEqual(version1, merged, "Skipping the foo= block must leave line 5 as version 1 has it.");
+	}
+
+	[TestMethod]
 	public void DiffStyleParserAcceptsCanonicalNames()
 	{
 		Assert.IsTrue(DiffStyleParser.TryParse("side-by-side", out DiffStyle side));

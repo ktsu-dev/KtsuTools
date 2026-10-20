@@ -15,7 +15,7 @@ public sealed class PackagesFindUnusedCommand(PackagesService packagesService) :
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--path <PATH>")]
+		[CommandOption("--path <PATH>", isRequired: true)]
 		[Description("Path to the project, solution or workspace to scan")]
 		public required string Path { get; init; }
 

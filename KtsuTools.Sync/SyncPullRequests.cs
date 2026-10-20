@@ -360,7 +360,7 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 	internal static string BuildBody(IReadOnlyList<SyncedFile> syncedFiles, string branchName)
 	{
 		StringBuilder builder = new();
-		_ = builder.AppendLine(CultureInfo.InvariantCulture, $"Opened by `ktsu sync` from branch `{branchName}`.");
+		_ = builder.AppendLine(CultureInfo.InvariantCulture, $"Opened by `ktools sync` from branch `{branchName}`.");
 		_ = builder.AppendLine();
 
 		if (syncedFiles is null || syncedFiles.Count == 0)

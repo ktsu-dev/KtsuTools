@@ -60,7 +60,7 @@ public class SvnMigrateService(IProcessService processService)
 
 					// Phase 1: Clone SVN repository
 					task.Description = "[green]Cloning SVN repository with git-svn...[/]";
-					await CloneSvnRepositoryAsync(svnUrl.ToString(), gitRepoPath, authorsFilePath, preserveEmptyDirs, ct).ConfigureAwait(false);
+					await CloneSvnRepositoryAsync(svnUrl.AbsoluteUri, gitRepoPath, authorsFilePath, preserveEmptyDirs, ct).ConfigureAwait(false);
 					task.Value = 50;
 
 					// Phase 2: Cleanup references
@@ -134,13 +134,19 @@ public class SvnMigrateService(IProcessService processService)
 			args.Add("--preserve-empty-dirs");
 		}
 
-		string arguments = string.Join(" ", args);
-		ProcessResult result = await processService.RunAsync("git", arguments, null, ct).ConfigureAwait(false);
+		ProcessResult result = await processService.RunAsync("git", args, null, ct).ConfigureAwait(false);
 
 		if (result.ExitCode != 0)
 		{
 			string errorMessage = string.Join(Environment.NewLine, result.Errors);
 			throw new InvalidOperationException($"git svn clone failed: {errorMessage}");
+		}
+
+		// Every later step runs inside the clone, so a clone that reported success but left nothing behind
+		// would otherwise surface as a process that cannot start in a missing directory.
+		if (!Directory.Exists(gitRepoPath))
+		{
+			throw new InvalidOperationException($"git svn clone did not create {gitRepoPath}");
 		}
 	}
 
@@ -166,7 +172,7 @@ public class SvnMigrateService(IProcessService processService)
 			if (branch.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
 			{
 				string localName = branch[7..];
-				await processService.RunAsync("git", $"checkout -b {localName} {branch}", gitRepoPath, ct).ConfigureAwait(false);
+				await processService.RunAsync("git", ["checkout", "-b", localName, branch], gitRepoPath, ct).ConfigureAwait(false);
 			}
 		}
 

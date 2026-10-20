@@ -14,11 +14,11 @@ public sealed class ImageProcessCommand : AsyncCommand<ImageProcessCommand.Setti
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--input <DIRECTORY>")]
+		[CommandOption("--input <DIRECTORY>", isRequired: true)]
 		[Description("Input directory containing images")]
 		public required string InputPath { get; init; }
 
-		[CommandOption("--output <DIRECTORY>")]
+		[CommandOption("--output <DIRECTORY>", isRequired: true)]
 		[Description("Output directory for processed images")]
 		public required string OutputPath { get; init; }
 
@@ -36,6 +36,18 @@ public sealed class ImageProcessCommand : AsyncCommand<ImageProcessCommand.Setti
 		[Description("Padding in pixels")]
 		[DefaultValue(0)]
 		public int Padding { get; init; }
+
+		public override ValidationResult Validate()
+		{
+			if (Size < 1)
+			{
+				return ValidationResult.Error("--size must be at least 1");
+			}
+
+			return Padding < 0
+				? ValidationResult.Error("--padding must be zero or greater")
+				: ValidationResult.Success();
+		}
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

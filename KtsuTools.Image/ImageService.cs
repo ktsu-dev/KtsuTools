@@ -46,7 +46,8 @@ public static class ImageService
 		}
 
 		Rgba32 targetColor = ParseHexColor(color);
-		string[] files = Directory.GetFiles(inputDir);
+		string[] files = [.. Directory.GetFiles(inputDir).Order(StringComparer.Ordinal)];
+		HashSet<string> claimedOutputs = new(StringComparer.OrdinalIgnoreCase);
 		int processedCount = 0;
 
 		await AnsiConsole.Progress()
@@ -63,7 +64,7 @@ public static class ImageService
 				foreach (string file in files)
 				{
 					ct.ThrowIfCancellationRequested();
-					bool succeeded = ProcessFileWithErrorHandling(file, outputDir, targetColor, size, padding);
+					bool succeeded = ProcessFileWithErrorHandling(file, outputDir, claimedOutputs, targetColor, size, padding);
 
 					if (succeeded)
 					{
@@ -82,6 +83,13 @@ public static class ImageService
 
 	private static bool ValidateArguments(string inputPath, string outputPath, int size, int padding)
 	{
+		string? rangeError = ValidateSizeAndPadding(size, padding);
+		if (rangeError is not null)
+		{
+			AnsiConsole.MarkupLine($"[red]Error: {rangeError.EscapeMarkup()}[/]");
+			return false;
+		}
+
 		if (padding >= size / 2)
 		{
 			AnsiConsole.MarkupLine("[red]Error: Padding must be less than half the size of the image.[/]");
@@ -102,17 +110,53 @@ public static class ImageService
 		return true;
 	}
 
-	private static bool ProcessFileWithErrorHandling(string file, string outputPath, Rgba32 targetColor, int size, int padding)
+	/// <summary>
+	/// Checks the ranges of <c>--size</c> and <c>--padding</c> on their own, before any file is touched.
+	/// Negative padding would make the content larger than <paramref name="size"/>, and the final pad
+	/// cannot shrink it, so the output would exceed the documented maximum.
+	/// </summary>
+	/// <returns>The message for the first value out of range, or <see langword="null"/> when both are valid.</returns>
+	internal static string? ValidateSizeAndPadding(int size, int padding)
+	{
+		if (size < 1)
+		{
+			return "--size must be at least 1";
+		}
+
+		if (padding < 0)
+		{
+			return "--padding must be zero or greater";
+		}
+
+		return null;
+	}
+
+	/// <summary>
+	/// The path a processed image is written to. The output is always PNG, so it takes the
+	/// <c>.png</c> extension whatever the input's was.
+	/// </summary>
+	internal static string OutputFilePathFor(string filePath, string outputPath) =>
+		Path.Join(outputPath, Path.ChangeExtension(Path.GetFileName(filePath), ".png"));
+
+	private static bool ProcessFileWithErrorHandling(string file, string outputPath, HashSet<string> claimedOutputs, Rgba32 targetColor, int size, int padding)
 	{
 		if (file.Contains(".new.png", StringComparison.OrdinalIgnoreCase))
 		{
 			return false;
 		}
 
+		string outputFilePath = OutputFilePathFor(file, outputPath);
+		if (!claimedOutputs.Add(outputFilePath))
+		{
+			// a.png and a.jpg both become a.png; the first one processed keeps the name.
+			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: another input in this batch is already written to {Path.GetFileName(outputFilePath).EscapeMarkup()}.[/]");
+			return false;
+		}
+
 		try
 		{
 			AnsiConsole.MarkupLine($"Processing [blue]{Path.GetFileName(file).EscapeMarkup()}[/]...");
-			if (ProcessSingleImage(file, outputPath, targetColor, size, padding))
+			if (ProcessSingleImage(file, outputFilePath, targetColor, size, padding))
 			{
 				return true;
 			}
@@ -140,7 +184,7 @@ public static class ImageService
 		return false;
 	}
 
-	private static bool ProcessSingleImage(string filePath, string outputPath, Rgba32 targetColor, int size, int padding)
+	private static bool ProcessSingleImage(string filePath, string outputFilePath, Rgba32 targetColor, int size, int padding)
 	{
 		using Image<Rgba32> image = Image.Load<Rgba32>(filePath);
 
@@ -161,7 +205,7 @@ public static class ImageService
 		}
 
 		// Crop, pad to square, resize, and add final padding
-		CropResizeAndSave(image, filePath, outputPath, bounds.Value, size, padding);
+		CropResizeAndSave(image, outputFilePath, bounds.Value, size, padding);
 		return true;
 	}
 
@@ -242,7 +286,7 @@ public static class ImageService
 	private static byte ComputeNewValue(Rgba32 pixel, byte maxValue, bool isBlack) =>
 		(byte)(isBlack ? 255 : 255 - (maxValue - pixel.R));
 
-	private static void CropResizeAndSave(Image<Rgba32> image, string filePath, string outputPath, Rectangle bounds, int size, int padding)
+	private static void CropResizeAndSave(Image<Rgba32> image, string outputFilePath, Rectangle bounds, int size, int padding)
 	{
 		int newSize = Math.Max(bounds.Width, bounds.Height);
 
@@ -262,8 +306,6 @@ public static class ImageService
 			.Pad(newSize, newSize, paddingColor)
 			.Resize(finalContentSize, finalContentSize)
 			.Pad(finalSize, finalSize, paddingColor));
-
-		string outputFilePath = Path.Join(outputPath, Path.GetFileName(filePath));
 
 		image.SaveAsPng(outputFilePath, new PngEncoder
 		{

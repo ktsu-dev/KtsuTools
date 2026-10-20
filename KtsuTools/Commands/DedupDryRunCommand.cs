@@ -2,7 +2,6 @@
 
 namespace KtsuTools.Commands;
 
-using System.ComponentModel;
 using System.IO;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
@@ -10,18 +9,11 @@ using KtsuTools.FileDedupe;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-public sealed class DedupDryRunCommand(FileDedupeService dedupeService) : AsyncCommand<DedupDryRunCommand.Settings>
+public sealed class DedupDryRunCommand(FileDedupeService dedupeService) : AsyncCommand<DedupSettings>
 {
 	private readonly FileDedupeService dedupeService = dedupeService;
 
-	public sealed class Settings : CommandSettings
-	{
-		[CommandOption("-p|--path <PATH>")]
-		[Description("Directory to scan for duplicates")]
-		public required string Path { get; init; }
-	}
-
-	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, DedupSettings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();

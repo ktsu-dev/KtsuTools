@@ -15,7 +15,7 @@ public sealed class CodeGenCommand(CodeGenService codeGenService) : AsyncCommand
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--input <FILE>")]
+		[CommandOption("--input <FILE>", isRequired: true)]
 		[Description("Input file for code generation")]
 		public required string InputFile { get; init; }
 
