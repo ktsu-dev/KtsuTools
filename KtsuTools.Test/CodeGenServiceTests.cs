@@ -128,6 +128,68 @@ public class CodeGenServiceTests
 		}
 	}
 
+	/// <summary>
+	/// An output folder that does not exist yet is made, rather than the write failing after the
+	/// code has been generated.
+	/// </summary>
+	[TestMethod]
+	public async Task GeneratingIntoAMissingFolderCreatesIt()
+	{
+		string directory = Path.Combine(Path.GetTempPath(), $"codegen-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(directory);
+
+		try
+		{
+			string input = Path.Combine(directory, "add.yaml");
+			string output = Path.Combine(directory, "gen", "nested", "add.hpp");
+			await File.WriteAllTextAsync(input, SampleYaml, TestContext.CancellationTokenSource.Token).ConfigureAwait(false);
+
+			int exit = await new CodeGenService().GenerateAsync(
+				AbsoluteFilePath.Create<AbsoluteFilePath>(input),
+				"cpp",
+				AbsoluteFilePath.Create<AbsoluteFilePath>(output),
+				TestContext.CancellationTokenSource.Token).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			Assert.Contains("int Add(int a, int b)", await File.ReadAllTextAsync(output, TestContext.CancellationTokenSource.Token).ConfigureAwait(false));
+		}
+		finally
+		{
+			Directory.Delete(directory, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// An output path that names an existing folder cannot be written, which is an exit code and
+	/// a message, not an exception out of the command.
+	/// </summary>
+	[TestMethod]
+	public async Task GeneratingOntoAnExistingFolderIsRefused()
+	{
+		string directory = Path.Combine(Path.GetTempPath(), $"codegen-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(directory);
+
+		try
+		{
+			string input = Path.Combine(directory, "add.yaml");
+			string output = Path.Combine(directory, "taken");
+			Directory.CreateDirectory(output);
+			await File.WriteAllTextAsync(input, SampleYaml, TestContext.CancellationTokenSource.Token).ConfigureAwait(false);
+
+			int exit = await new CodeGenService().GenerateAsync(
+				AbsoluteFilePath.Create<AbsoluteFilePath>(input),
+				"cpp",
+				AbsoluteFilePath.Create<AbsoluteFilePath>(output),
+				TestContext.CancellationTokenSource.Token).ConfigureAwait(false);
+
+			Assert.AreEqual(1, exit);
+		}
+		finally
+		{
+			Directory.Delete(directory, recursive: true);
+		}
+	}
+
 	/// <summary>Gets or sets the context the test platform supplies.</summary>
 	public TestContext TestContext { get; set; } = null!;
 }
