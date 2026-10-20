@@ -51,11 +51,11 @@ internal static class Program
 
 		app.Configure(config =>
 		{
-			config.SetApplicationName("ktsu");
-			config.SetApplicationVersion("0.1.0");
+			config.SetApplicationName(CliIdentity.Name);
+			config.SetApplicationVersion(CliIdentity.Version);
 
 			config.AddCommand<BuildMonitorCommand>("build-monitor")
-				.WithDescription("Monitor CI/CD builds from GitHub Actions and Azure DevOps")
+				.WithDescription("Monitor CI/CD builds from GitHub Actions")
 				.WithExample("build-monitor", "--owner", "ktsu-dev");
 
 			config.AddCommand<MergeCommand>("merge")
@@ -85,7 +85,7 @@ internal static class Program
 			});
 
 			config.AddCommand<MergeHistoryCommand>("merge-history")
-				.WithDescription("Show recent ktsu merge runs (most-recent first); --clear truncates")
+				.WithDescription("Show recent ktools merge runs (most-recent first); --clear truncates")
 				.WithExample("merge-history")
 				.WithExample("merge-history", "--clear");
 
