@@ -111,6 +111,23 @@ public class SyncCommandTests
 
 	[TestMethod]
 	[DoNotParallelize]
+	public async Task ExecutingWithARepoThatNamesNothingFailsWithoutPrompting()
+	{
+		SyncCommand.Settings settings = new()
+		{
+			Repo = [","],
+			Filename = ["shared.txt"],
+		};
+
+		(int exit, string output) = await ExecuteAsync(settings).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "--repo already answered which repositories to scan, so an empty answer is an error.");
+		StringAssert.Contains(output, "--repo names no repositories", StringComparison.Ordinal);
+		Assert.IsFalse(output.Contains("Root path to scan", StringComparison.Ordinal), "A run that named --repo must not fall back to the prompt.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
 	public async Task ExecutingWithAPathStillScansTheWorkspace()
 	{
 		using TempScanTree tree = TempScanTree.WithFile("repo-a", "shared.txt");

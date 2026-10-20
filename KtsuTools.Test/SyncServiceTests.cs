@@ -945,6 +945,23 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void TryReadRepoListReportsAFileItCannotRead()
+	{
+		using TempTree tree = TempTree.New();
+		string listFile = Path.Join(tree.Root, "repos.txt");
+		File.WriteAllLines(listFile, ["repo-a"]);
+
+		// An exclusive handle stops the read on every platform, where a permission change would not on Windows or as root.
+		using (FileStream exclusive = new(listFile, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+		{
+			Assert.IsFalse(SyncService.TryReadRepoList(listFile, out IReadOnlyList<string> repos, out string? error));
+			Assert.IsNotNull(error);
+			StringAssert.StartsWith(error, $"Repo list unreadable: {listFile} (", StringComparison.Ordinal);
+			Assert.IsEmpty(repos);
+		}
+	}
+
+	[TestMethod]
 	public void TryReadRepoListReportsAListThatNamesNoRepositories()
 	{
 		using TempTree tree = TempTree.New();
