@@ -39,14 +39,10 @@ public sealed class ImageProcessCommand : AsyncCommand<ImageProcessCommand.Setti
 
 		public override ValidationResult Validate()
 		{
-			if (Size < 1)
-			{
-				return ValidationResult.Error("--size must be at least 1");
-			}
-
-			return Padding < 0
-				? ValidationResult.Error("--padding must be zero or greater")
-				: ValidationResult.Success();
+			string? rangeError = ImageService.ValidateSizeAndPadding(Size, Padding);
+			return rangeError is null
+				? ValidationResult.Success()
+				: ValidationResult.Error(rangeError);
 		}
 	}
 

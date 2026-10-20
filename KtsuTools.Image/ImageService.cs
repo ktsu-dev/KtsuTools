@@ -28,7 +28,7 @@ public static class ImageService
 	/// <param name="outputPath">Directory where processed images will be saved.</param>
 	/// <param name="color">Target color as a hex string (e.g., "#FFFFFF").</param>
 	/// <param name="size">Maximum output size in pixels.</param>
-	/// <param name="padding">Padding in pixels added around the content. Must be less than size / 2.</param>
+	/// <param name="padding">Padding in pixels added around the content. Must leave at least one pixel of content: <c>size - 2 * padding &gt;= 1</c>.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>The number of successfully processed files.</returns>
 	public static async Task<int> ProcessAsync(AbsoluteDirectoryPath inputPath, AbsoluteDirectoryPath outputPath, string color = "#FFFFFF", int size = 128, int padding = 0, CancellationToken ct = default)
@@ -90,12 +90,6 @@ public static class ImageService
 			return false;
 		}
 
-		if (padding >= size / 2)
-		{
-			AnsiConsole.MarkupLine("[red]Error: Padding must be less than half the size of the image.[/]");
-			return false;
-		}
-
 		if (!Directory.Exists(inputPath))
 		{
 			AnsiConsole.MarkupLine($"[red]Error: Input directory does not exist: {inputPath.EscapeMarkup()}[/]");
@@ -113,10 +107,14 @@ public static class ImageService
 	/// <summary>
 	/// Checks the ranges of <c>--size</c> and <c>--padding</c> on their own, before any file is touched.
 	/// Negative padding would make the content larger than <paramref name="size"/>, and the final pad
-	/// cannot shrink it, so the output would exceed the documented maximum.
+	/// cannot shrink it, so the output would exceed the documented maximum. Padding on both sides must
+	/// leave at least one pixel of content, so <c>--size 1 --padding 0</c> and <c>--size 3 --padding 1</c>
+	/// are valid while <c>--size 2 --padding 1</c> is not.
 	/// </summary>
+	/// <param name="size">The requested <c>--size</c>.</param>
+	/// <param name="padding">The requested <c>--padding</c>.</param>
 	/// <returns>The message for the first value out of range, or <see langword="null"/> when both are valid.</returns>
-	internal static string? ValidateSizeAndPadding(int size, int padding)
+	public static string? ValidateSizeAndPadding(int size, int padding)
 	{
 		if (size < 1)
 		{
@@ -126,6 +124,13 @@ public static class ImageService
 		if (padding < 0)
 		{
 			return "--padding must be zero or greater";
+		}
+
+		// Written as a division so a huge --padding cannot overflow 2 * padding.
+		int maxPadding = (size - 1) / 2;
+		if (padding > maxPadding)
+		{
+			return $"--padding must be at most {maxPadding} for --size {size}, so at least 1 pixel of content remains";
 		}
 
 		return null;
