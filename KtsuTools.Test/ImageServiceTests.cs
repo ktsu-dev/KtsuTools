@@ -234,6 +234,90 @@ public class ImageServiceTests
 	}
 
 	[TestMethod]
+	[DataRow(1, 0)]
+	[DataRow(3, 1)]
+	[DataRow(5, 2)]
+	public void SettingsAcceptPaddingThatLeavesOnePixelOfContent(int size, int padding)
+	{
+		ImageProcessCommand.Settings settings = new() { InputPath = "in", OutputPath = "out", Size = size, Padding = padding };
+
+		ValidationResult result = settings.Validate();
+
+		Assert.IsTrue(result.Successful, result.Message);
+	}
+
+	[TestMethod]
+	[DataRow(2, 1, 0)]
+	[DataRow(3, 2, 1)]
+	[DataRow(128, 64, 63)]
+	[DataRow(128, int.MaxValue, 63)]
+	public void SettingsRejectPaddingThatLeavesNoContent(int size, int padding, int maxPadding)
+	{
+		ImageProcessCommand.Settings settings = new() { InputPath = "in", OutputPath = "out", Size = size, Padding = padding };
+
+		ValidationResult result = settings.Validate();
+
+		Assert.IsFalse(result.Successful);
+		Assert.AreEqual($"--padding must be at most {maxPadding} for --size {size}, so at least 1 pixel of content remains", result.Message);
+	}
+
+	[TestMethod]
+	[DataRow(1, 0)]
+	[DataRow(3, 1)]
+	public async Task ProcessAsyncAcceptsTheSmallestValidSizes(int size, int padding)
+	{
+		string root = CreateTempDirectory();
+		try
+		{
+			string input = Path.Join(root, "in");
+			string output = Path.Join(root, "out");
+			Directory.CreateDirectory(input);
+			SavePng(Path.Join(input, "a.png"), width: 40, height: 40, new Rectangle(0, 0, 40, 40));
+
+			int processed = await ImageService.ProcessAsync(
+				AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(input),
+				AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(output),
+				size: size,
+				padding: padding).ConfigureAwait(false);
+
+			Assert.AreEqual(1, processed, "A size the validation accepts must not be rejected with a padding message.");
+			using Image<Rgba32> result = await Image.LoadAsync<Rgba32>(Path.Join(output, "a.png")).ConfigureAwait(false);
+			Assert.AreEqual(size, result.Width);
+			Assert.AreEqual(size, result.Height);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task ProcessAsyncRefusesPaddingThatLeavesNoContentAndWritesNothing()
+	{
+		string root = CreateTempDirectory();
+		try
+		{
+			string input = Path.Join(root, "in");
+			string output = Path.Join(root, "out");
+			Directory.CreateDirectory(input);
+			SavePng(Path.Join(input, "a.png"), width: 40, height: 40, new Rectangle(0, 0, 40, 40));
+
+			int processed = await ImageService.ProcessAsync(
+				AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(input),
+				AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(output),
+				size: 2,
+				padding: 1).ConfigureAwait(false);
+
+			Assert.AreEqual(0, processed);
+			Assert.IsFalse(Directory.Exists(output), "The range checks run before the output directory is created.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
 	public void SettingsAcceptTheDefaults()
 	{
 		ImageProcessCommand.Settings settings = new() { InputPath = "in", OutputPath = "out", Size = 128, Padding = 0 };
