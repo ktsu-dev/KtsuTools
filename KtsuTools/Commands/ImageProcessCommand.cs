@@ -14,11 +14,11 @@ public sealed class ImageProcessCommand : AsyncCommand<ImageProcessCommand.Setti
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--input <DIRECTORY>")]
+		[CommandOption("--input <DIRECTORY>", isRequired: true)]
 		[Description("Input directory containing images")]
 		public required string InputPath { get; init; }
 
-		[CommandOption("--output <DIRECTORY>")]
+		[CommandOption("--output <DIRECTORY>", isRequired: true)]
 		[Description("Output directory for processed images")]
 		public required string OutputPath { get; init; }
 

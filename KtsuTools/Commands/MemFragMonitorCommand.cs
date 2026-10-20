@@ -14,7 +14,7 @@ public sealed class MemFragMonitorCommand(MemFragService memFragService) : Async
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--pid <PID>")]
+		[CommandOption("--pid <PID>", isRequired: true)]
 		[Description("Process ID to monitor for memory fragmentation")]
 		public required int ProcessId { get; init; }
 

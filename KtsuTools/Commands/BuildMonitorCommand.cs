@@ -21,7 +21,7 @@ public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService)
 {
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--owner <OWNER>")]
+		[CommandOption("--owner <OWNER>", isRequired: true)]
 		[Description("GitHub owner or organization to monitor")]
 		public required string Owner { get; init; }
 

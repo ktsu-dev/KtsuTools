@@ -15,7 +15,7 @@ public sealed class PackagesUpdateCommand(PackagesService packagesService) : Asy
 
 	public sealed class Settings : CommandSettings
 	{
-		[CommandOption("--path <PATH>")]
+		[CommandOption("--path <PATH>", isRequired: true)]
 		[Description("Path to the project or solution")]
 		public required string Path { get; init; }
 
