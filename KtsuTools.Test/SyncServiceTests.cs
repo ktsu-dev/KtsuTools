@@ -911,6 +911,52 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void TryReadRepoListReturnsTheRepositoriesTheFileNames()
+	{
+		using TempTree tree = TempTree.New();
+		string repo = tree.CreateDirectory("repo-a");
+		string listFile = Path.Join(tree.Root, "repos.txt");
+		File.WriteAllLines(listFile, ["# the ktsu clones", "repo-a"]);
+
+		Assert.IsTrue(SyncService.TryReadRepoList(listFile, out IReadOnlyList<string> repos, out string? error), error);
+		CollectionAssert.AreEqual(new[] { repo }, repos.ToArray());
+		Assert.IsNull(error);
+	}
+
+	[TestMethod]
+	public void TryReadRepoListReportsAMissingFile()
+	{
+		using TempTree tree = TempTree.New();
+		string listFile = Path.Join(tree.Root, "missing.txt");
+
+		Assert.IsFalse(SyncService.TryReadRepoList(listFile, out IReadOnlyList<string> repos, out string? error));
+		Assert.AreEqual($"Repo list not found: {listFile}", error);
+		Assert.IsEmpty(repos);
+	}
+
+	[TestMethod]
+	public void TryReadRepoListReportsADirectory()
+	{
+		using TempTree tree = TempTree.New();
+		string directory = tree.CreateDirectory("lists");
+
+		Assert.IsFalse(SyncService.TryReadRepoList(directory, out _, out string? error));
+		Assert.AreEqual($"Repo list is a directory, not a file: {directory}", error);
+	}
+
+	[TestMethod]
+	public void TryReadRepoListReportsAListThatNamesNoRepositories()
+	{
+		using TempTree tree = TempTree.New();
+		string listFile = Path.Join(tree.Root, "repos.txt");
+		File.WriteAllLines(listFile, ["# none yet", "", "   "]);
+
+		Assert.IsFalse(SyncService.TryReadRepoList(listFile, out IReadOnlyList<string> repos, out string? error));
+		Assert.AreEqual($"Repo list names no repositories: {listFile}", error);
+		Assert.IsEmpty(repos);
+	}
+
+	[TestMethod]
 	public void DisplayPathStaysRelativeWhileOneWorkspaceIsScanned()
 	{
 		string root = Path.Join(Path.GetTempPath(), "workspace");
