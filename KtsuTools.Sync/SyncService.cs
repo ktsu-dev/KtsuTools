@@ -5,6 +5,7 @@ namespace KtsuTools.Sync;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -295,8 +296,20 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// <param name="repos">Explicit repository paths, each of which may also be a comma-separated list.</param>
 	/// <param name="repoListFile">A file listing repository paths, or empty when there is none.</param>
 	/// <returns>The absolute roots to scan, in the order they were supplied.</returns>
-	public static IReadOnlyList<string> ResolveRoots(string? path, IEnumerable<string>? repos, string? repoListFile)
+	public static IReadOnlyList<string> ResolveRoots(string? path, IEnumerable<string>? repos, string? repoListFile) =>
+		ResolveRoots(path, repos, string.IsNullOrWhiteSpace(repoListFile) ? [] : ReadRepoList(repoListFile));
+
+	/// <summary>
+	/// Resolves the directories to scan from a workspace path, explicit repository paths, and the
+	/// repositories a list file has already been read into, in that order and without duplicates.
+	/// </summary>
+	/// <param name="path">The workspace to walk, or empty when only explicit repositories are given.</param>
+	/// <param name="repos">Explicit repository paths, each of which may also be a comma-separated list.</param>
+	/// <param name="listedRepos">The repository paths read from a list file, as <see cref="TryReadRepoList"/> returns them.</param>
+	/// <returns>The absolute roots to scan, in the order they were supplied.</returns>
+	public static IReadOnlyList<string> ResolveRoots(string? path, IEnumerable<string>? repos, IReadOnlyList<string> listedRepos)
 	{
+		Ensure.NotNull(listedRepos);
 		List<string> roots = [];
 
 		if (!string.IsNullOrWhiteSpace(path))
@@ -311,10 +324,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 				.SelectMany(r => r.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
 		}
 
-		if (!string.IsNullOrWhiteSpace(repoListFile))
-		{
-			roots.AddRange(ReadRepoList(repoListFile));
-		}
+		roots.AddRange(listedRepos);
 
 		return [.. roots
 			.Where(r => !string.IsNullOrWhiteSpace(r))
@@ -338,6 +348,49 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			.Select(line => line.Trim())
 			.Where(line => line.Length > 0 && !line.StartsWith('#'))
 			.Select(line => Path.GetFullPath(line, baseDirectory))];
+	}
+
+	/// <summary>
+	/// Reads a <c>--repo-list</c> file, turning the ways it can fail to name anything into a message
+	/// rather than an exception: a file that is missing, one that cannot be read, and one that holds
+	/// only blank lines and comments.
+	/// </summary>
+	/// <param name="repoListFile">Path of the file to read.</param>
+	/// <param name="repos">The absolute repository paths the file names, or empty when it names none.</param>
+	/// <param name="error">Why the file names no repositories, or <see langword="null"/> when it names some.</param>
+	/// <returns><see langword="true"/> when the file was read and names at least one repository.</returns>
+	public static bool TryReadRepoList(string repoListFile, out IReadOnlyList<string> repos, [NotNullWhen(false)] out string? error)
+	{
+		Ensure.NotNull(repoListFile);
+		string fullPath = Path.GetFullPath(repoListFile);
+		repos = [];
+
+		if (!File.Exists(fullPath))
+		{
+			error = Directory.Exists(fullPath)
+				? $"Repo list is a directory, not a file: {fullPath}"
+				: $"Repo list not found: {fullPath}";
+			return false;
+		}
+
+		try
+		{
+			repos = ReadRepoList(fullPath);
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			error = $"Repo list unreadable: {fullPath} ({exception.Message})";
+			return false;
+		}
+
+		if (repos.Count == 0)
+		{
+			error = $"Repo list names no repositories: {fullPath}";
+			return false;
+		}
+
+		error = null;
+		return true;
 	}
 
 	/// <summary>

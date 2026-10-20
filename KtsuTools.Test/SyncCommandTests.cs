@@ -71,6 +71,63 @@ public class SyncCommandTests
 
 	[TestMethod]
 	[DoNotParallelize]
+	public async Task ExecutingWithAMissingRepoListFailsBeforeScanning()
+	{
+		string listFile = Path.Join(Path.GetTempPath(), $"ktsu_missing_list_{Guid.NewGuid():N}.txt");
+
+		SyncCommand.Settings settings = new()
+		{
+			RepoList = listFile,
+			Filename = ["shared.txt"],
+		};
+
+		(int exit, string output) = await ExecuteAsync(settings).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A list that is not there is a caller error.");
+		StringAssert.Contains(output, "Repo list not found", StringComparison.Ordinal);
+		StringAssert.Contains(output, Path.GetFileName(listFile), StringComparison.Ordinal, "The error should name the list it could not find.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ExecutingWithARepoListThatNamesNoRepositoriesFailsWithoutPrompting()
+	{
+		using TempScanTree tree = TempScanTree.WithFile("repo-a", "shared.txt");
+		string listFile = Path.Join(tree.Root, "repos.txt");
+		File.WriteAllLines(listFile, ["# none yet", string.Empty]);
+
+		SyncCommand.Settings settings = new()
+		{
+			RepoList = listFile,
+			Filename = ["shared.txt"],
+		};
+
+		(int exit, string output) = await ExecuteAsync(settings).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "--repo-list already answered which repositories to scan, so an empty answer is an error.");
+		StringAssert.Contains(output, "Repo list names no repositories", StringComparison.Ordinal);
+		Assert.IsFalse(output.Contains("Root path to scan", StringComparison.Ordinal), "A run that named a list must not fall back to the prompt.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ExecutingWithARepoThatNamesNothingFailsWithoutPrompting()
+	{
+		SyncCommand.Settings settings = new()
+		{
+			Repo = [","],
+			Filename = ["shared.txt"],
+		};
+
+		(int exit, string output) = await ExecuteAsync(settings).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "--repo already answered which repositories to scan, so an empty answer is an error.");
+		StringAssert.Contains(output, "--repo names no repositories", StringComparison.Ordinal);
+		Assert.IsFalse(output.Contains("Root path to scan", StringComparison.Ordinal), "A run that named --repo must not fall back to the prompt.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
 	public async Task ExecutingWithAPathStillScansTheWorkspace()
 	{
 		using TempScanTree tree = TempScanTree.WithFile("repo-a", "shared.txt");

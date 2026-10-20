@@ -135,9 +135,23 @@ public sealed class SyncCommand(SyncService syncService, SyncConfigService confi
 		}
 
 		// A saved configuration supplies only --path; --repo, --repo-list and --exclude stay flag-only for now.
-		IReadOnlyList<string> roots = SyncService.ResolveRoots(options.Path, settings.Repo, settings.RepoList);
+		IReadOnlyList<string> listedRepos = [];
+		if (!string.IsNullOrWhiteSpace(settings.RepoList)
+			&& !SyncService.TryReadRepoList(settings.RepoList, out listedRepos, out string? repoListError))
+		{
+			ErrorDisplay.ShowError(repoListError);
+			return 1;
+		}
+
+		IReadOnlyList<string> roots = SyncService.ResolveRoots(options.Path, settings.Repo, listedRepos);
 		if (roots.Count == 0)
 		{
+			if (settings.Repo.Length > 0)
+			{
+				ErrorDisplay.ShowError("--repo names no repositories.");
+				return 1;
+			}
+
 			// Only ask when nothing at all was named; --repo and --repo-list already answer the question.
 			string enteredRoot = await AnsiConsole.AskAsync<string>("[bold]Root path to scan:[/]", cancellationToken).ConfigureAwait(false);
 			roots = SyncService.ResolveRoots(enteredRoot, repos: null, repoListFile: null);
