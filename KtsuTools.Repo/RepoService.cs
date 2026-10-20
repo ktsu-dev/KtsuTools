@@ -92,6 +92,25 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	private readonly Lock fetchLock = new();
 
 	/// <summary>
+	/// Discovers git repositories under the given directory, caches them, and reports the outcome as an exit code.
+	/// </summary>
+	/// <param name="path">The workspace root to search.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Zero when the walk ran, one when the path does not exist.</returns>
+	public async Task<int> DiscoverAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)
+	{
+		Ensure.NotNull(path);
+
+		if (!DirectoryExistsOrReport(path.ToString()))
+		{
+			return 1;
+		}
+
+		await DiscoverRepositoriesAsync(path, ct).ConfigureAwait(false);
+		return 0;
+	}
+
+	/// <summary>
 	/// Discovers git repositories in the given directory.
 	/// </summary>
 	public async Task<IReadOnlyList<string>> DiscoverRepositoriesAsync(AbsoluteDirectoryPath path, CancellationToken ct = default)
@@ -101,9 +120,8 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 		string fullPath = path.ToString();
 
-		if (!Directory.Exists(fullPath))
+		if (!DirectoryExistsOrReport(fullPath))
 		{
-			AnsiConsole.MarkupLine($"[red]Error: Directory '{fullPath.EscapeMarkup()}' does not exist.[/]");
 			return [];
 		}
 

@@ -57,4 +57,19 @@ public class RepoWorkspaceCommandTests
 			Directory.Delete(root, recursive: true);
 		}
 	}
+
+	[TestMethod]
+	public async Task DiscoverFailsOnAPathThatDoesNotExist()
+	{
+		string missing = Path.Join(Path.GetTempPath(), $"ktsu_discovercmd_{Guid.NewGuid():N}");
+		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
+		ICommand<RepoWorkspaceCommand.Settings> command = new RepoDiscoverCommand(service);
+		CommandContext context = new([], new NoRemainingArguments(), "discover", data: null);
+
+		int exit = await command
+			.ExecuteAsync(context, new RepoWorkspaceCommand.Settings { Path = missing }, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A --path that does not exist is a caller error, so discover should not report success.");
+	}
 }

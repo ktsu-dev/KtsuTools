@@ -7,9 +7,6 @@ using KtsuTools.Repo;
 
 public sealed class RepoDiscoverCommand(RepoService repoService) : RepoWorkspaceCommand(repoService)
 {
-	protected override async Task<int> RunAsync(AbsoluteDirectoryPath path, CancellationToken ct)
-	{
-		await RepoService.DiscoverRepositoriesAsync(path, ct).ConfigureAwait(false);
-		return 0;
-	}
+	protected override Task<int> RunAsync(AbsoluteDirectoryPath path, CancellationToken ct) =>
+		RepoService.DiscoverAsync(path, ct);
 }

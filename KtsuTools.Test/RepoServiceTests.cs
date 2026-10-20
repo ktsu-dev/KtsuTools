@@ -997,6 +997,43 @@ public class RepoServiceTests
 		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not a workspace with no solutions.");
 	}
 
+	[TestMethod]
+	public async Task DiscoverAsyncMissingDirectoryReturnsFailure()
+	{
+		RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object);
+		AbsoluteDirectoryPath missingPath = MissingDirectory("discovermissingdir");
+
+		int exit = await service.DiscoverAsync(missingPath).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "A path that does not exist is a caller error, not an empty workspace.");
+	}
+
+	[TestMethod]
+	public async Task DiscoverAsyncEmptyWorkspaceSucceeds()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_discoverempty_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+
+		try
+		{
+			using RepoCacheSettings cache = new();
+			Mock<ISettingsService> settings = new();
+			settings.Setup(s => s.LoadOrCreate<RepoCacheSettings>()).Returns(cache);
+			settings.Setup(s => s.SaveAsync(It.IsAny<RepoCacheSettings>())).Returns(Task.CompletedTask);
+
+			RepoService service = new(new Mock<IGitService>().Object, new Mock<IProcessService>().Object, settings.Object);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.DiscoverAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit, "A workspace that holds no repositories is not an error.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	private static AbsoluteDirectoryPath MissingDirectory(string prefix) =>
 		AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.Join(Path.GetTempPath(), $"ktsu_{prefix}_{Guid.NewGuid():N}"));
 
