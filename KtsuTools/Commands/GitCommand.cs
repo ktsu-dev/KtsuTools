@@ -32,7 +32,7 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 		public bool NoColor { get; init; }
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(context);
 		Ensure.NotNull(settings);

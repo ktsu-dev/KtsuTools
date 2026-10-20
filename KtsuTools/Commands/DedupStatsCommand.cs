@@ -14,7 +14,7 @@ public sealed class DedupStatsCommand(FileDedupeService dedupeService) : AsyncCo
 {
 	private readonly FileDedupeService dedupeService = dedupeService;
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, DedupSettings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, DedupSettings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		using CtrlCScope scope = new();

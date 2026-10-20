@@ -36,7 +36,7 @@ public sealed class BuildMonitorCommand(BuildMonitorService buildMonitorService)
 				: ValidationResult.Error($"--refresh must be greater than zero seconds (got {RefreshInterval}).");
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 

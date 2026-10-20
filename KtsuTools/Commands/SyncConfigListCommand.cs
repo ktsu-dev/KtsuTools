@@ -23,7 +23,7 @@ public sealed class SyncConfigListCommand(SyncConfigService configService) : Com
 	}
 
 	/// <inheritdoc/>
-	protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		IReadOnlyDictionary<string, SyncConfigEntry> configs = configService.List();
 

@@ -19,7 +19,7 @@ public sealed class MergeBatchShowCommand(MergeBatchService batchService) : Comm
 		public required string Name { get; init; }
 	}
 
-	protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		MergeBatchEntry? entry = batchService.Get(settings.Name);

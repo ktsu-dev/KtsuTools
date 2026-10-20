@@ -29,7 +29,7 @@ public sealed class SyncConfigShowCommand(SyncConfigService configService) : Com
 	}
 
 	/// <inheritdoc/>
-	protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 		SyncConfigEntry? entry = configService.Get(settings.Name);

@@ -85,7 +85,7 @@ public sealed class DedupCommandTests : IDisposable
 		CommandRuntimeException exception = await Assert.ThrowsExactlyAsync<CommandRuntimeException>(
 			() => RunAsync("dedup", verb)).ConfigureAwait(false);
 
-		Assert.AreEqual($"Command '{verb}' is missing required argument 'path'.", exception.Message);
+		Assert.AreEqual($"Command '{verb}' is missing required option 'path'.", exception.Message);
 	}
 
 	private static async Task<(int Exit, string Output)> RunAsync(params string[] args)

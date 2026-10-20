@@ -25,7 +25,7 @@ public sealed class MachineMonitorCommand(MachineMonitorService machineMonitorSe
 				: ValidationResult.Error($"--refresh must be greater than zero milliseconds (got {RefreshInterval}).");
 	}
 
-	protected override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
+	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
 	{
 		Ensure.NotNull(settings);
 

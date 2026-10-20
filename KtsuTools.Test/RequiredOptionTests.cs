@@ -43,6 +43,6 @@ public class RequiredOptionTests
 
 		CommandRuntimeException exception = Assert.ThrowsExactly<CommandRuntimeException>(() => app.Run(["image", "--input", "."]));
 
-		Assert.AreEqual("Command 'image' is missing required argument 'output'.", exception.Message);
+		Assert.AreEqual("Command 'image' is missing required option 'output'.", exception.Message);
 	}
 }
