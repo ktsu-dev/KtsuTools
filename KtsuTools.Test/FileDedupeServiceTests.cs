@@ -95,9 +95,11 @@ public class FileDedupeServiceTests
 			AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
 			DedupePlan plan = await service.PlanAsync(path).ConfigureAwait(false);
 
-			int deleted = service.DeleteRedundant(plan);
+			DedupeDeletion result = service.DeleteRedundant(plan);
 
-			Assert.AreEqual(2, deleted);
+			Assert.AreEqual(2, result.Deleted);
+			Assert.AreEqual(2, result.Planned);
+			Assert.AreEqual(0, result.Failed.Count);
 			Assert.IsTrue(File.Exists(keeper));
 			Assert.IsFalse(File.Exists(dup1));
 			Assert.IsFalse(File.Exists(dup2));
@@ -143,7 +145,7 @@ public class FileDedupeServiceTests
 			Assert.AreEqual(1, plan.Groups.Count, "Only the real duplicate pair forms a group; empty files share no content.");
 			Assert.AreEqual(duplicate, plan.Removals.Single());
 
-			Assert.AreEqual(1, service.DeleteRedundant(plan));
+			Assert.AreEqual(1, service.DeleteRedundant(plan).Deleted);
 			Assert.IsTrue(File.Exists(keeper));
 			Assert.IsFalse(File.Exists(duplicate));
 			foreach (string empty in empties)
