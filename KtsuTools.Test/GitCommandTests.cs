@@ -11,6 +11,7 @@ using KtsuTools.Commands;
 using KtsuTools.Core.Services.Git;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.Repo;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Spectre.Console.Cli;
 
@@ -113,6 +114,106 @@ public class GitCommandTests
 		Assert.AreEqual(repo.Root, fake.Calls[0].WorkingDirectory);
 	}
 
+	[TestMethod]
+	[DoNotParallelize]
+	[DataRow("log -1", "log", "-1")]
+	[DataRow("log -3 -p", "log", "-3", "-p")]
+	[DataRow("clean -fdx", "clean", "-fdx")]
+	[DataRow("branch -vv", "branch", "-vv")]
+	[DataRow("grep -C2 foo", "grep", "-C2", "foo")]
+	[DataRow("diff -U5", "diff", "-U5")]
+	[DataRow("log \"--format=%an %s\" -1", "log", "--format=%an %s", "-1")]
+	public async Task TheRealAppPassesEverythingAfterTheSeparatorToGitVerbatim(string expected, params string[] gitArgs)
+	{
+		using TempRepo repo = new();
+		RecordingProcessService fake = new();
+
+		int exit = await RunAppAsync(fake, ["git", "--path", repo.Root, "--no-color", "--", .. gitArgs]).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit);
+		Assert.AreEqual(1, fake.Calls.Count);
+		Assert.AreEqual(expected, fake.Calls[0].Arguments);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task TheRealAppKeepsPositionalArgumentsBeforeTheSeparator()
+	{
+		using TempRepo repo = new();
+		RecordingProcessService fake = new();
+
+		int exit = await RunAppAsync(fake, ["git", "log", "--path", repo.Root, "--no-color", "--", "-1"]).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit);
+		Assert.AreEqual("log -1", fake.Calls[0].Arguments);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task TheRealAppStillRejectsAFlagWrittenWithoutTheSeparator()
+	{
+		using TempRepo repo = new();
+		RecordingProcessService fake = new();
+
+		int exit = await RunAppAsync(fake, ["git", "status", "--short", "--path", repo.Root]).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit, "--short without a separator is claimed by Spectre and would be lost.");
+		Assert.AreEqual(0, fake.Calls.Count);
+	}
+
+	[TestMethod]
+	public void SplitHoldsBackEverythingAfterTheFirstSeparator()
+	{
+		string[] expectedCliArgs = ["git", "--path", "ws"];
+		string[] expectedPassThrough = ["log", "--", "file"];
+
+		string[] cliArgs = GitPassThrough.Split(["git", "--path", "ws", "--", "log", "--", "file"], out GitPassThrough passThrough);
+
+		CollectionAssert.AreEqual(expectedCliArgs, cliArgs);
+		CollectionAssert.AreEqual(expectedPassThrough, passThrough.Arguments.ToArray(), "A later '--' belongs to git's own pathspec.");
+	}
+
+	[TestMethod]
+	public void SplitLeavesOtherCommandsAlone()
+	{
+		string[] args = ["sync", "--path", "ws", "--", "x"];
+
+		string[] cliArgs = GitPassThrough.Split(args, out GitPassThrough passThrough);
+
+		Assert.AreSame(args, cliArgs);
+		Assert.AreSame(GitPassThrough.None, passThrough);
+	}
+
+	[TestMethod]
+	public void SplitLeavesAGitCommandLineWithoutASeparatorAlone()
+	{
+		string[] args = ["git", "status"];
+
+		string[] cliArgs = GitPassThrough.Split(args, out GitPassThrough passThrough);
+
+		Assert.AreSame(args, cliArgs);
+		Assert.AreEqual(0, passThrough.Arguments.Count);
+	}
+
+	/// <summary>
+	/// Runs a command line through <see cref="Program.Run"/>, the same path the shipped executable
+	/// takes, so Spectre's real tokenizing is part of what is tested.
+	/// </summary>
+	private static async Task<int> RunAppAsync(IProcessService processService, string[] args)
+	{
+		ServiceCollection services = new();
+		services.AddSingleton(new RepoService(new Mock<IGitService>().Object, processService));
+
+		int exit = -1;
+		_ = await ConsoleCapture.CaptureAsync(() =>
+		{
+			exit = Program.Run(args, services);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		return exit;
+	}
+
 	private static async Task<int> ExecuteAsync(
 		IProcessService processService,
 		string path,
@@ -122,7 +223,7 @@ public class GitCommandTests
 		bool noColor = false)
 	{
 		RepoService repoService = new(new Mock<IGitService>().Object, processService);
-		ICommand command = new GitCommand(repoService);
+		ICommand command = new GitCommand(repoService, GitPassThrough.None);
 
 		GitCommand.Settings settings = new() { Args = args, Path = path, NoColor = noColor };
 		CommandContext context = new([], new FakeRemainingArguments(raw ?? [], parsed ?? []), "git", null);
