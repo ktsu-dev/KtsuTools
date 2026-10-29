@@ -181,9 +181,10 @@ public class SyncPullRequestsTests
 		using TempRemoteRepo repo = TempRemoteRepo.On("https://github.com/ktsu-dev/KtsuTools.git");
 		ScriptedProcessService gh = ScriptedProcessService.WithNoOpenPullRequest();
 
-		await OpenerFor(gh).OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
+		int failed = await OpenerFor(gh).OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
 			.ConfigureAwait(false);
 
+		Assert.AreEqual(0, failed);
 		Assert.AreEqual(1, gh.CreateCalls.Count, "A branch with no open pull request should get one.");
 		StringAssert.Contains(gh.CreateCalls[0], "--base \"main\"");
 		StringAssert.Contains(gh.CreateCalls[0], "--head \"sync/shared\"");
@@ -333,10 +334,11 @@ public class SyncPullRequestsTests
 			[second.Root] = BaseBranch,
 		};
 
-		await OpenerFor(gh).OpenAsync([first.Root, second.Root], Branch, bases, [Synced(".editorconfig")], CancellationToken.None)
+		int failed = await OpenerFor(gh).OpenAsync([first.Root, second.Root], Branch, bases, [Synced(".editorconfig")], CancellationToken.None)
 			.ConfigureAwait(false);
 
 		Assert.AreEqual(2, gh.CreateCalls.Count, "One repository's rejected pull request must not abandon the rest of the run.");
+		Assert.AreEqual(2, failed, "Each rejected pull request is counted so the run can exit non-zero.");
 	}
 
 	[TestMethod]
@@ -346,11 +348,12 @@ public class SyncPullRequestsTests
 		ScriptedProcessService gh = ScriptedProcessService.WithoutTheGhCli();
 		RecordingGitHubService api = new() { IsAuthenticated = true, RejectCreate = true };
 
-		await new SyncPullRequestOpener(gh, api)
+		int failed = await new SyncPullRequestOpener(gh, api)
 			.OpenAsync([repo.Root], Branch, BaseBranchOf(repo), [Synced(".editorconfig")], CancellationToken.None)
 			.ConfigureAwait(false);
 
 		Assert.AreEqual(1, api.Created.Count, "The attempt is still made; only its result is a rejection.");
+		Assert.AreEqual(1, failed);
 	}
 
 	[TestMethod]

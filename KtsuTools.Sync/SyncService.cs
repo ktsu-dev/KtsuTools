@@ -216,10 +216,10 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		IReadOnlyList<BranchSwitch> branchSwitches =
 			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, branchName).ConfigureAwait(false);
 
-		IReadOnlyList<string> pushed = [];
+		PushResult push = PushResult.None;
 		try
 		{
-			pushed = await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
+			push = await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
 		}
 		finally
 		{
@@ -228,12 +228,46 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		// Opened after the branches are restored, since it only reads the remote and the working
 		// tree should be back where the user left it regardless of how the pull requests go.
+		int failedPullRequests = 0;
 		if (openPullRequest)
 		{
-			await OpenPullRequestsAsync(pushed, branchName, branchSwitches, syncedFiles, ct).ConfigureAwait(false);
+			failedPullRequests = await OpenPullRequestsAsync(push.Pushed, branchName, branchSwitches, syncedFiles, ct).ConfigureAwait(false);
+		}
+
+		// Unattended runs (--auto-push, saved configs) rely on the exit code, so a push or pull
+		// request that failed must not be reported as success after the commits were made.
+		if (push.Failed.Count > 0 || failedPullRequests > 0)
+		{
+			AnsiConsole.WriteLine();
+			if (push.Failed.Count > 0)
+			{
+				AnsiConsole.MarkupLine($"[red]Failed to push {push.Failed.Count} repo(s); their commits are still local:[/]");
+				foreach (string failed in push.Failed)
+				{
+					AnsiConsole.MarkupLine($"  [red]{failed.EscapeMarkup()}[/]");
+				}
+			}
+
+			if (failedPullRequests > 0)
+			{
+				AnsiConsole.MarkupLine($"[red]Failed to open {failedPullRequests} pull request(s).[/]");
+			}
+
+			return 1;
 		}
 
 		return 0;
+	}
+
+	/// <summary>
+	/// The repositories a push phase pushed, and those it tried to push and could not.
+	/// </summary>
+	/// <param name="Pushed">Working directories of the repositories that were pushed.</param>
+	/// <param name="Failed">Working directories of the repositories whose pull or push failed.</param>
+	internal sealed record PushResult(IReadOnlyList<string> Pushed, IReadOnlyList<string> Failed)
+	{
+		/// <summary>Gets the result of a push phase that pushed nothing.</summary>
+		public static PushResult None { get; } = new([], []);
 	}
 
 	/// <summary>
@@ -244,7 +278,8 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// <param name="branchSwitches">The recorded switches, which carry the branch each repo was on before the sync.</param>
 	/// <param name="syncedFiles">The files the sync copied.</param>
 	/// <param name="ct">Cancellation token.</param>
-	internal async Task OpenPullRequestsAsync(
+	/// <returns>The number of repositories in which a pull request could not be opened.</returns>
+	internal async Task<int> OpenPullRequestsAsync(
 		IReadOnlyList<string> pushedRepoRoots,
 		string branchName,
 		IReadOnlyList<BranchSwitch> branchSwitches,
@@ -253,19 +288,19 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	{
 		if (pushedRepoRoots.Count == 0)
 		{
-			return;
+			return 0;
 		}
 
 		if (gitHubService is null)
 		{
 			AnsiConsole.MarkupLine("[yellow]Skipping pull requests: no GitHub service is available.[/]");
-			return;
+			return 0;
 		}
 
 		Dictionary<string, string> baseBranchByRepoRoot = BaseBranchesFor(branchSwitches);
 
 		SyncPullRequestOpener opener = new(processService, gitHubService);
-		await opener.OpenAsync(pushedRepoRoots, branchName, baseBranchByRepoRoot, syncedFiles, ct).ConfigureAwait(false);
+		return await opener.OpenAsync(pushedRepoRoots, branchName, baseBranchByRepoRoot, syncedFiles, ct).ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -863,7 +898,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			? "push"
 			: $"push --set-upstream origin {branchName}";
 
-	internal async Task<IReadOnlyList<string>> PushToRemoteAsync(
+	internal async Task<PushResult> PushToRemoteAsync(
 		HashSet<string> commitDirectories,
 		bool autoPush,
 		string branchName,
@@ -878,7 +913,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		if (pushDirectories.Count == 0)
 		{
-			return [];
+			return PushResult.None;
 		}
 
 		AnsiConsole.WriteLine();
@@ -895,11 +930,12 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		if (!confirmed)
 		{
-			return [];
+			return PushResult.None;
 		}
 
 		AnsiConsole.WriteLine();
 		List<string> pushed = [];
+		List<string> failed = [];
 		foreach (string dir in pushDirectories)
 		{
 			ct.ThrowIfCancellationRequested();
@@ -907,9 +943,13 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			{
 				pushed.Add(dir);
 			}
+			else
+			{
+				failed.Add(dir);
+			}
 		}
 
-		return pushed;
+		return new PushResult(pushed, failed);
 	}
 
 	internal static async Task<Collection<string>> FindPushableBranchDirectoriesAsync(IReadOnlyList<BranchSwitch> branchSwitches)
