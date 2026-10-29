@@ -645,6 +645,68 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public async Task PushToRemoteAsyncReportsARepoWhosePushFailed()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		SyncService.BranchSwitch? branchSwitch = await SyncGit.SwitchToSyncBranchAsync(repo.Root, "sync/shared").ConfigureAwait(false);
+		Assert.IsNotNull(branchSwitch);
+		_ = repo.Commit("shared.txt", "synced content", "KtsuTools");
+
+		SyncService.PushResult result = await new SyncService(new RecordingProcessService(exitCode: 1))
+			.PushToRemoteAsync([], autoPush: true, "sync/shared", [branchSwitch], CancellationToken.None)
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, result.Pushed.Count);
+		CollectionAssert.AreEqual(new[] { repo.Root }, result.Failed.ToArray(), "A rejected push must be reported, not just printed.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task RunAsyncExitsNonZeroWhenAnAutoPushFails()
+	{
+		string root = CreateCanonicalTempDirectory("ktsu_sync_push");
+		try
+		{
+			string workspace = CloneAheadOfOrigin(root);
+
+			int exit = await new SyncService(new RecordingProcessService(exitCode: 1))
+				.RunAsync([workspace], ["shared.txt"], autoPush: true, branch: string.Empty, exclusions: [], CancellationToken.None)
+				.ConfigureAwait(false);
+
+			Assert.AreEqual(1, exit, "A run whose push failed left its commits local and must not report success.");
+		}
+		finally
+		{
+			DeleteGitTree(root);
+		}
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task RunAsyncExitsZeroWhenEveryAutoPushSucceeds()
+	{
+		string root = CreateCanonicalTempDirectory("ktsu_sync_push");
+		try
+		{
+			string workspace = CloneAheadOfOrigin(root);
+			RecordingProcessService fake = new();
+
+			int exit = await new SyncService(fake)
+				.RunAsync([workspace], ["shared.txt"], autoPush: true, branch: string.Empty, exclusions: [], CancellationToken.None)
+				.ConfigureAwait(false);
+
+			string[] expected = ["pull", "push"];
+
+			Assert.AreEqual(0, exit);
+			CollectionAssert.AreEqual(expected, fake.Calls.Select(c => c.Arguments).ToArray(), "The repo ahead of its origin is pushed.");
+		}
+		finally
+		{
+			DeleteGitTree(root);
+		}
+	}
+
+	[TestMethod]
 	public async Task RestoreBranchOnTheOriginalBranchAlreadyDoesNothing()
 	{
 		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
@@ -1271,6 +1333,32 @@ public class SyncServiceTests
 		{
 			// Already gone.
 		}
+	}
+
+	/// <summary>
+	/// Builds a workspace holding one clone of a bare origin, with a commit by KtsuTools that the
+	/// origin does not have yet, so a sync run with --auto-push finds it pushable.
+	/// </summary>
+	/// <param name="root">The temp directory to build under.</param>
+	/// <returns>The workspace to scan.</returns>
+	private static string CloneAheadOfOrigin(string root)
+	{
+		string origin = Path.Join(root, "origin.git");
+		string workspace = Path.Join(root, "ws");
+		string repoRoot = Path.Join(workspace, "repo-a");
+		Directory.CreateDirectory(origin);
+		Directory.CreateDirectory(workspace);
+
+		_ = TestGit.Run(origin, "init", "--bare", "--initial-branch", "main");
+		_ = TestGit.Run(workspace, "clone", origin, "repo-a");
+		File.WriteAllText(Path.Join(repoRoot, "shared.txt"), "shared content");
+		_ = TestGit.Commit(repoRoot, "shared.txt", "Add shared.txt", "A Human");
+		_ = TestGit.Run(repoRoot, "push", "origin", "HEAD:main");
+		_ = TestGit.Run(repoRoot, "branch", "--set-upstream-to", "origin/main");
+		File.WriteAllText(Path.Join(repoRoot, "other.txt"), "synced earlier");
+		_ = TestGit.Commit(repoRoot, "other.txt", "Sync other.txt", "KtsuTools");
+
+		return workspace;
 	}
 
 	private sealed class RecordingProcessService(int exitCode = 0) : IProcessService
