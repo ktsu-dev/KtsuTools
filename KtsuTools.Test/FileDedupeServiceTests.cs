@@ -209,4 +209,78 @@ public class FileDedupeServiceTests
 			Directory.Delete(root, recursive: true);
 		}
 	}
+
+	[TestMethod]
+	[DataRow(".git")]
+	[DataRow(".svn")]
+	[DataRow(".hg")]
+	[DataRow(".bzr")]
+	public async Task DedupeLeavesVersionControlMetadataAlone(string metadata)
+	{
+		// Every branch ref pointing at the same commit has the same content, so walking into .git
+		// deleted branches and reflogs (#222).
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_dedup_vcs_{Guid.NewGuid():N}");
+		string heads = Path.Join(root, metadata, "refs", "heads");
+		Directory.CreateDirectory(heads);
+		try
+		{
+			string[] refs = [Path.Join(heads, "main"), Path.Join(heads, "feature"), Path.Join(heads, "release")];
+			foreach (string branch in refs)
+			{
+				await File.WriteAllTextAsync(branch, "0123456789abcdef0123456789abcdef01234567\n").ConfigureAwait(false);
+			}
+
+			string keeper = Path.Join(root, "a.txt");
+			string copy = Path.Join(root, "copy-of-a.txt");
+			await File.WriteAllTextAsync(keeper, "a real duplicate").ConfigureAwait(false);
+			await File.WriteAllTextAsync(copy, "a real duplicate").ConfigureAwait(false);
+
+			FileDedupeService service = new();
+			DedupePlan plan = await service.PlanAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root)).ConfigureAwait(false);
+			service.DeleteRedundant(plan);
+
+			CollectionAssert.AreEqual(new[] { copy }, plan.Removals.ToArray(), "Only the duplicate outside the metadata is removed.");
+			Assert.IsTrue(File.Exists(keeper));
+			Assert.IsFalse(File.Exists(copy));
+			foreach (string branch in refs)
+			{
+				Assert.IsTrue(File.Exists(branch), $"{branch} was deleted.");
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public void EnumerateRegularFilesSkipsAGitPointerFileButNotLookAlikes()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_dedup_vcs_names_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "worktree"));
+		Directory.CreateDirectory(Path.Join(root, ".github"));
+		Directory.CreateDirectory(Path.Join(root, "mirror.git"));
+		try
+		{
+			// A worktree's or submodule's .git is a file naming its real git directory; deleting it
+			// detaches the checkout, so it is never a candidate.
+			File.WriteAllText(Path.Join(root, "worktree", ".git"), "gitdir: /elsewhere/.git/worktrees/w\n");
+			string[] expected =
+			[
+				Path.Join(root, ".github", "ci.yml"),
+				Path.Join(root, "mirror.git", "HEAD"),
+				Path.Join(root, ".gitignore"),
+			];
+			foreach (string file in expected)
+			{
+				File.WriteAllText(file, "content\n");
+			}
+
+			CollectionAssert.AreEquivalent(expected, FileDedupeService.EnumerateRegularFiles(root).ToArray());
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
 }
