@@ -65,16 +65,16 @@ public class MergeServiceTests
 	[TestMethod]
 	public async Task RunMergeAsyncKeepsEachFilesByteOrderMark()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
-		string subA = Path.Combine(root, "a");
-		string subB = Path.Combine(root, "b");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string subA = Path.Join(root, "a");
+		string subB = Path.Join(root, "b");
 		Directory.CreateDirectory(subA);
 		Directory.CreateDirectory(subB);
 		try
 		{
 			byte[] bom = [0xEF, 0xBB, 0xBF];
-			string fileA = Path.Combine(subA, "shared.cs");
-			string fileB = Path.Combine(subB, "shared.cs");
+			string fileA = Path.Join(subA, "shared.cs");
+			string fileB = Path.Join(subB, "shared.cs");
 			await File.WriteAllBytesAsync(fileA, [.. bom, .. Encoding.UTF8.GetBytes("line 1\nfoo=1\nline 3")]).ConfigureAwait(false);
 			await File.WriteAllBytesAsync(fileB, [.. bom, .. Encoding.UTF8.GetBytes("line 1\nfoo=2\nline 3")]).ConfigureAwait(false);
 
@@ -94,20 +94,20 @@ public class MergeServiceTests
 	[TestMethod]
 	public async Task RunMergeAsyncWritesALegacyFileBackByteForByteWhenItsVersionIsChosen()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
-		string subA = Path.Combine(root, "a");
-		string subB = Path.Combine(root, "b");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string subA = Path.Join(root, "a");
+		string subB = Path.Join(root, "b");
 		Directory.CreateDirectory(subA);
 		Directory.CreateDirectory(subB);
 		try
 		{
 			// "café=1" in Windows-1252: 0xE9 is 'é', and is not valid UTF-8 on its own.
 			byte[] legacy = [.. "line 1\ncaf"u8, 0xE9, .. "=1\nline 3"u8];
-			string fileA = Path.Combine(subA, "shared.txt");
-			string fileB = Path.Combine(subB, "shared.txt");
+			string fileA = Path.Join(subA, "shared.txt");
+			string fileB = Path.Join(subB, "shared.txt");
 			await File.WriteAllBytesAsync(fileA, legacy).ConfigureAwait(false);
 			await File.WriteAllBytesAsync(fileB, legacy).ConfigureAwait(false);
-			string fileC = Path.Combine(root, "shared.txt");
+			string fileC = Path.Join(root, "shared.txt");
 			await File.WriteAllTextAsync(fileC, "line 1\ncafé=2\nline 3").ConfigureAwait(false);
 
 			int result = await RunMergeAsync(root, "shared.txt", BlockChoice.UseVersion1, BlockChoice.UseVersion2).ConfigureAwait(false);
@@ -126,15 +126,15 @@ public class MergeServiceTests
 	[TestMethod]
 	public async Task RunMergeAsyncTellsFilesApartThatDifferOnlyByByteOrderMark()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
-		string subA = Path.Combine(root, "a");
-		string subB = Path.Combine(root, "b");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string subA = Path.Join(root, "a");
+		string subB = Path.Join(root, "b");
 		Directory.CreateDirectory(subA);
 		Directory.CreateDirectory(subB);
 		try
 		{
-			await File.WriteAllBytesAsync(Path.Combine(subA, "shared.txt"), [0xEF, 0xBB, 0xBF, .. "same"u8]).ConfigureAwait(false);
-			await File.WriteAllBytesAsync(Path.Combine(subB, "shared.txt"), "same"u8.ToArray()).ConfigureAwait(false);
+			await File.WriteAllBytesAsync(Path.Join(subA, "shared.txt"), [0xEF, 0xBB, 0xBF, .. "same"u8]).ConfigureAwait(false);
+			await File.WriteAllBytesAsync(Path.Join(subB, "shared.txt"), "same"u8.ToArray()).ConfigureAwait(false);
 
 			string output = await ConsoleCapture.CaptureAsync(async () =>
 				await MergeService.RunMergeAsync(
@@ -151,14 +151,14 @@ public class MergeServiceTests
 	[TestMethod]
 	public async Task RunMergeAsyncRefusesToWriteTextALegacyFileCantHold()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
-		string subA = Path.Combine(root, "a");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string subA = Path.Join(root, "a");
 		Directory.CreateDirectory(subA);
 		try
 		{
 			byte[] legacy = [.. "name=caf"u8, 0xE9];
-			string fileA = Path.Combine(subA, "shared.txt");
-			string fileB = Path.Combine(root, "shared.txt");
+			string fileA = Path.Join(subA, "shared.txt");
+			string fileB = Path.Join(root, "shared.txt");
 			await File.WriteAllBytesAsync(fileA, legacy).ConfigureAwait(false);
 			await File.WriteAllTextAsync(fileB, "name=日本").ConfigureAwait(false);
 			byte[] utf8Before = await File.ReadAllBytesAsync(fileB).ConfigureAwait(false);
@@ -183,7 +183,7 @@ public class MergeServiceTests
 	/// </summary>
 	private static async Task<int> RunMergeAsync(string root, string pattern, BlockChoice choice, BlockChoice? otherwise = null)
 	{
-		string aContent = EncodedText.Decode(await File.ReadAllBytesAsync(Path.Combine(root, "a", pattern)).ConfigureAwait(false)).Text;
+		string aContent = EncodedText.Decode(await File.ReadAllBytesAsync(Path.Join(root, "a", pattern)).ConfigureAwait(false)).Text;
 		int result = 0;
 		await ConsoleCapture.CaptureAsync(async () =>
 			result = await MergeService.RunMergeAsync(
