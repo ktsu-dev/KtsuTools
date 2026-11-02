@@ -70,8 +70,13 @@ internal static class SyncGit
 	/// </summary>
 	/// <param name="repoRoot">The repository working directory.</param>
 	/// <param name="branchName">The branch to commit onto.</param>
+	/// <param name="carriedFiles">
+	/// Absolute paths of the files sync wrote into this repository. Their working-tree content is
+	/// carried onto the branch even when the branch already holds a different copy, which a plain
+	/// checkout refuses to overwrite.
+	/// </param>
 	/// <returns>The recorded switch, or <see langword="null"/> when the repository has no commit to branch from.</returns>
-	internal static async Task<SyncService.BranchSwitch?> SwitchToSyncBranchAsync(string repoRoot, string branchName)
+	internal static async Task<SyncService.BranchSwitch?> SwitchToSyncBranchAsync(string repoRoot, string branchName, IReadOnlyCollection<string>? carriedFiles = null)
 	{
 		GitRepository repo = await OpenAsync(repoRoot).ConfigureAwait(false);
 
@@ -96,12 +101,77 @@ internal static class SyncGit
 				.TryExecuteAsync()
 				.ConfigureAwait(false);
 
-			_ = await repo.Checkout(GitRefName.Create<GitRefName>(branchName))
-				.ExecuteAsync()
-				.ConfigureAwait(false);
+			GitRefName target = GitRefName.Create<GitRefName>(branchName);
+			try
+			{
+				_ = await repo.Checkout(target).ExecuteAsync().ConfigureAwait(false);
+			}
+			catch (GitException) when (carriedFiles is { Count: > 0 })
+			{
+				if (!await TryCarryFilesOntoBranchAsync(repo, repoRoot, target, carriedFiles).ConfigureAwait(false))
+				{
+					throw;
+				}
+			}
 		}
 
 		return new SyncService.BranchSwitch(repoRoot, original, originalTipSha);
+	}
+
+	/// <summary>
+	/// Switches to a branch that a plain checkout refused, because the branch holds a different copy
+	/// of a file sync just wrote. That happens on every re-run onto an open sync branch. The copied
+	/// content is saved, the switch is forced, and the content is written back, so it can then be
+	/// committed on the branch.
+	/// </summary>
+	/// <remarks>
+	/// A forced checkout throws away every local change to a file that differs between the two
+	/// trees, so it is only used when the files sync wrote are the only local changes. Anything
+	/// else, such as the user's own edits or an untracked file the branch may track, keeps the
+	/// refusal, and the repository is left exactly as it was.
+	/// </remarks>
+	/// <param name="repo">The repository.</param>
+	/// <param name="repoRoot">The repository working directory.</param>
+	/// <param name="target">The branch to switch to.</param>
+	/// <param name="carriedFiles">Absolute paths of the files sync wrote into this repository.</param>
+	/// <returns>
+	/// <see langword="true"/> once the branch is checked out with the carried files in place, or
+	/// <see langword="false"/> when other local changes make forcing the switch unsafe and nothing was changed.
+	/// </returns>
+	private static async Task<bool> TryCarryFilesOntoBranchAsync(
+		GitRepository repo,
+		string repoRoot,
+		GitRefName target,
+		IReadOnlyCollection<string> carriedFiles)
+	{
+		HashSet<string> carried = new(carriedFiles.Select(f => Normalize(CanonicalFilePathOf(f))), PathComparer);
+
+		GitStatus status = await repo.Status()
+			.WithUntrackedFiles(GitUntrackedFilesMode.All)
+			.ExecuteAsync()
+			.ConfigureAwait(false);
+
+		List<string> dirty = [.. status.Entries.Select(e => Normalize(Path.Join(repoRoot, e.Path.ToString())))];
+
+		if (dirty.Count == 0 || !dirty.All(carried.Contains))
+		{
+			return false;
+		}
+
+		List<(string Path, byte[] Content)> saved = [];
+		foreach (string path in dirty.Where(File.Exists))
+		{
+			saved.Add((path, await File.ReadAllBytesAsync(path).ConfigureAwait(false)));
+		}
+
+		_ = await repo.Checkout(target).Force().ExecuteAsync().ConfigureAwait(false);
+
+		foreach ((string path, byte[] content) in saved)
+		{
+			await File.WriteAllBytesAsync(path, content).ConfigureAwait(false);
+		}
+
+		return true;
 	}
 
 	/// <summary>
