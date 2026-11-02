@@ -801,13 +801,22 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	internal static async Task<IReadOnlyList<BranchSwitch>> SwitchReposToBranchAsync(IEnumerable<string> commitFiles, string branchName)
 	{
 		List<BranchSwitch> branchSwitches = [];
-
-		foreach (string repoRoot in await SyncGit.RepoRootsForAsync(commitFiles).ConfigureAwait(false))
+		List<(string File, string? Root)> fileRoots = [];
+		foreach (string filePath in commitFiles)
 		{
+			fileRoots.Add((filePath, await SyncGit.RepoRootForAsync(filePath).ConfigureAwait(false)));
+		}
+
+		foreach (string repoRoot in await SyncGit.RepoRootsForAsync(fileRoots.Select(f => f.File)).ConfigureAwait(false))
+		{
+			List<string> repoFiles = [.. fileRoots
+				.Where(f => string.Equals(f.Root, repoRoot, StringComparison.Ordinal))
+				.Select(f => f.File)];
+
 			BranchSwitch? branchSwitch;
 			try
 			{
-				branchSwitch = await SyncGit.SwitchToSyncBranchAsync(repoRoot, branchName).ConfigureAwait(false);
+				branchSwitch = await SyncGit.SwitchToSyncBranchAsync(repoRoot, branchName, repoFiles).ConfigureAwait(false);
 			}
 			catch (GitException ex)
 			{
