@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using KtsuTools.MemFrag;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 public sealed class MemFragScanCommand(MemFragService memFragService) : AsyncCommand<MemFragScanCommand.Settings>
@@ -15,6 +16,11 @@ public sealed class MemFragScanCommand(MemFragService memFragService) : AsyncCom
 		[CommandOption("--pid <PID>", isRequired: true)]
 		[Description("Process ID to scan for memory fragmentation")]
 		public required int ProcessId { get; init; }
+
+		public override ValidationResult Validate() =>
+			ProcessId > 0
+				? ValidationResult.Success()
+				: ValidationResult.Error($"--pid must be a process ID greater than zero (got {ProcessId}).");
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
