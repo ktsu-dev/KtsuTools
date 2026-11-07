@@ -165,6 +165,7 @@ public class MemFragService
 				}
 				catch (OperationCanceledException)
 				{
+					// Expected: Ctrl+C, or Tick cancelling once the target exits, is how the monitor stops.
 				}
 
 				ticker.Stop();
