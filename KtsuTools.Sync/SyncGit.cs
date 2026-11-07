@@ -154,22 +154,30 @@ internal static class SyncGit
 	}
 
 	/// <summary>
-	/// The files among the sync candidates that have outstanding changes in their repository.
+	/// The files among those the sync wrote that have outstanding changes in their repository.
 	/// </summary>
-	/// <param name="commitDirectories">Directories holding the copied files.</param>
-	/// <param name="expandedFilesToSync">File names the sync copied.</param>
+	/// <remarks>
+	/// Only the files the sync actually overwrote are candidates. A file that merely matched the
+	/// scan, in a group the user skipped or one that was already in sync, may hold the user's own
+	/// unfinished edit, and committing it would publish that edit under the sync's author.
+	/// </remarks>
+	/// <param name="writtenFiles">Absolute paths of the files the sync copied over.</param>
 	/// <returns>Absolute paths of the files with changes to commit.</returns>
-	internal static async Task<Collection<string>> FindChangedFilesAsync(
-		HashSet<string> commitDirectories,
-		HashSet<string> expandedFilesToSync)
+	internal static async Task<Collection<string>> FindChangedFilesAsync(IEnumerable<string> writtenFiles)
 	{
-		Ensure.NotNull(commitDirectories);
-		Ensure.NotNull(expandedFilesToSync);
+		Ensure.NotNull(writtenFiles);
 
 		Collection<string> commitFiles = [];
 
-		foreach (string directoryPath in commitDirectories)
+		// Grouped by directory, so each repository's status is read once however many files it holds.
+		IEnumerable<IGrouping<string, string>> byDirectory = writtenFiles
+			.Distinct(PathComparer)
+			.GroupBy(file => Path.GetDirectoryName(file) ?? string.Empty, file => Path.GetFileName(file), PathComparer);
+
+		foreach (IGrouping<string, string> group in byDirectory)
 		{
+			string directoryPath = group.Key;
+
 			if (await RepoRootForAsync(directoryPath).ConfigureAwait(false) is not string repoRoot)
 			{
 				continue;
@@ -198,7 +206,7 @@ internal static class SyncGit
 			// linked path has to be resolved too before the two spellings can be compared.
 			string canonicalDirectory = CanonicalDirectoryOf(directoryPath);
 
-			foreach (string filePath in expandedFilesToSync
+			foreach (string filePath in group
 				.Where(name => changed.Contains(Normalize(Path.Join(canonicalDirectory, name))))
 				.Select(name => Path.Join(directoryPath, name)))
 			{
