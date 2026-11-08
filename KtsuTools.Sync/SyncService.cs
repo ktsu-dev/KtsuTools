@@ -411,11 +411,18 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// Whether a matched file sits under an excluded directory. An exclusion naming a path excludes
 	/// that directory alone; one naming a bare directory excludes every directory of that name.
 	/// </summary>
+	/// <remarks>
+	/// A bare name is matched only against the directories between the scan root and the file, so a
+	/// folder of that name above the workspace (<c>/x/build/workspace</c> with <c>--exclude build</c>)
+	/// doesn't exclude everything in it.
+	/// </remarks>
 	/// <param name="filePath">Absolute path of the matched file.</param>
+	/// <param name="root">The scan root the file was found under.</param>
 	/// <param name="exclusions">The normalized exclusion entries.</param>
 	/// <returns>True when the file is excluded.</returns>
-	internal static bool IsExcluded(string filePath, IReadOnlyList<string> exclusions)
+	internal static bool IsExcluded(string filePath, string root, IReadOnlyList<string> exclusions)
 	{
+		Ensure.NotNull(root);
 		Ensure.NotNull(exclusions);
 
 		if (exclusions.Count == 0)
@@ -424,7 +431,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		}
 
 		string fullPath = Path.GetFullPath(filePath);
-		string[] directorySegments = DirectorySegmentsOf(fullPath);
+		string[] directorySegments = DirectorySegmentsBelow(NormalizeRoot(root), fullPath);
 
 		foreach (string trimmed in exclusions.Select(Path.TrimEndingDirectorySeparator))
 		{
@@ -498,7 +505,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// <param name="exclusions">The normalized exclusion entries.</param>
 	/// <returns>True when the file belongs in the scan.</returns>
 	private static bool IsScannable(string file, string root, IReadOnlyList<string> exclusions) =>
-		!IsExcluded(file, exclusions)
+		!IsExcluded(file, root, exclusions)
 		&& !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath, root);
 
 	/// <summary>
@@ -537,12 +544,18 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	private static bool HasDirectorySeparator(string value) =>
 		value.Contains(Path.DirectorySeparatorChar) || value.Contains(Path.AltDirectorySeparatorChar);
 
-	private static string[] DirectorySegmentsOf(string filePath)
+	private static string[] DirectorySegmentsBelow(string root, string filePath)
 	{
 		string? directory = Path.GetDirectoryName(filePath);
-		return string.IsNullOrEmpty(directory)
+		if (string.IsNullOrEmpty(directory))
+		{
+			return [];
+		}
+
+		string relative = Path.GetRelativePath(root, directory);
+		return relative == "."
 			? []
-			: directory.Split(
+			: relative.Split(
 				[Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
 				StringSplitOptions.RemoveEmptyEntries);
 	}
