@@ -989,7 +989,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	/// </param>
 	/// <param name="args">
 	/// The git command line, already split into arguments, such as <c>["fetch", "--prune"]</c>.
-	/// Arguments containing spaces are quoted before they reach git.
+	/// Each element reaches git as exactly one argument, whatever spaces, quotes or backslashes it holds.
 	/// </param>
 	/// <param name="color">
 	/// When true, forces git to colorize even though its output is redirected. Pass false for output
@@ -1018,7 +1018,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			return nothingToRun;
 		}
 
-		string arguments = BuildGitArguments(args, color);
+		IReadOnlyList<string> arguments = BuildGitArguments(args, color);
 		int failCount = 0;
 
 		foreach (string repo in sortedRepos)
@@ -1039,7 +1039,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		return failCount > 0 ? 1 : 0;
 	}
 
-	private static string BuildGitArguments(IReadOnlyList<string> args, bool color)
+	private static List<string> BuildGitArguments(IReadOnlyList<string> args, bool color)
 	{
 		List<string> parts = [];
 
@@ -1053,16 +1053,10 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 		parts.AddRange(args);
 
-		return string.Join(' ', parts.Select(QuoteIfNeeded));
-	}
-
-	private static string QuoteIfNeeded(string arg)
-	{
-		bool needsQuotes = arg.Length == 0 || arg.Any(char.IsWhiteSpace) || arg.Contains('"', StringComparison.Ordinal);
-
-		return needsQuotes
-			? $"\"{arg.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
-			: arg;
+		// Passed as a list so each element reaches git as exactly one argument. Hand-quoting into a
+		// single string didn't double the backslashes before a closing quote, so `.\My Folder\`
+		// escaped its own quote and merged with the arguments after it.
+		return parts;
 	}
 
 	private static void WriteRepoOutput(string repoName, ProcessResult result)
