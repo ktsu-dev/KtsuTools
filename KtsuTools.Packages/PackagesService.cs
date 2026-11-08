@@ -20,12 +20,56 @@ using Spectre.Console;
 /// <summary>
 /// Service for updating .NET packages and migrating to Central Package Management.
 /// </summary>
-public class PackagesService(IProcessService processService)
+public class PackagesService
 {
 	private const string VersionAttribute = "Version";
 
-	private readonly IProcessService processService = processService;
+	/// <summary>The only <c>--source</c> the update looks versions up from: nuget.org.</summary>
+	public const string NuGetSource = "nuget";
+
+	private readonly IProcessService processService;
+	private readonly HttpClient httpClient;
 	private static readonly HttpClient SharedHttpClient = new();
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="PackagesService"/> class.
+	/// </summary>
+	/// <param name="processService">Runs the external processes the service needs.</param>
+	public PackagesService(IProcessService processService)
+		: this(processService, SharedHttpClient)
+	{
+	}
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="PackagesService"/> class that looks package
+	/// versions up through <paramref name="httpClient"/>.
+	/// </summary>
+	/// <param name="processService">Runs the external processes the service needs.</param>
+	/// <param name="httpClient">The client the nuget.org version lookups are sent through.</param>
+	internal PackagesService(IProcessService processService, HttpClient httpClient)
+	{
+		this.processService = processService;
+		this.httpClient = httpClient;
+	}
+
+	/// <summary>
+	/// Whether <paramref name="source"/> names a package source the update can look versions up from.
+	/// </summary>
+	/// <param name="source">The <c>--source</c> value.</param>
+	/// <returns>True for <c>nuget</c>, in any letter case.</returns>
+	public static bool IsSupportedSource(string? source) =>
+		string.Equals(source, NuGetSource, StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// The outcome of looking a package's latest version up: either the lookup worked, and found
+	/// <see cref="Version"/> (null when no version qualifies), or it failed for <see cref="Error"/>.
+	/// </summary>
+	private readonly record struct VersionLookup(string? Version, string? Error)
+	{
+		public static VersionLookup Found(string? version) => new(version, null);
+
+		public static VersionLookup Failed(string error) => new(null, error);
+	}
 
 	/// <summary>
 	/// Updates NuGet packages in all .csproj files under the specified directory.
@@ -55,6 +99,12 @@ public class PackagesService(IProcessService processService)
 			return 1;
 		}
 
+		if (!IsSupportedSource(source))
+		{
+			AnsiConsole.MarkupLine($"[red]Error: Unsupported package source '{source.EscapeMarkup()}'. Only '{NuGetSource}' (nuget.org) is supported.[/]");
+			return 1;
+		}
+
 		List<string> projectFiles = FindProjectFiles(fullPath);
 
 		if (projectFiles.Count == 0)
@@ -71,6 +121,7 @@ public class PackagesService(IProcessService processService)
 		}
 
 		int updatedCount = 0;
+		int failedCount = 0;
 
 		await AnsiConsole.Progress()
 			.AutoClear(false)
@@ -83,13 +134,23 @@ public class PackagesService(IProcessService processService)
 				{
 					ct.ThrowIfCancellationRequested();
 					string relativePath = Path.GetRelativePath(fullPath, projectFile);
-					int updated = await UpdateProjectPackagesAsync(projectFile, relativePath, whatIf, includePrerelease, source, ct).ConfigureAwait(false);
+					(int updated, int failed) = await UpdateProjectPackagesAsync(projectFile, relativePath, whatIf, includePrerelease, ct).ConfigureAwait(false);
 					updatedCount += updated;
+					failedCount += failed;
 					task.Increment(1);
 				}
 			}).ConfigureAwait(false);
 
 		AnsiConsole.MarkupLine($"[green]Done. {updatedCount} package(s) updated across {projectFiles.Count} project(s).[/]");
+
+		// A failed lookup isn't "already latest": the package was never checked, so the run didn't do
+		// what it was asked to and mustn't pass in CI as if it had.
+		if (failedCount > 0)
+		{
+			AnsiConsole.MarkupLine($"[red]{failedCount} package(s) could not be checked for updates.[/]");
+			return 1;
+		}
+
 		return 0;
 	}
 
@@ -305,16 +366,17 @@ public class PackagesService(IProcessService processService)
 		return 0;
 	}
 
-	private static async Task<int> UpdateProjectPackagesAsync(string projectFile, string relativePath, bool whatIf, bool includePrerelease, string source, CancellationToken ct)
+	private async Task<(int Updated, int Failed)> UpdateProjectPackagesAsync(string projectFile, string relativePath, bool whatIf, bool includePrerelease, CancellationToken ct)
 	{
 		Dictionary<string, string> packages = await GetPackageReferencesAsync(projectFile, ct).ConfigureAwait(false);
 
 		if (packages.Count == 0)
 		{
-			return 0;
+			return (0, 0);
 		}
 
 		int updatedCount = 0;
+		int failedCount = 0;
 
 		foreach ((string packageName, string currentVersion) in packages)
 		{
@@ -327,7 +389,16 @@ public class PackagesService(IProcessService processService)
 				continue;
 			}
 
-			string? latestVersion = await GetLatestVersionAsync(packageName, includePrerelease, source, ct).ConfigureAwait(false);
+			VersionLookup lookup = await GetLatestVersionAsync(packageName, includePrerelease, ct).ConfigureAwait(false);
+
+			if (lookup.Error is not null)
+			{
+				AnsiConsole.MarkupLine($"  [yellow]{relativePath.EscapeMarkup()}: {packageName.EscapeMarkup()} could not be checked: {lookup.Error.EscapeMarkup()}[/]");
+				failedCount++;
+				continue;
+			}
+
+			string? latestVersion = lookup.Version;
 
 			if (latestVersion is null || !IsUpgrade(currentVersion, latestVersion))
 			{
@@ -344,7 +415,7 @@ public class PackagesService(IProcessService processService)
 			updatedCount++;
 		}
 
-		return updatedCount;
+		return (updatedCount, failedCount);
 	}
 
 	private static async Task<Dictionary<string, string>> GetPackageReferencesAsync(string projectFile, CancellationToken ct)
@@ -409,21 +480,16 @@ public class PackagesService(IProcessService processService)
 		}
 	}
 
-	private static async Task<string?> GetLatestVersionAsync(string packageName, bool includePrerelease, string source, CancellationToken ct)
+	private async Task<VersionLookup> GetLatestVersionAsync(string packageName, bool includePrerelease, CancellationToken ct)
 	{
-		if (!string.Equals(source, "nuget", StringComparison.OrdinalIgnoreCase))
-		{
-			return null;
-		}
-
 		try
 		{
 			string url = $"https://api.nuget.org/v3-flatcontainer/{packageName.ToLowerInvariant()}/index.json";
-			HttpResponseMessage response = await SharedHttpClient.GetAsync(new Uri(url), ct).ConfigureAwait(false);
+			using HttpResponseMessage response = await httpClient.GetAsync(new Uri(url), ct).ConfigureAwait(false);
 
 			if (!response.IsSuccessStatusCode)
 			{
-				return null;
+				return VersionLookup.Failed($"nuget.org answered {(int)response.StatusCode} {response.ReasonPhrase}");
 			}
 
 			string json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -431,7 +497,7 @@ public class PackagesService(IProcessService processService)
 
 			if (!doc.RootElement.TryGetProperty("versions", out JsonElement versionsElement))
 			{
-				return null;
+				return VersionLookup.Failed("nuget.org's answer has no version list");
 			}
 
 			string? latestVersion = null;
@@ -453,11 +519,12 @@ public class PackagesService(IProcessService processService)
 				latestVersion = version;
 			}
 
-			return latestVersion;
+			return VersionLookup.Found(latestVersion);
 		}
-		catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+		catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException
+			|| (ex is TaskCanceledException && !ct.IsCancellationRequested))
 		{
-			return null;
+			return VersionLookup.Failed(ex.Message);
 		}
 	}
 
