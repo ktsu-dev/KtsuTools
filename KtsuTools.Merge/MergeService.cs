@@ -60,12 +60,27 @@ public class MergeService
 	/// Runs the merge operation for files matching a pattern in a directory.
 	/// </summary>
 	/// <param name="directory">Absolute root directory under which to search.</param>
-	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="filename">
+	/// Glob pattern to match against filenames. Only copies of the same file name are merged with one
+	/// another, so a pattern such as <c>*.yml</c> merges each name's copies on their own.
+	/// </param>
 	/// <param name="diffStyle">How to render conflict diffs.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
+	public Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, DiffStyle diffStyle = DiffStyle.SideBySide, CancellationToken ct = default) =>
+		RunMergeAsync(directory, filename, diffStyle, chooseBlock: null, ct);
+
+	/// <summary>
+	/// Runs the merge operation, resolving each conflict block with <paramref name="chooseBlock"/>.
+	/// </summary>
+	/// <param name="directory">Absolute root directory under which to search.</param>
+	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="diffStyle">How to render conflict diffs.</param>
+	/// <param name="chooseBlock">Picks the resolution for each conflict block. Defaults to asking the user.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
-	public async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, DiffStyle diffStyle = DiffStyle.SideBySide, CancellationToken ct = default)
+	internal async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, DiffStyle diffStyle, Func<string[], string[], BlockChoice>? chooseBlock, CancellationToken ct)
 #pragma warning restore CA1822
 	{
 		Ensure.NotNull(directory);
@@ -92,13 +107,51 @@ public class MergeService
 
 		AnsiConsole.MarkupLine($"[green]Found {files.Count} file(s) matching pattern.[/]");
 
+		// Only copies of the same file are merged. A pattern such as *.yml also matches unrelated files
+		// that merely share an extension, such as a CI workflow and a dependabot config, and merging
+		// those would overwrite each with the other's content.
+		List<List<string>> nameGroups = [.. files.GroupBy(f => Path.GetFileName(f), FileNameComparer).Select(g => g.ToList())];
+
+		foreach (List<string> copies in nameGroups)
+		{
+			string name = Path.GetFileName(copies[0]);
+
+			if (nameGroups.Count > 1)
+			{
+				AnsiConsole.Write(new Rule($"[bold]{name.EscapeMarkup()}[/]").LeftJustified());
+			}
+
+			if (copies.Count < 2)
+			{
+				AnsiConsole.MarkupLine($"[dim]Only one {name.EscapeMarkup()} found. Nothing to merge.[/]");
+				continue;
+			}
+
+			await MergeCopiesAsync(fullPath, copies, diffStyle, chooseBlock, ct).ConfigureAwait(false);
+		}
+
+		return 0;
+	}
+
+	/// <summary>
+	/// File names compare by the platform's rules: case-insensitively on Windows and macOS, where
+	/// <c>CI.yml</c> and <c>ci.yml</c> name the same file, and case-sensitively elsewhere.
+	/// </summary>
+	private static readonly StringComparer FileNameComparer =
+		OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+	/// <summary>
+	/// Iteratively merges copies of one file until every copy has identical content.
+	/// </summary>
+	private static async Task MergeCopiesAsync(string fullPath, List<string> files, DiffStyle diffStyle, Func<string[], string[], BlockChoice>? chooseBlock, CancellationToken ct)
+	{
 		// Group files by content hash
 		Dictionary<string, FileGroup> groups = await GroupFilesByHashAsync(files, ct).ConfigureAwait(false);
 
 		if (groups.Count <= 1)
 		{
 			AnsiConsole.MarkupLine("[green]All files have identical content. Nothing to merge.[/]");
-			return 0;
+			return;
 		}
 
 		AnsiConsole.MarkupLine($"[blue]{groups.Count} unique version(s) found.[/]");
@@ -127,7 +180,7 @@ public class MergeService
 			ShowDiff(content1, content2, bestPair.FilePath1, bestPair.FilePath2, diffStyle);
 
 			// Interactive merge
-			string mergedContent = InteractiveMerge(content1, content2);
+			string mergedContent = InteractiveMerge(content1, content2, chooseBlock);
 
 			// Update all files in both groups
 			FileGroup? group1 = versions.Find(g => g.FilePaths.Contains(bestPair.FilePath1));
@@ -153,7 +206,6 @@ public class MergeService
 		}
 
 		AnsiConsole.MarkupLine("[bold green]Merge complete. All files now have identical content.[/]");
-		return 0;
 	}
 
 	private static List<string> FindFiles(string directory, string pattern)

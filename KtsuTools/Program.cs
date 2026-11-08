@@ -70,7 +70,7 @@ internal static class Program
 
 		config.AddCommand<MergeCommand>("merge")
 			.WithDescription("N-way iterative file merge with interactive conflict resolution")
-			.WithExample("merge", "./repos", "*.yml")
+			.WithExample("merge", "./repos", ".editorconfig")
 			.WithExample("merge", "--batch", "editorconfig-sync");
 
 		config.AddBranch("merge-batch", batch =>

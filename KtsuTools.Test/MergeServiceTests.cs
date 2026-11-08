@@ -62,6 +62,50 @@ public class MergeServiceTests
 	}
 
 	[TestMethod]
+	public async Task RunMergeAsyncWithAPatternMergesOnlyCopiesOfTheSameFile()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string subA = Path.Combine(root, "a");
+		string subB = Path.Combine(root, "b");
+		Directory.CreateDirectory(subA);
+		Directory.CreateDirectory(subB);
+		try
+		{
+			const string ciA = "name: CI\non: push\n";
+			const string ciB = "name: CI\non: pull_request\n";
+			const string dependabot = "version: 2\nupdates: []\n";
+			await File.WriteAllTextAsync(Path.Combine(subA, "ci.yml"), ciA).ConfigureAwait(false);
+			await File.WriteAllTextAsync(Path.Combine(subB, "ci.yml"), ciB).ConfigureAwait(false);
+			await File.WriteAllTextAsync(Path.Combine(subA, "dependabot.yml"), dependabot).ConfigureAwait(false);
+			List<(string[] Version1, string[] Version2)> blocks = [];
+			int result = 0;
+
+			await ConsoleCapture.CaptureAsync(async () =>
+			{
+				MergeService service = new();
+				AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+				result = await service.RunMergeAsync(rootPath, "*.yml", DiffStyle.Git, (version1, version2) =>
+				{
+					blocks.Add((version1, version2));
+					return BlockChoice.UseVersion2;
+				}, CancellationToken.None).ConfigureAwait(false);
+			}).ConfigureAwait(false);
+
+			Assert.AreEqual(0, result);
+			Assert.AreEqual(dependabot, await File.ReadAllTextAsync(Path.Combine(subA, "dependabot.yml")).ConfigureAwait(false), "dependabot.yml has no other copy, so it must be left alone.");
+			string mergedA = await File.ReadAllTextAsync(Path.Combine(subA, "ci.yml")).ConfigureAwait(false);
+			string mergedB = await File.ReadAllTextAsync(Path.Combine(subB, "ci.yml")).ConfigureAwait(false);
+			Assert.AreEqual(mergedA, mergedB, "The two ci.yml copies should be merged into one.");
+			Assert.IsTrue(mergedA.StartsWith("name: CI\n", StringComparison.Ordinal), $"ci.yml should only ever be merged with ci.yml, but became: {mergedA}");
+			Assert.IsFalse(blocks.Any(b => b.Version1.Concat(b.Version2).Any(line => line.Contains("updates", StringComparison.Ordinal))), "A dependabot.yml line was offered in a ci.yml merge.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
 	[DataRow(BlockChoice.UseVersion1, "foo=1")]
 	[DataRow(BlockChoice.UseVersion2, "foo=2")]
 	[DataRow(BlockChoice.UseBoth, "foo=1", "foo=2")]
