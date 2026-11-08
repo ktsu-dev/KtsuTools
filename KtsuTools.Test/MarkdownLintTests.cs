@@ -117,5 +117,62 @@ public class MarkdownLintTests
 		Assert.AreEqual(input, result);
 	}
 
+	[TestMethod]
+	public void FormatMarkdownHonoursAJsonConfigWithComments()
+	{
+		string configPath = WriteConfig(".markdownlint.json", """
+			{
+				// Keep the asterisk bullets this repository uses
+				"MD004": false, // list marker style
+				/* block comments are JSONC too */
+				"MD012": { "maximum": 1 }
+			}
+			""");
+
+		string result = MarkdownLint.FormatMarkdown(Lines("* item"), configPath);
+
+		Assert.AreEqual(Lines("* item"), result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownHonoursAJsoncConfigWithASchemaUrl()
+	{
+		string configPath = WriteConfig(".markdownlint.jsonc", """
+			{
+				"$schema": "https://raw.githubusercontent.com/DavidAnson/markdownlint/main/schema/markdownlint-config-schema.json",
+				"MD004": false,
+			}
+			""");
+
+		string result = MarkdownLint.FormatMarkdown(Lines("* item"), configPath);
+
+		Assert.AreEqual(Lines("* item"), result);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task FormatMarkdownWarnsWhenItCannotParseTheConfig()
+	{
+		string configPath = WriteConfig(".markdownlint.json", "{ \"MD004\": false");
+
+		string output = await ConsoleCapture.CaptureAsync(() =>
+		{
+			_ = MarkdownLint.FormatMarkdown(Lines("* item"), configPath);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "ignoring markdownlint config");
+		StringAssert.Contains(output.ReplaceLineEndings(string.Empty), Path.GetFileName(Path.GetDirectoryName(configPath)!));
+	}
+
+	private static string WriteConfig(string fileName, string content)
+	{
+		string directory = Path.Combine(Path.GetTempPath(), "ktsu-markdownlint-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(directory);
+		string configPath = Path.Combine(directory, fileName);
+		File.WriteAllText(configPath, content);
+		return configPath;
+	}
+
 	private static string Lines(params string[] lines) => string.Join(Environment.NewLine, lines) + Environment.NewLine;
 }
