@@ -11,6 +11,14 @@ using Spectre.Console;
 /// </summary>
 public class MarkdownService
 {
+	private static readonly HashSet<string> SkippedDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
+	{
+		".git",
+		"node_modules",
+		"bin",
+		"obj",
+	};
+
 	/// <summary>
 	/// Recursively finds and cleans all markdown files in the specified directory.
 	/// </summary>
@@ -32,9 +40,9 @@ public class MarkdownService
 			return 0;
 		}
 
-		string[] markdownFiles = Directory.GetFiles(fullPath, "*.md", SearchOption.AllDirectories);
+		List<string> markdownFiles = FindMarkdownFiles(fullPath);
 
-		if (markdownFiles.Length == 0)
+		if (markdownFiles.Count == 0)
 		{
 			AnsiConsole.MarkupLine("[yellow]No markdown files found.[/]");
 			return 0;
@@ -47,7 +55,7 @@ public class MarkdownService
 			.HideCompleted(false)
 			.StartAsync(async progressContext =>
 			{
-				ProgressTask task = progressContext.AddTask("[green]Cleaning markdown files[/]", maxValue: markdownFiles.Length);
+				ProgressTask task = progressContext.AddTask("[green]Cleaning markdown files[/]", maxValue: markdownFiles.Count);
 
 				foreach (string filePath in markdownFiles)
 				{
@@ -66,7 +74,7 @@ public class MarkdownService
 				}
 			}).ConfigureAwait(false);
 
-		AnsiConsole.MarkupLine($"[green]Cleaned {modifiedCount} of {markdownFiles.Length} files.[/]");
+		AnsiConsole.MarkupLine($"[green]Cleaned {modifiedCount} of {markdownFiles.Count} files.[/]");
 		return modifiedCount;
 	}
 
@@ -89,9 +97,9 @@ public class MarkdownService
 			return 0;
 		}
 
-		string[] markdownFiles = Directory.GetFiles(fullPath, "*.md", SearchOption.AllDirectories);
+		List<string> markdownFiles = FindMarkdownFiles(fullPath);
 
-		if (markdownFiles.Length == 0)
+		if (markdownFiles.Count == 0)
 		{
 			AnsiConsole.MarkupLine("[yellow]No markdown files found.[/]");
 			return 0;
@@ -104,7 +112,7 @@ public class MarkdownService
 			.HideCompleted(false)
 			.StartAsync(async progressContext =>
 			{
-				ProgressTask task = progressContext.AddTask("[green]Linting markdown files[/]", maxValue: markdownFiles.Length);
+				ProgressTask task = progressContext.AddTask("[green]Linting markdown files[/]", maxValue: markdownFiles.Count);
 
 				foreach (string filePath in markdownFiles)
 				{
@@ -123,8 +131,54 @@ public class MarkdownService
 				}
 			}).ConfigureAwait(false);
 
-		AnsiConsole.MarkupLine($"[green]Linted {modifiedCount} of {markdownFiles.Length} files.[/]");
+		AnsiConsole.MarkupLine($"[green]Linted {modifiedCount} of {markdownFiles.Count} files.[/]");
 		return modifiedCount;
+	}
+
+	/// <summary>
+	/// Finds the markdown files below <paramref name="root"/> that belong to it. Skips <c>.git</c>,
+	/// <c>node_modules</c>, <c>bin</c> and <c>obj</c>, and any subdirectory holding a <c>.git</c>
+	/// entry, which is a nested repository or a submodule. Directories that can't be read are skipped.
+	/// </summary>
+	/// <param name="root">The directory to search.</param>
+	/// <returns>The full paths of the markdown files, in ordinal order.</returns>
+	internal static List<string> FindMarkdownFiles(string root)
+	{
+		EnumerationOptions options = new()
+		{
+			IgnoreInaccessible = true,
+			RecurseSubdirectories = false,
+			AttributesToSkip = 0,
+		};
+
+		List<string> files = [];
+		Stack<string> pending = new();
+		pending.Push(root);
+
+		while (pending.Count > 0)
+		{
+			string directory = pending.Pop();
+			files.AddRange(Directory.EnumerateFiles(directory, "*.md", options));
+
+			foreach (string subdirectory in Directory.EnumerateDirectories(directory, "*", options))
+			{
+				if (!IsSkippedDirectory(subdirectory))
+				{
+					pending.Push(subdirectory);
+				}
+			}
+		}
+
+		files.Sort(StringComparer.Ordinal);
+		return files;
+	}
+
+	private static bool IsSkippedDirectory(string directory)
+	{
+		string name = Path.GetFileName(directory);
+		return SkippedDirectoryNames.Contains(name)
+			|| Directory.Exists(Path.Combine(directory, ".git"))
+			|| File.Exists(Path.Combine(directory, ".git"));
 	}
 
 	/// <summary>
