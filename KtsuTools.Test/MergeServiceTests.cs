@@ -92,6 +92,36 @@ public class MergeServiceTests
 	}
 
 	[TestMethod]
+	[DataRow("root = true\n")]
+	[DataRow("x")]
+	public async Task InteractiveMergeOfAnEmptyVersion1KeepsVersion2Exactly(string version2)
+	{
+		string merged = string.Empty;
+
+		await ConsoleCapture.CaptureAsync(() =>
+		{
+			merged = MergeService.InteractiveMerge(string.Empty, version2, (_, _) => BlockChoice.UseVersion2);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		Assert.AreEqual(version2, merged, "Choosing version 2 over an empty version 1 must give version 2 unchanged.");
+	}
+
+	[TestMethod]
+	public async Task InteractiveMergeOfAnEmptyVersion2KeepsItEmpty()
+	{
+		string merged = "unset";
+
+		await ConsoleCapture.CaptureAsync(() =>
+		{
+			merged = MergeService.InteractiveMerge("root = true\n", string.Empty, (_, _) => BlockChoice.UseVersion2);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		Assert.AreEqual(string.Empty, merged, "Choosing an empty version 2 must give empty content.");
+	}
+
+	[TestMethod]
 	public void DiffStyleParserAcceptsCanonicalNames()
 	{
 		Assert.IsTrue(DiffStyleParser.TryParse("side-by-side", out DiffStyle side));

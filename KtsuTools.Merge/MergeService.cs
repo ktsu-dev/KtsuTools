@@ -362,8 +362,8 @@ public class MergeService
 			return content1;
 		}
 
-		string[] lines1 = content1.Split('\n');
-		string[] lines2 = content2.Split('\n');
+		string[] lines1 = SplitLines(content1);
+		string[] lines2 = SplitLines(content2);
 		List<string> mergedLines = [];
 		int currentLine1 = 0;
 
@@ -385,6 +385,14 @@ public class MergeService
 
 		return string.Join('\n', mergedLines);
 	}
+
+	/// <summary>
+	/// Splits content into the lines DiffPlex numbers its blocks by. DiffPlex counts empty content as
+	/// no lines at all, where <see cref="string.Split(char, StringSplitOptions)"/> would return one
+	/// empty line, which would then be appended after the last block as an extra newline.
+	/// </summary>
+	private static string[] SplitLines(string content) =>
+		content.Length == 0 ? [] : content.Split('\n');
 
 	private static void AddUnchangedLines(List<string> mergedLines, string[] lines, int from, int to)
 	{
