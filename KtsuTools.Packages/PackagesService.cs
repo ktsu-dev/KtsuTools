@@ -171,6 +171,11 @@ public class PackagesService(IProcessService processService)
 			}
 		}
 
+		if (report.OrphanCheckSkipped)
+		{
+			AnsiConsole.MarkupLine("[grey]Directory.Packages.props was not checked for unused PackageVersion entries: other projects may use them. Scan the repository's folder to check it.[/]");
+		}
+
 		if (showBuildTimeOnly)
 		{
 			RenderBuildTimeOnly(report, fullPath);

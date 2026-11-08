@@ -318,6 +318,79 @@ public class UnusedPackageAnalyzerTests
 		Assert.AreEqual(0, report.OrphanedPackageVersions.Count);
 	}
 
+	/// <summary>
+	/// The layout from ktsu-dev/KtsuTools#340: App.csproj and the props file at the root, a test
+	/// project using Moq and an F# project using FSharp.Data, plus one entry nobody uses.
+	/// </summary>
+	private string WriteMultiProjectRepository()
+	{
+		string appPath = Path.Combine(root, "App.csproj");
+		File.WriteAllText(appPath, """
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <ItemGroup>
+			    <PackageReference Include="Newtonsoft.Json" />
+			  </ItemGroup>
+			</Project>
+			""");
+		File.WriteAllText(Path.Combine(root, "Program.cs"), "using Newtonsoft.Json;\n");
+
+		string testsDirectory = Path.Combine(root, "tests", "App.Tests");
+		Directory.CreateDirectory(testsDirectory);
+		File.WriteAllText(Path.Combine(testsDirectory, "App.Tests.csproj"), """
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <ItemGroup>
+			    <PackageReference Include="Moq" />
+			  </ItemGroup>
+			</Project>
+			""");
+
+		string fsharpDirectory = Path.Combine(root, "tools", "Gen");
+		Directory.CreateDirectory(fsharpDirectory);
+		File.WriteAllText(Path.Combine(fsharpDirectory, "Gen.fsproj"), """
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <ItemGroup>
+			    <PackageReference Include="FSharp.Data" />
+			  </ItemGroup>
+			</Project>
+			""");
+
+		File.WriteAllText(Path.Combine(root, "Directory.Packages.props"), """
+			<Project>
+			  <ItemGroup>
+			    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+			    <PackageVersion Include="Moq" Version="4.20.72" />
+			    <PackageVersion Include="FSharp.Data" Version="6.4.0" />
+			    <PackageVersion Include="Nobody.Uses.This" Version="1.0.0" />
+			  </ItemGroup>
+			</Project>
+			""");
+
+		return appPath;
+	}
+
+	[TestMethod]
+	public void DoesNotOrphanAPackageVersionOnlyAnFSharpProjectReferences()
+	{
+		_ = WriteMultiProjectRepository();
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(1, report.OrphanedPackageVersions.Count, string.Join(", ", report.OrphanedPackageVersions));
+		Assert.AreEqual("Nobody.Uses.This", report.OrphanedPackageVersions[0]);
+		Assert.IsFalse(report.OrphanCheckSkipped);
+	}
+
+	[TestMethod]
+	public void SkipsTheOrphanCheckWhenScanningASingleProject()
+	{
+		string appPath = WriteMultiProjectRepository();
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(appPath);
+
+		Assert.AreEqual(0, report.OrphanedPackageVersions.Count, "One project can't show that the repository's other projects leave an entry unused.");
+		Assert.IsTrue(report.OrphanCheckSkipped);
+	}
+
 	[TestMethod]
 	public void ReturnsAnEmptyReportWhenThereAreNoProjects()
 	{
