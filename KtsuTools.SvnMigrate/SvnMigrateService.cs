@@ -111,10 +111,17 @@ public class SvnMigrateService(IProcessService processService)
 		}
 
 		// Check if git-svn is available
-		ProcessResult gitSvnCheck = await processService.RunAsync("git", "svn --version", null, ct).ConfigureAwait(false);
-		if (gitSvnCheck.ExitCode != 0)
+		try
 		{
-			errors.Add("git-svn is not available. Please install Git with SVN support.");
+			ProcessResult gitSvnCheck = await processService.RunAsync("git", "svn --version", null, ct).ConfigureAwait(false);
+			if (gitSvnCheck.ExitCode != 0)
+			{
+				errors.Add("git-svn is not available. Please install Git with SVN support.");
+			}
+		}
+		catch (ExecutableNotFoundException)
+		{
+			errors.Add("git is not installed or not on PATH. Please install Git with SVN support.");
 		}
 
 		return errors;
