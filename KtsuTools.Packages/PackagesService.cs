@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 namespace KtsuTools.Packages;
 
 using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using ktsu.Semantics.Paths;
@@ -385,7 +386,7 @@ public class PackagesService(IProcessService processService)
 	{
 		try
 		{
-			string content = await File.ReadAllTextAsync(projectFile, ct).ConfigureAwait(false);
+			(string content, Encoding encoding) = await ReadWithEncodingAsync(projectFile, ct).ConfigureAwait(false);
 			XDocument doc = XDocument.Parse(content, LoadOptions.PreserveWhitespace);
 			IEnumerable<XElement> packageRefs = doc.Descendants("PackageReference");
 
@@ -401,7 +402,7 @@ public class PackagesService(IProcessService processService)
 				}
 			}
 
-			await File.WriteAllTextAsync(projectFile, SerializeLikeOriginal(doc, content), ct).ConfigureAwait(false);
+			await File.WriteAllTextAsync(projectFile, SerializeLikeOriginal(doc, content), encoding, ct).ConfigureAwait(false);
 		}
 		catch (Exception ex) when (ex is IOException or System.Xml.XmlException)
 		{
@@ -488,7 +489,7 @@ public class PackagesService(IProcessService processService)
 	/// </remarks>
 	private static async Task MergePackagesPropsAsync(string propsPath, Dictionary<string, string> packages, CancellationToken ct)
 	{
-		string content = await File.ReadAllTextAsync(propsPath, ct).ConfigureAwait(false);
+		(string content, Encoding encoding) = await ReadWithEncodingAsync(propsPath, ct).ConfigureAwait(false);
 		XDocument doc = XDocument.Parse(content, LoadOptions.PreserveWhitespace);
 		XElement project = doc.Root ?? throw new InvalidDataException($"{propsPath} has no root element.");
 		XNamespace ns = project.Name.Namespace;
@@ -530,7 +531,20 @@ public class PackagesService(IProcessService processService)
 			existing.Add(entry);
 		}
 
-		await File.WriteAllTextAsync(propsPath, SerializeLikeOriginal(doc, content), ct).ConfigureAwait(false);
+		await File.WriteAllTextAsync(propsPath, SerializeLikeOriginal(doc, content), encoding, ct).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Reads a file along with the encoding to write it back in, so a rewrite keeps the byte order
+	/// mark it had, or the lack of one. Visual Studio writes csproj and props files with a BOM, which
+	/// <c>File.ReadAllTextAsync</c> hides and a default <c>File.WriteAllTextAsync</c> drops.
+	/// </summary>
+	private static async Task<(string Content, Encoding Encoding)> ReadWithEncodingAsync(string path, CancellationToken ct)
+	{
+		// Without a byte order mark the reader keeps this BOM-less UTF-8, so the file stays without one.
+		using StreamReader reader = new(path, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), detectEncodingFromByteOrderMarks: true);
+		string content = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+		return (content, reader.CurrentEncoding);
 	}
 
 	/// <summary>
