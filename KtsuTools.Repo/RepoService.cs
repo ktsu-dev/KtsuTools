@@ -555,6 +555,18 @@ public class RepoService(IGitService gitService, IProcessService processService,
 					string repoName = Path.GetFileName(repo);
 					task.Description = $"[green]Pulling {repoName.EscapeMarkup()}[/]";
 
+					// A local-only branch, a detached HEAD and a repository with no remote have nothing to
+					// pull from. git pull exits 1 for all three, which is not a pull failure, so skip them as
+					// repo fetch does.
+					ProcessResult upstream = await processService.RunAsync(GitCommand, "rev-parse --abbrev-ref --symbolic-full-name @{upstream}", repo, ct).ConfigureAwait(false);
+
+					if (upstream.ExitCode != 0)
+					{
+						AnsiConsole.MarkupLine($"  [yellow]SKIP[/] {repoName.EscapeMarkup()} (no upstream)");
+						task.Increment(1);
+						continue;
+					}
+
 					ProcessResult result = await processService.RunAsync(GitCommand, "pull --all --autostash", repo, ct).ConfigureAwait(false);
 
 					bool hasError = result.Errors.Any(line =>
@@ -565,6 +577,13 @@ public class RepoService(IGitService gitService, IProcessService processService,
 					if (result.ExitCode != 0 || hasError)
 					{
 						AnsiConsole.MarkupLine($"  [red]FAIL[/] {repoName.EscapeMarkup()}");
+
+						// Show why, so the user doesn't have to cd into the repository to find out.
+						foreach (string line in result.Errors.Where(line => !string.IsNullOrWhiteSpace(line)).Take(2))
+						{
+							AnsiConsole.MarkupLine($"       [dim]{line.Trim().EscapeMarkup()}[/]");
+						}
+
 						failCount++;
 					}
 					else
