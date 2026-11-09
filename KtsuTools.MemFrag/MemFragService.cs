@@ -85,6 +85,7 @@ public class MemFragService
 
 			IRenderable initial = new Text("Loading...");
 			Process processCapture = process;
+			bool processExited = false;
 			await AnsiConsole.Live(initial)
 				.AutoClear(true)
 				.StartAsync(async ctx =>
@@ -101,7 +102,7 @@ public class MemFragService
 						}
 						catch (InvalidOperationException)
 						{
-							ctx.UpdateTarget(new Markup("[red]Process has exited.[/]"));
+							Volatile.Write(ref processExited, true);
 							exitedCts.Cancel();
 						}
 					}
@@ -125,6 +126,14 @@ public class MemFragService
 
 					ticker.Stop();
 				}).ConfigureAwait(false);
+
+			// The live region clears itself when it ends, so the reason the monitor stopped is
+			// written after it, where it stays on screen.
+			if (Volatile.Read(ref processExited))
+			{
+				AnsiConsole.MarkupLine("[red]Error: Process has exited.[/]");
+				return 1;
+			}
 		}
 
 		return 0;
