@@ -201,7 +201,7 @@ internal static class Program
 		});
 
 		config.AddCommand<MachineMonitorCommand>("machine-monitor")
-			.WithDescription("Real-time hardware monitoring dashboard")
+			.WithDescription("Real-time hardware monitoring dashboard (Windows only)")
 			.WithExample("machine-monitor");
 
 		config.AddCommand<ProjectCommand>("project")
