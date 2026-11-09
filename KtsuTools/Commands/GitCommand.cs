@@ -62,12 +62,18 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 		if (dropped.Length > 0)
 		{
 			ErrorDisplay.ShowError(
-				$"{string.Join(", ", dropped)} would be parsed as a ktsu option, not passed to git. " +
-				$"Put git flags after a '--' separator, for example: ktsu git -- {string.Join(' ', settings.Args)} {string.Join(' ', dropped)}");
+				$"{string.Join(", ", dropped)} would be parsed as a {CliIdentity.Name} option, not passed to git. " +
+				$"Put git flags after a '--' separator, for example: {BuildSeparatorSuggestion(settings, dropped)}");
 			return 1;
 		}
 
 		string[] args = [.. settings.Args, .. context.Remaining.Raw];
+
+		if (args.Length == 0)
+		{
+			ErrorDisplay.ShowError($"Specify a git command, for example: {CliIdentity.Name} git status");
+			return 1;
+		}
 
 		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 
@@ -79,4 +85,42 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 			color: !settings.NoColor && !Console.IsOutputRedirected,
 			scope.Token).ConfigureAwait(false);
 	}
+
+	/// <summary>
+	/// Builds the command line to suggest when git flags were typed without a '--' separator: the
+	/// same invocation, with this tool's own options kept ahead of the separator so that pasting it
+	/// runs git in the same place, and the git command with its flags after it.
+	/// </summary>
+	/// <param name="settings">The options and positional arguments the user typed.</param>
+	/// <param name="dropped">The flags Spectre claimed, which belong to git.</param>
+	/// <returns>A command line that can be pasted and run as-is.</returns>
+	internal static string BuildSeparatorSuggestion(Settings settings, IEnumerable<string> dropped)
+	{
+		Ensure.NotNull(settings);
+		Ensure.NotNull(dropped);
+
+		List<string> tokens = [CliIdentity.Name, "git"];
+
+		if (settings.Path != ".")
+		{
+			tokens.Add("--path");
+			tokens.Add(QuoteIfNeeded(settings.Path));
+		}
+
+		if (settings.NoColor)
+		{
+			tokens.Add("--no-color");
+		}
+
+		tokens.Add("--");
+		tokens.AddRange(settings.Args.Select(QuoteIfNeeded));
+		tokens.AddRange(dropped.Select(QuoteIfNeeded));
+
+		return string.Join(' ', tokens);
+	}
+
+	private static string QuoteIfNeeded(string token) =>
+		token.Length > 0 && !token.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'' or '`' or '$')
+			? token
+			: $"\"{token.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 }
