@@ -763,14 +763,14 @@ public class RepoServiceTests
 	[TestMethod]
 	public async Task BuildAndTestAsyncNamesTheChosenSolutionWhenAFolderHoldsSlnAndSlnx()
 	{
-		string root = Path.Combine(Path.GetTempPath(), $"ktsu_slnx_{Guid.NewGuid():N}");
-		string repo = Path.Combine(root, "repo");
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_slnx_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "repo");
 		Directory.CreateDirectory(repo);
 		try
 		{
 			// Partway through the sln -> slnx migration: a bare 'dotnet build' here stops with MSB1011.
-			string sln = Path.Combine(repo, "Foo.sln");
-			string slnx = Path.Combine(repo, "Foo.slnx");
+			string sln = Path.Join(repo, "Foo.sln");
+			string slnx = Path.Join(repo, "Foo.slnx");
 			await File.WriteAllTextAsync(sln, string.Empty).ConfigureAwait(false);
 			await File.WriteAllTextAsync(slnx, string.Empty).ConfigureAwait(false);
 
