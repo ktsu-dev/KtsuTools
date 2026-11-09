@@ -68,6 +68,32 @@ internal static partial class UnusedPackageAnalyzer
 	private static partial Regex UsingDirectiveRegex { get; }
 
 	/// <summary>
+	/// A Razor <c>@using</c> directive, which ends at the line rather than at a semicolon, or an
+	/// <c>@inject</c> directive's type. Either names a namespace or a type within one.
+	/// </summary>
+	[GeneratedRegex(@"^\s*@(?:using\s+(?:static\s+)?(?:\w+\s*=\s*)?|inject\s+)([\w.]+)", RegexOptions.Multiline)]
+	private static partial Regex RazorDirectiveRegex { get; }
+
+	/// <summary>A XAML namespace mapping: WPF/MAUI <c>clr-namespace:X</c>, or Avalonia/UWP <c>using:X</c>.</summary>
+	[GeneratedRegex(@"\b(?:clr-namespace|using):([\w.]+)")]
+	private static partial Regex XamlNamespaceRegex { get; }
+
+	/// <summary>
+	/// The source file extensions a project can refer to a package from, and the pattern that
+	/// pulls the namespaces each one imports. Markup files count: a Blazor or MVC project may
+	/// import a package only from <c>_Imports.razor</c>, and a WPF or Avalonia view only from
+	/// its XAML.
+	/// </summary>
+	private static readonly Dictionary<string, Regex> SourceFileImports = new(StringComparer.OrdinalIgnoreCase)
+	{
+		[".cs"] = UsingDirectiveRegex,
+		[".razor"] = RazorDirectiveRegex,
+		[".cshtml"] = RazorDirectiveRegex,
+		[".xaml"] = XamlNamespaceRegex,
+		[".axaml"] = XamlNamespaceRegex,
+	};
+
+	/// <summary>
 	/// Scans every <c>.csproj</c> under <paramref name="rootPath"/> — or the single project
 	/// file, if that is what it points at — and classifies each declared package reference.
 	/// </summary>
@@ -271,7 +297,7 @@ internal static partial class UnusedPackageAnalyzer
 				.OfType<string>()
 				.Where(ns => ns.Length > 0));
 
-			foreach (string file in EnumerateSourceFiles(projectDirectory))
+			foreach ((string file, Regex imports) in EnumerateSourceFiles(projectDirectory))
 			{
 				string text;
 
@@ -286,7 +312,7 @@ internal static partial class UnusedPackageAnalyzer
 
 				index.sourceText.Add(text);
 
-				foreach (Match match in UsingDirectiveRegex.Matches(text))
+				foreach (Match match in imports.Matches(text))
 				{
 					index.namespaces.Add(match.Groups[1].Value);
 				}
@@ -295,9 +321,16 @@ internal static partial class UnusedPackageAnalyzer
 			return index;
 		}
 
-		private static IEnumerable<string> EnumerateSourceFiles(string projectDirectory) =>
-			Directory.EnumerateFiles(projectDirectory, "*.cs", SearchOption.AllDirectories)
-				.Where(file => !IsGeneratedOutput(file, projectDirectory));
+		private static IEnumerable<(string File, Regex Imports)> EnumerateSourceFiles(string projectDirectory)
+		{
+			foreach (string file in Directory.EnumerateFiles(projectDirectory, "*", SearchOption.AllDirectories))
+			{
+				if (SourceFileImports.TryGetValue(Path.GetExtension(file), out Regex? imports) && !IsGeneratedOutput(file, projectDirectory))
+				{
+					yield return (file, imports);
+				}
+			}
+		}
 
 		private static bool IsGeneratedOutput(string file, string projectDirectory)
 		{
