@@ -326,4 +326,25 @@ public class UnusedPackageAnalyzerTests
 		Assert.AreEqual(0, report.ProjectsScanned);
 		Assert.AreEqual(0, report.Findings.Count);
 	}
+
+	[TestMethod]
+	public void AnalyzesAProjectInTheMsBuild2003Namespace()
+	{
+		string projectDirectory = Path.Combine(root, "Legacy");
+		Directory.CreateDirectory(projectDirectory);
+		File.WriteAllText(Path.Combine(projectDirectory, "Legacy.csproj"), """
+			<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+			  <ItemGroup>
+			    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+			    <PackageReference Include="Spectre.Console" Version="0.57.0" />
+			  </ItemGroup>
+			</Project>
+			""");
+		File.WriteAllText(Path.Combine(projectDirectory, "Program.cs"), "using Spectre.Console;\n\nnamespace Legacy; internal static class Program { }");
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "Newtonsoft.Json").Usage);
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Spectre.Console").Usage);
+	}
 }
