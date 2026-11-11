@@ -135,16 +135,26 @@ public class MarkdownService
 		string originalContent = await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false);
 		string workingContent = originalContent;
 
+		// Only trim the end: leading white space can be content, such as an indented code block.
+		// Without --normalize-line-endings, whatever this step writes keeps the file's own endings.
+		string lineEnding = standardizeLineEndings ? Environment.NewLine : DetectLineEnding(originalContent);
+
 		if (standardizeLineEndings)
 		{
-			workingContent = workingContent.ReplaceLineEndings().Trim() + Environment.NewLine;
+			workingContent = workingContent.ReplaceLineEndings().TrimEnd() + Environment.NewLine;
 		}
 
-		workingContent = Frontmatter.CombineFrontmatter(
+		string combined = Frontmatter.CombineFrontmatter(
 			workingContent,
 			FrontmatterNaming.Standard,
 			FrontmatterOrder.Sorted,
-			FrontmatterMergeStrategy.Conservative).Trim() + Environment.NewLine;
+			FrontmatterMergeStrategy.Conservative);
+
+		// A file the front-matter step leaves alone is left byte-for-byte as it was.
+		if (combined != workingContent)
+		{
+			workingContent = combined.ReplaceLineEndings(lineEnding).TrimEnd() + lineEnding;
+		}
 
 		if (applyLinting)
 		{
@@ -160,6 +170,12 @@ public class MarkdownService
 
 		return false;
 	}
+
+	/// <summary>
+	/// Returns the line ending a file was written with: CRLF when it has any, otherwise LF.
+	/// </summary>
+	private static string DetectLineEnding(string content) =>
+		content.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
 
 	/// <summary>
 	/// Lints a single markdown file.
