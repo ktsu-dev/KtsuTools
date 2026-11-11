@@ -70,8 +70,13 @@ internal static class SyncGit
 	/// </summary>
 	/// <param name="repoRoot">The repository working directory.</param>
 	/// <param name="branchName">The branch to commit onto.</param>
+	/// <param name="carriedFiles">
+	/// Absolute paths of the files sync wrote into this repository. Their working-tree content is
+	/// carried onto the branch even when the branch already holds a different copy, which a plain
+	/// checkout refuses to overwrite.
+	/// </param>
 	/// <returns>The recorded switch, or <see langword="null"/> when the repository has no commit to branch from.</returns>
-	internal static async Task<SyncService.BranchSwitch?> SwitchToSyncBranchAsync(string repoRoot, string branchName)
+	internal static async Task<SyncService.BranchSwitch?> SwitchToSyncBranchAsync(string repoRoot, string branchName, IReadOnlyCollection<string>? carriedFiles = null)
 	{
 		GitRepository repo = await OpenAsync(repoRoot).ConfigureAwait(false);
 
@@ -96,12 +101,77 @@ internal static class SyncGit
 				.TryExecuteAsync()
 				.ConfigureAwait(false);
 
-			_ = await repo.Checkout(GitRefName.Create<GitRefName>(branchName))
-				.ExecuteAsync()
-				.ConfigureAwait(false);
+			GitRefName target = GitRefName.Create<GitRefName>(branchName);
+			try
+			{
+				_ = await repo.Checkout(target).ExecuteAsync().ConfigureAwait(false);
+			}
+			catch (GitException) when (carriedFiles is { Count: > 0 })
+			{
+				if (!await TryCarryFilesOntoBranchAsync(repo, repoRoot, target, carriedFiles).ConfigureAwait(false))
+				{
+					throw;
+				}
+			}
 		}
 
 		return new SyncService.BranchSwitch(repoRoot, original, originalTipSha);
+	}
+
+	/// <summary>
+	/// Switches to a branch that a plain checkout refused, because the branch holds a different copy
+	/// of a file sync just wrote. That happens on every re-run onto an open sync branch. The copied
+	/// content is saved, the switch is forced, and the content is written back, so it can then be
+	/// committed on the branch.
+	/// </summary>
+	/// <remarks>
+	/// A forced checkout throws away every local change to a file that differs between the two
+	/// trees, so it is only used when the files sync wrote are the only local changes. Anything
+	/// else, such as the user's own edits or an untracked file the branch may track, keeps the
+	/// refusal, and the repository is left exactly as it was.
+	/// </remarks>
+	/// <param name="repo">The repository.</param>
+	/// <param name="repoRoot">The repository working directory.</param>
+	/// <param name="target">The branch to switch to.</param>
+	/// <param name="carriedFiles">Absolute paths of the files sync wrote into this repository.</param>
+	/// <returns>
+	/// <see langword="true"/> once the branch is checked out with the carried files in place, or
+	/// <see langword="false"/> when other local changes make forcing the switch unsafe and nothing was changed.
+	/// </returns>
+	private static async Task<bool> TryCarryFilesOntoBranchAsync(
+		GitRepository repo,
+		string repoRoot,
+		GitRefName target,
+		IReadOnlyCollection<string> carriedFiles)
+	{
+		HashSet<string> carried = new(carriedFiles.Select(f => Normalize(CanonicalFilePathOf(f))), PathComparer);
+
+		GitStatus status = await repo.Status()
+			.WithUntrackedFiles(GitUntrackedFilesMode.All)
+			.ExecuteAsync()
+			.ConfigureAwait(false);
+
+		List<string> dirty = [.. status.Entries.Select(e => Normalize(Path.Join(repoRoot, e.Path.ToString())))];
+
+		if (dirty.Count == 0 || !dirty.All(carried.Contains))
+		{
+			return false;
+		}
+
+		List<(string Path, byte[] Content)> saved = [];
+		foreach (string path in dirty.Where(File.Exists))
+		{
+			saved.Add((path, await File.ReadAllBytesAsync(path).ConfigureAwait(false)));
+		}
+
+		_ = await repo.Checkout(target).Force().ExecuteAsync().ConfigureAwait(false);
+
+		foreach ((string path, byte[] content) in saved)
+		{
+			await File.WriteAllBytesAsync(path, content).ConfigureAwait(false);
+		}
+
+		return true;
 	}
 
 	/// <summary>
@@ -154,22 +224,30 @@ internal static class SyncGit
 	}
 
 	/// <summary>
-	/// The files among the sync candidates that have outstanding changes in their repository.
+	/// The files among those the sync wrote that have outstanding changes in their repository.
 	/// </summary>
-	/// <param name="commitDirectories">Directories holding the copied files.</param>
-	/// <param name="expandedFilesToSync">File names the sync copied.</param>
+	/// <remarks>
+	/// Only the files the sync actually overwrote are candidates. A file that merely matched the
+	/// scan, in a group the user skipped or one that was already in sync, may hold the user's own
+	/// unfinished edit, and committing it would publish that edit under the sync's author.
+	/// </remarks>
+	/// <param name="writtenFiles">Absolute paths of the files the sync copied over.</param>
 	/// <returns>Absolute paths of the files with changes to commit.</returns>
-	internal static async Task<Collection<string>> FindChangedFilesAsync(
-		HashSet<string> commitDirectories,
-		HashSet<string> expandedFilesToSync)
+	internal static async Task<Collection<string>> FindChangedFilesAsync(IEnumerable<string> writtenFiles)
 	{
-		Ensure.NotNull(commitDirectories);
-		Ensure.NotNull(expandedFilesToSync);
+		Ensure.NotNull(writtenFiles);
 
 		Collection<string> commitFiles = [];
 
-		foreach (string directoryPath in commitDirectories)
+		// Grouped by directory, so each repository's status is read once however many files it holds.
+		IEnumerable<IGrouping<string, string>> byDirectory = writtenFiles
+			.Distinct(PathComparer)
+			.GroupBy(file => Path.GetDirectoryName(file) ?? string.Empty, file => Path.GetFileName(file), PathComparer);
+
+		foreach (IGrouping<string, string> group in byDirectory)
 		{
+			string directoryPath = group.Key;
+
 			if (await RepoRootForAsync(directoryPath).ConfigureAwait(false) is not string repoRoot)
 			{
 				continue;
@@ -198,7 +276,7 @@ internal static class SyncGit
 			// linked path has to be resolved too before the two spellings can be compared.
 			string canonicalDirectory = CanonicalDirectoryOf(directoryPath);
 
-			foreach (string filePath in expandedFilesToSync
+			foreach (string filePath in group
 				.Where(name => changed.Contains(Normalize(Path.Join(canonicalDirectory, name))))
 				.Select(name => Path.Join(directoryPath, name)))
 			{

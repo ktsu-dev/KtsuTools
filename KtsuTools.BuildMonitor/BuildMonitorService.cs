@@ -17,6 +17,7 @@ using System.Threading.Tasks;
 using Humanizer;
 using ktsu.IntervalAction;
 using KtsuTools.Core.Services.GitHub;
+using Octokit;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
@@ -45,19 +46,17 @@ public class BuildMonitorService(IGitHubService gitHubService)
 			{
 				TimeSpan interval = TimeSpan.FromSeconds(refreshIntervalSeconds);
 
+				// Tick must never throw. The first call runs inside Live, where an exception ends the
+				// command, and later calls run on IntervalAction, which stops polling after a fault and
+				// leaves the last table on screen.
 				void Tick()
 				{
 					try
 					{
-						Table table = BuildDashboardTableAsync(owner, ct).GetAwaiter().GetResult();
-						ctx.UpdateTarget(table);
+						ctx.UpdateTarget(RenderDashboardAsync(owner, ct).GetAwaiter().GetResult());
 					}
 					catch (OperationCanceledException)
 					{
-					}
-					catch (HttpRequestException ex)
-					{
-						ctx.UpdateTarget(new Markup($"[red]API Error: {ex.Message.EscapeMarkup()}[/]"));
 					}
 				}
 
@@ -80,6 +79,37 @@ public class BuildMonitorService(IGitHubService gitHubService)
 
 				ticker.Stop();
 			}).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Renders the dashboard, or the reason it could not be fetched. GitHub errors are shown rather
+	/// than thrown, so a refresh that fails is retried on the next tick.
+	/// </summary>
+	/// <param name="owner">The user or organization whose repositories are shown.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>The dashboard table, or a message describing the error.</returns>
+	internal async Task<IRenderable> RenderDashboardAsync(string owner, CancellationToken ct)
+	{
+		try
+		{
+			return await BuildDashboardTableAsync(owner, ct).ConfigureAwait(false);
+		}
+		catch (RateLimitExceededException ex)
+		{
+			return new Markup($"[red]GitHub rate limit exceeded ({ex.Limit} requests/hour). Resets {ex.Reset.Humanize().EscapeMarkup()}; retrying on the next refresh.[/]");
+		}
+		catch (AuthorizationException ex)
+		{
+			return new Markup($"[red]GitHub rejected the token ({(int)ex.StatusCode}): {ex.Message.EscapeMarkup()}[/]");
+		}
+		catch (ApiException ex)
+		{
+			return new Markup($"[red]API Error ({(int)ex.StatusCode}): {ex.Message.EscapeMarkup()}[/]");
+		}
+		catch (HttpRequestException ex)
+		{
+			return new Markup($"[red]API Error: {ex.Message.EscapeMarkup()}[/]");
+		}
 	}
 
 	private async Task<Table> BuildDashboardTableAsync(string owner, CancellationToken ct)
@@ -133,7 +163,13 @@ public class BuildMonitorService(IGitHubService gitHubService)
 					latestRun.CreatedAt.Humanize(),
 					duration);
 			}
-			catch (HttpRequestException)
+			catch (RateLimitExceededException)
+			{
+				// Every remaining repository would fail the same way, so the whole refresh is
+				// reported as rate limited instead of a table of errors.
+				throw;
+			}
+			catch (Exception ex) when (ex is ApiException or HttpRequestException)
 			{
 				table.AddRow(
 					$"[bold]{repo.Name.EscapeMarkup()}[/]",

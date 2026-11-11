@@ -118,6 +118,109 @@ public class PackagesUpdateTests
 		Assert.AreEqual(original, await File.ReadAllTextAsync(projectPath).ConfigureAwait(false));
 	}
 
+	private async Task<string> WritePinnedProjectAsync()
+	{
+		string projectPath = Path.Join(root, "Sample.csproj");
+		await File.WriteAllTextAsync(projectPath, string.Join("\n",
+			"<Project Sdk=\"Microsoft.NET.Sdk\">",
+			"  <ItemGroup>",
+			"    <PackageReference Include=\"Pinned.Pkg\" Version=\"12.0.1\" />",
+			"  </ItemGroup>",
+			"</Project>",
+			string.Empty)).ConfigureAwait(false);
+		return projectPath;
+	}
+
+	private async Task<(int ExitCode, string Output)> RunUpdateAsync(Func<HttpRequestMessage, HttpResponseMessage> respond, string source = PackagesService.NuGetSource)
+	{
+		using StubHandler handler = new(respond);
+		using HttpClient httpClient = new(handler, disposeHandler: false);
+		PackagesService service = new(Mock.Of<IProcessService>(), httpClient);
+		int exitCode = -1;
+		string output = await ConsoleCapture.CaptureAsync(async () =>
+			exitCode = await service.UpdateAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root), source: source).ConfigureAwait(false)).ConfigureAwait(false);
+		return (exitCode, output);
+	}
+
+	[TestMethod]
+	public async Task UpdateFailsWhenAVersionLookupCannotReachNuGet()
+	{
+		string projectPath = await WritePinnedProjectAsync().ConfigureAwait(false);
+		string original = await File.ReadAllTextAsync(projectPath).ConfigureAwait(false);
+
+		(int exitCode, string output) = await RunUpdateAsync(_ => throw new HttpRequestException("No such host is known.")).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exitCode, output);
+		StringAssert.Contains(output, "Pinned.Pkg could not be checked", StringComparison.Ordinal);
+		StringAssert.Contains(output, "1 package(s) could not be checked", StringComparison.Ordinal);
+		Assert.AreEqual(original, await File.ReadAllTextAsync(projectPath).ConfigureAwait(false));
+	}
+
+	[TestMethod]
+	public async Task UpdateFailsWhenNuGetAnswersWithAnError()
+	{
+		_ = await WritePinnedProjectAsync().ConfigureAwait(false);
+
+		(int exitCode, string output) = await RunUpdateAsync(_ => new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests)).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exitCode, output);
+		StringAssert.Contains(output, "429", StringComparison.Ordinal);
+	}
+
+	[TestMethod]
+	public async Task UpdateBumpsAPinWhenTheLookupWorks()
+	{
+		string projectPath = await WritePinnedProjectAsync().ConfigureAwait(false);
+
+		(int exitCode, string output) = await RunUpdateAsync(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+		{
+			Content = new StringContent("""{"versions":["12.0.1","13.0.4","14.0.0-beta"]}"""),
+		}).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exitCode, output);
+		StringAssert.Contains(output, "1 package(s) updated", StringComparison.Ordinal);
+		StringAssert.Contains(await File.ReadAllTextAsync(projectPath).ConfigureAwait(false), "Version=\"13.0.4\"", StringComparison.Ordinal);
+	}
+
+	[TestMethod]
+	[DataRow("nuget.org")]
+	[DataRow("https://api.nuget.org/v3/index.json")]
+	public async Task UpdateRefusesAnUnsupportedSource(string source)
+	{
+		_ = await WritePinnedProjectAsync().ConfigureAwait(false);
+		bool asked = false;
+
+		(int exitCode, string output) = await RunUpdateAsync(
+			_ =>
+			{
+				asked = true;
+				return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+			},
+			source).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exitCode, output);
+		StringAssert.Contains(output, "Unsupported package source", StringComparison.Ordinal);
+		Assert.IsFalse(asked, "An unsupported source must be refused before any lookup.");
+	}
+
+	[TestMethod]
+	[DataRow("nuget", true)]
+	[DataRow("NuGet", true)]
+	[DataRow("nuget.org", false)]
+	[DataRow("https://api.nuget.org/v3/index.json", false)]
+	public void UpdateCommandValidatesTheSource(string source, bool valid)
+	{
+		KtsuTools.Commands.PackagesUpdateCommand.Settings settings = new() { Path = root, Source = source };
+
+		Assert.AreEqual(valid, settings.Validate().Successful);
+	}
+
+	private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+	{
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+			Task.FromResult(respond(request));
+	}
+
 	[TestMethod]
 	public async Task MigrateToCpmKeepsACentralVersionThatIsAProperty()
 	{
@@ -150,5 +253,24 @@ public class PackagesUpdateTests
 			XDocument.Parse(props).Descendants("PackageVersion").Single().Attribute("Version")?.Value,
 			"A concrete project version must not overwrite a central property indirection.");
 		Assert.IsTrue(props.StartsWith("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Project>", StringComparison.Ordinal), "The declaration is kept, with no blank line added after it.");
+	}
+
+	[TestMethod]
+	public async Task UpdateRewritesAReferenceInTheMsBuild2003Namespace()
+	{
+		string original = string.Join("\n",
+			"<Project ToolsVersion=\"15.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">",
+			"  <ItemGroup>",
+			"    <PackageReference Include=\"Newtonsoft.Json\" Version=\"12.0.1\" />",
+			"  </ItemGroup>",
+			"</Project>",
+			string.Empty);
+		string projectPath = Path.Join(root, "Legacy.csproj");
+		await File.WriteAllTextAsync(projectPath, original).ConfigureAwait(false);
+
+		await PackagesService.UpdatePackageVersionInFileAsync(projectPath, "Newtonsoft.Json", "13.0.4", CancellationToken.None).ConfigureAwait(false);
+
+		string updated = await File.ReadAllTextAsync(projectPath).ConfigureAwait(false);
+		Assert.AreEqual(original.Replace("Version=\"12.0.1\"", "Version=\"13.0.4\"", StringComparison.Ordinal), updated);
 	}
 }

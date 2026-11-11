@@ -80,6 +80,59 @@ public class UnusedPackageAnalyzerTests
 	}
 
 	[TestMethod]
+	public void DoesNotReportAPackageImportedOnlyFromRazor()
+	{
+		WriteProject(
+			"Site",
+			"""
+			    <PackageReference Include="MudBlazor" Version="8.0.0" />
+			    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+			""",
+			("_Imports.razor", "@using Microsoft.AspNetCore.Components.Web\n@using MudBlazor\n"),
+			("Index.razor", "@page \"/\"\n\n<MudButton>Go</MudButton>\n"),
+			("Program.cs", "namespace Site; internal static class Program { }"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "MudBlazor").Usage);
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "Newtonsoft.Json").Usage, "a package nothing names is still reported");
+	}
+
+	[TestMethod]
+	public void DoesNotReportAPackageInjectedIntoACshtmlView()
+	{
+		WriteProject(
+			"Mvc",
+			"""    <PackageReference Include="Serilog" Version="4.0.0" />""",
+			("Index.cshtml", "@model object\n@inject Serilog.ILogger Log\n<p>Hi</p>\n"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Serilog").Usage);
+	}
+
+	[TestMethod]
+	public void DoesNotReportAPackageMappedOnlyFromXaml()
+	{
+		WriteProject(
+			"Desktop",
+			"""
+			    <PackageReference Include="MahApps.Metro" Version="2.4.10" />
+			    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.0.0" />
+			    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+			""",
+			("MainWindow.xaml", "<Window xmlns:mah=\"clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro\" />"),
+			("Grid.axaml", "<UserControl xmlns:dg=\"using:Avalonia.Controls.DataGrid\" />"),
+			("App.cs", "namespace Desktop; internal static class App { }"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "MahApps.Metro").Usage);
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Avalonia.Controls.DataGrid").Usage);
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "Newtonsoft.Json").Usage, "a package nothing names is still reported");
+	}
+
+	[TestMethod]
 	public void TreatsANamespaceBeneathThePackageIdAsUse()
 	{
 		WriteProject(
@@ -318,6 +371,79 @@ public class UnusedPackageAnalyzerTests
 		Assert.AreEqual(0, report.OrphanedPackageVersions.Count);
 	}
 
+	/// <summary>
+	/// The layout from ktsu-dev/KtsuTools#340: App.csproj and the props file at the root, a test
+	/// project using Moq and an F# project using FSharp.Data, plus one entry nobody uses.
+	/// </summary>
+	private string WriteMultiProjectRepository()
+	{
+		string appPath = Path.Combine(root, "App.csproj");
+		File.WriteAllText(appPath, """
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <ItemGroup>
+			    <PackageReference Include="Newtonsoft.Json" />
+			  </ItemGroup>
+			</Project>
+			""");
+		File.WriteAllText(Path.Combine(root, "Program.cs"), "using Newtonsoft.Json;\n");
+
+		string testsDirectory = Path.Combine(root, "tests", "App.Tests");
+		Directory.CreateDirectory(testsDirectory);
+		File.WriteAllText(Path.Combine(testsDirectory, "App.Tests.csproj"), """
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <ItemGroup>
+			    <PackageReference Include="Moq" />
+			  </ItemGroup>
+			</Project>
+			""");
+
+		string fsharpDirectory = Path.Combine(root, "tools", "Gen");
+		Directory.CreateDirectory(fsharpDirectory);
+		File.WriteAllText(Path.Combine(fsharpDirectory, "Gen.fsproj"), """
+			<Project Sdk="Microsoft.NET.Sdk">
+			  <ItemGroup>
+			    <PackageReference Include="FSharp.Data" />
+			  </ItemGroup>
+			</Project>
+			""");
+
+		File.WriteAllText(Path.Combine(root, "Directory.Packages.props"), """
+			<Project>
+			  <ItemGroup>
+			    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+			    <PackageVersion Include="Moq" Version="4.20.72" />
+			    <PackageVersion Include="FSharp.Data" Version="6.4.0" />
+			    <PackageVersion Include="Nobody.Uses.This" Version="1.0.0" />
+			  </ItemGroup>
+			</Project>
+			""");
+
+		return appPath;
+	}
+
+	[TestMethod]
+	public void DoesNotOrphanAPackageVersionOnlyAnFSharpProjectReferences()
+	{
+		_ = WriteMultiProjectRepository();
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(1, report.OrphanedPackageVersions.Count, string.Join(", ", report.OrphanedPackageVersions));
+		Assert.AreEqual("Nobody.Uses.This", report.OrphanedPackageVersions[0]);
+		Assert.IsFalse(report.OrphanCheckSkipped);
+	}
+
+	[TestMethod]
+	public void SkipsTheOrphanCheckWhenScanningASingleProject()
+	{
+		string appPath = WriteMultiProjectRepository();
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(appPath);
+
+		Assert.AreEqual(0, report.OrphanedPackageVersions.Count, "One project can't show that the repository's other projects leave an entry unused.");
+		Assert.IsTrue(report.OrphanCheckSkipped);
+	}
+
 	[TestMethod]
 	public void ReturnsAnEmptyReportWhenThereAreNoProjects()
 	{
@@ -325,5 +451,26 @@ public class UnusedPackageAnalyzerTests
 
 		Assert.AreEqual(0, report.ProjectsScanned);
 		Assert.AreEqual(0, report.Findings.Count);
+	}
+
+	[TestMethod]
+	public void AnalyzesAProjectInTheMsBuild2003Namespace()
+	{
+		string projectDirectory = Path.Combine(root, "Legacy");
+		Directory.CreateDirectory(projectDirectory);
+		File.WriteAllText(Path.Combine(projectDirectory, "Legacy.csproj"), """
+			<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+			  <ItemGroup>
+			    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+			    <PackageReference Include="Spectre.Console" Version="0.57.0" />
+			  </ItemGroup>
+			</Project>
+			""");
+		File.WriteAllText(Path.Combine(projectDirectory, "Program.cs"), "using Spectre.Console;\n\nnamespace Legacy; internal static class Program { }");
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "Newtonsoft.Json").Usage);
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Spectre.Console").Usage);
 	}
 }
