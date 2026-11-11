@@ -1,8 +1,7 @@
-## v1.11.3 (patch)
+## v1.11.4-pre.1 (prerelease)
 
-Changes since v1.11.2:
+Changes since v1.11.3:
 
-- Refuse a --pid of zero or below, and report a target that exits mid-command as exited [patch] (#360) (matt-edmondson)
-- Read a markdownlint config with comments, and warn when one can't be read [patch] (#371) (matt-edmondson)
-- Keep fenced code and two-space hard line breaks in markdown lint's MD009 [patch] (#391) (matt-edmondson)
+- Bump NuGet.Versioning from 7.9.0 to 8.0.0 (dependabot[bot])
+- Bump MSTest.Sdk from 4.5.1 to 4.5.3 (dependabot[bot])
 
