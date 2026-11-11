@@ -42,6 +42,12 @@ public sealed record DedupePlan(
 	}
 }
 
+/// <summary>
+/// Outcome of applying a <see cref="DedupePlan"/>: how many removals were planned, how many
+/// were deleted, and which paths could not be.
+/// </summary>
+public sealed record DedupeDeletion(int Planned, int Deleted, IReadOnlyList<string> Failed);
+
 public sealed record DedupeStats(
 	int FilesScanned,
 	int DuplicateGroups,
@@ -187,12 +193,13 @@ public class FileDedupeService
 	}
 
 #pragma warning disable CA1822
-	public int DeleteRedundant(DedupePlan plan)
+	public DedupeDeletion DeleteRedundant(DedupePlan plan)
 #pragma warning restore CA1822
 	{
 		Ensure.NotNull(plan);
 
 		int deleted = 0;
+		List<string> failed = [];
 		foreach (string path in plan.Removals)
 		{
 			try
@@ -202,14 +209,16 @@ public class FileDedupeService
 			}
 			catch (IOException ex)
 			{
+				failed.Add(path);
 				AnsiConsole.MarkupLine($"  [yellow]skip[/] {path.EscapeMarkup()}: {ex.Message.EscapeMarkup()}");
 			}
 			catch (UnauthorizedAccessException ex)
 			{
+				failed.Add(path);
 				AnsiConsole.MarkupLine($"  [yellow]skip[/] {path.EscapeMarkup()}: {ex.Message.EscapeMarkup()}");
 			}
 		}
 
-		return deleted;
+		return new DedupeDeletion(plan.Removals.Count, deleted, failed);
 	}
 }
