@@ -7,10 +7,7 @@ using System.IO;
 
 using ktsu.Semantics.Paths;
 
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using ktsu.Imaging;
 
 using Spectre.Console;
 
@@ -168,15 +165,7 @@ public static class ImageService
 
 			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: it has no opaque pixels to crop to.[/]");
 		}
-		catch (ImageProcessingException e)
-		{
-			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: {e.Message.EscapeMarkup()}[/]");
-		}
-		catch (InvalidImageContentException e)
-		{
-			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: {e.Message.EscapeMarkup()}[/]");
-		}
-		catch (UnknownImageFormatException e)
+		catch (InvalidImageDataException e)
 		{
 			AnsiConsole.MarkupLine($"[yellow]Skipped {Path.GetFileName(file).EscapeMarkup()}: {e.Message.EscapeMarkup()}[/]");
 		}
@@ -191,10 +180,10 @@ public static class ImageService
 
 	private static bool ProcessSingleImage(string filePath, string outputFilePath, Rgba32 targetColor, int size, int padding)
 	{
-		using Image<Rgba32> image = Image.Load<Rgba32>(filePath);
+		ImagePixels image = ImageDecoder.Load(filePath);
 
 		// Convert to black and white
-		image.Mutate(ctx => ctx.BlackWhite());
+		ApplyBlackWhite(image);
 
 		// Find the highest tonal value among non-transparent pixels
 		byte maxValue = FindMaxTonalValue(image);
@@ -203,7 +192,7 @@ public static class ImageService
 		maxValue = isBlack ? (byte)255 : maxValue;
 
 		// Recolor pixels and find tight bounding box of non-transparent content
-		Rectangle? bounds = RecolorAndFindBounds(image, targetColor, maxValue, isBlack);
+		PixelBounds? bounds = RecolorAndFindBounds(image, targetColor, maxValue, isBlack);
 		if (bounds is null)
 		{
 			return false;
@@ -214,27 +203,38 @@ public static class ImageService
 		return true;
 	}
 
-	private static byte FindMaxTonalValue(Image<Rgba32> image)
+	/// <summary>
+	/// The black and white colour matrix: every colour channel becomes <c>1.5 * (r + g + b) - 1</c>,
+	/// clamped to the unit range, and alpha is left alone. It is the filter ImageSharp's
+	/// <c>BlackWhite()</c> applied, reproduced here so the tonal values the rest of the pipeline
+	/// reads stay the same.
+	/// </summary>
+	internal static void ApplyBlackWhite(ImagePixels image)
+	{
+		Span<byte> pixels = image.Pixels;
+		for (int i = 0; i < pixels.Length; i += 4)
+		{
+			float sum = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 255f;
+			float value = Math.Clamp((1.5f * sum) - 1f, 0f, 1f);
+			byte tone = (byte)((value * 255f) + 0.5f);
+			pixels[i] = tone;
+			pixels[i + 1] = tone;
+			pixels[i + 2] = tone;
+		}
+	}
+
+	private static byte FindMaxTonalValue(ImagePixels image)
 	{
 		byte maxValue = 0;
+		ReadOnlySpan<byte> pixels = image.ReadOnlyPixels;
 
-		image.ProcessPixelRows(accessor =>
+		for (int i = 0; i < pixels.Length; i += 4)
 		{
-			for (int y = 0; y < accessor.Height; y++)
+			if (pixels[i + 3] != 0)
 			{
-				Span<Rgba32> pixelRow = accessor.GetRowSpan(y);
-
-				for (int x = 0; x < pixelRow.Length; x++)
-				{
-					ref Rgba32 pixel = ref pixelRow[x];
-
-					if (pixel.A != 0)
-					{
-						maxValue = Math.Max(maxValue, pixel.R);
-					}
-				}
+				maxValue = Math.Max(maxValue, pixels[i]);
 			}
-		});
+		}
 
 		return maxValue;
 	}
@@ -242,42 +242,39 @@ public static class ImageService
 	/// <summary>
 	/// Recolors the image and returns the bounding box of its opaque pixels, or null when it has none.
 	/// </summary>
-	private static Rectangle? RecolorAndFindBounds(Image<Rgba32> image, Rgba32 targetColor, byte maxValue, bool isBlack)
+	private static PixelBounds? RecolorAndFindBounds(ImagePixels image, Rgba32 targetColor, byte maxValue, bool isBlack)
 	{
 		int top = image.Height;
 		int left = image.Width;
 		int right = 0;
 		int bottom = 0;
 
-		image.ProcessPixelRows(accessor =>
+		for (int y = 0; y < image.Height; y++)
 		{
-			for (int y = 0; y < accessor.Height; y++)
+			Span<byte> pixelRow = image.GetRow(y);
+
+			for (int x = 0; x < image.Width; x++)
 			{
-				Span<Rgba32> pixelRow = accessor.GetRowSpan(y);
+				Span<byte> pixel = pixelRow.Slice(x * 4, 4);
+				byte newValue = ComputeNewValue(pixel[0], maxValue, isBlack);
 
-				for (int x = 0; x < pixelRow.Length; x++)
+				if (pixel[3] != 0)
 				{
-					ref Rgba32 pixel = ref pixelRow[x];
-					byte newValue = ComputeNewValue(pixel, maxValue, isBlack);
-
-					if (pixel.A != 0)
-					{
-						left = Math.Min(left, x);
-						top = Math.Min(top, y);
-						right = Math.Max(right, x);
-						bottom = Math.Max(bottom, y);
-					}
-					else
-					{
-						newValue = 0;
-					}
-
-					pixel.R = (byte)(newValue / 255f * targetColor.R);
-					pixel.G = (byte)(newValue / 255f * targetColor.G);
-					pixel.B = (byte)(newValue / 255f * targetColor.B);
+					left = Math.Min(left, x);
+					top = Math.Min(top, y);
+					right = Math.Max(right, x);
+					bottom = Math.Max(bottom, y);
 				}
+				else
+				{
+					newValue = 0;
+				}
+
+				pixel[0] = (byte)(newValue / 255f * targetColor.R);
+				pixel[1] = (byte)(newValue / 255f * targetColor.G);
+				pixel[2] = (byte)(newValue / 255f * targetColor.B);
 			}
-		});
+		}
 
 		if (right < left || bottom < top)
 		{
@@ -285,39 +282,27 @@ public static class ImageService
 		}
 
 		// right and bottom are the indices of the last opaque column and row, so both are inclusive.
-		return new Rectangle(left, top, right - left + 1, bottom - top + 1);
+		return new PixelBounds(left, top, right - left + 1, bottom - top + 1);
 	}
 
-	private static byte ComputeNewValue(Rgba32 pixel, byte maxValue, bool isBlack) =>
-		(byte)(isBlack ? 255 : 255 - (maxValue - pixel.R));
+	private static byte ComputeNewValue(byte tone, byte maxValue, bool isBlack) =>
+		(byte)(isBlack ? 255 : 255 - (maxValue - tone));
 
-	private static void CropResizeAndSave(Image<Rgba32> image, string outputFilePath, Rectangle bounds, int size, int padding)
+	private static void CropResizeAndSave(ImagePixels image, string outputFilePath, PixelBounds bounds, int size, int padding)
 	{
 		int newSize = Math.Max(bounds.Width, bounds.Height);
 
 		// Intentionally only shrink, never grow
 		int finalSize = Math.Min(newSize, size);
 		int finalContentSize = finalSize - (padding * 2);
-		Rgba32 paddingColor = Rgba32.ParseHex("00000000");
 
-		image.Mutate(ctx => ctx
-			.Crop(new Rectangle
-			{
-				Width = bounds.Width,
-				Height = bounds.Height,
-				X = bounds.X,
-				Y = bounds.Y,
-			})
-			.Pad(newSize, newSize, paddingColor)
+		ImagePixels result = image
+			.Crop(bounds.X, bounds.Y, bounds.Width, bounds.Height)
+			.Pad(newSize, newSize, 0, 0, 0, 0)
 			.Resize(finalContentSize, finalContentSize)
-			.Pad(finalSize, finalSize, paddingColor));
+			.Pad(finalSize, finalSize, 0, 0, 0, 0);
 
-		image.SaveAsPng(outputFilePath, new PngEncoder
-		{
-			BitDepth = PngBitDepth.Bit8,
-			ColorType = PngColorType.RgbWithAlpha,
-			TransparentColorMode = PngTransparentColorMode.Clear,
-		});
+		PngEncoder.Save(result, outputFilePath, new PngEncoderOptions { ClearTransparentPixels = true });
 	}
 
 	internal static Rgba32 ParseHexColor(string hex)
