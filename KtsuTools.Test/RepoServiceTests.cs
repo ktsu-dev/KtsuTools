@@ -760,6 +760,39 @@ public class RepoServiceTests
 		}
 	}
 
+	[TestMethod]
+	public async Task BuildAndTestAsyncNamesTheChosenSolutionWhenAFolderHoldsSlnAndSlnx()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_slnx_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "repo");
+		Directory.CreateDirectory(repo);
+		try
+		{
+			// Partway through the sln -> slnx migration: a bare 'dotnet build' here stops with MSB1011.
+			string sln = Path.Join(repo, "Foo.sln");
+			string slnx = Path.Join(repo, "Foo.slnx");
+			await File.WriteAllTextAsync(sln, string.Empty).ConfigureAwait(false);
+			await File.WriteAllTextAsync(slnx, string.Empty).ConfigureAwait(false);
+
+			RecordingFetchProcessService fake = new();
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.BuildAndTestAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			Assert.AreEqual(2, fake.Calls.Count, "Expected one build and one test of the single chosen solution.");
+			string expectedSolution = IProcessService.QuoteArgument(slnx);
+			Assert.AreEqual($"build {expectedSolution} --nologo -v q", fake.Calls[0].Arguments);
+			Assert.AreEqual($"test {expectedSolution} --nologo --no-build -v q", fake.Calls[1].Arguments);
+			Assert.AreEqual(repo, fake.Calls[0].WorkingDirectory);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
 	/// <remarks>
 	/// Asserts on how many solutions were in flight at once rather than on elapsed time. The wall-clock
 	/// version of this test was a coin flip: BuildAndTestAsync runs at ProcessorCount / 2, which is 1 on

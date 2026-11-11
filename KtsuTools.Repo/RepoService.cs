@@ -488,7 +488,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			task.Description = $"[green]Building {slnName.EscapeMarkup()}[/]";
 		}
 
-		ProcessResult buildResult = await processService.RunAsync(DotnetCommand, "build --nologo -v q", slnDir, ct).ConfigureAwait(false);
+		// Name the solution: dotnet stops with MSB1011 in a folder holding more than one project or
+		// solution file, such as a Foo.sln left beside the Foo.slnx that replaced it.
+		ProcessResult buildResult = await processService.RunAsync(DotnetCommand, ["build", sln, "--nologo", "-v", "q"], slnDir, ct).ConfigureAwait(false);
 
 		if (buildResult.ExitCode != 0)
 		{
@@ -502,7 +504,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			return;
 		}
 
-		ProcessResult testResult = await processService.RunAsync(DotnetCommand, "test --nologo --no-build -v q", slnDir, ct).ConfigureAwait(false);
+		ProcessResult testResult = await processService.RunAsync(DotnetCommand, ["test", sln, "--nologo", "--no-build", "-v", "q"], slnDir, ct).ConfigureAwait(false);
 
 		lock (consoleLock)
 		{
@@ -1265,7 +1267,8 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			List<string> allSlnFiles = [.. Directory.EnumerateFiles(directory, "*.sln*", SearchOption.AllDirectories)
 				.Where(IsSolutionFile)];
 
-			// 'dotnet build' in a folder with two solutions is ambiguous, so keep one per folder, preferring .slnx.
+			// A folder's .sln and .slnx usually list the same projects, so keep one per folder, preferring
+			// .slnx, rather than build and test those projects twice.
 			List<string> onePerDirectory = [.. allSlnFiles
 				.GroupBy(sln => Path.GetDirectoryName(sln) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
 				.Select(group => group
