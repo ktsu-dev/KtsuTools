@@ -57,7 +57,14 @@ internal sealed partial class ScriptedConsole : IAnsiConsole
 				ColorSystem = ColorSystemSupport.NoColors,
 				Interactive = InteractionSupport.Yes,
 				Out = new AnsiConsoleOutput(writer),
+
+				// Spectre's default enrichers recognise CI (GitHub Actions and others) and switch
+				// interactivity off, which would make every scripted prompt refuse to run there.
+				Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
 			});
+
+			console.Profile.Capabilities.Interactive = true;
+			console.Profile.Capabilities.Ansi = true;
 
 			// With no terminal to measure, the prompt's live display has no height to fit itself into.
 			console.Profile.Width = 200;
