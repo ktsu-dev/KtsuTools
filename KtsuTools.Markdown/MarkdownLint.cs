@@ -211,24 +211,56 @@ internal static partial class MarkdownLint
 
 		string[] lines = content.Split(Environment.NewLine);
 		bool[] fenced = FindFencedLines(lines);
+		// The list items enclosing the current line, by their original indentation. MD007 only
+		// re-indents a bullet whose enclosing items are all unordered, as markdownlint does: a bullet
+		// nested under "1. " must stay indented to that item's content, or it leaves the item.
+		List<(int Indent, bool Ordered)> enclosing = [];
 		for (int i = 0; i < lines.Length; i++)
 		{
-			if (fenced[i] || ThematicBreakRegex().IsMatch(lines[i]))
+			if (!fenced[i])
 			{
-				continue;
-			}
-
-			string trimmed = lines[i].TrimStart();
-			if (trimmed.Length > 1 && trimmed[1] == ' ' && (trimmed[0] is '*' or '+' or '-'))
-			{
-				int leadingSpaces = lines[i].Length - trimmed.Length;
-				int level = leadingSpaces / indent;
-				string newIndent = new(' ', level * indent);
-				lines[i] = $"{newIndent}{marker} {trimmed[2..]}";
+				lines[i] = FixListMarker(lines[i], marker, indent, enclosing);
 			}
 		}
 
 		return string.Join(Environment.NewLine, lines);
+	}
+
+	/// <summary>
+	/// Normalises one line's bullet marker and, when every list item enclosing it is unordered, its
+	/// indentation, updating <paramref name="enclosing"/> for the lines that follow.
+	/// </summary>
+	private static string FixListMarker(string line, char marker, int indent, List<(int Indent, bool Ordered)> enclosing)
+	{
+		string trimmed = line.TrimStart();
+		int leadingSpaces = line.Length - trimmed.Length;
+		bool bullet = trimmed.Length > 1 && trimmed[1] == ' ' && (trimmed[0] is '*' or '+' or '-')
+			&& !ThematicBreakRegex().IsMatch(line);
+		bool ordered = OrderedListItemRegex().IsMatch(trimmed);
+
+		if (!bullet && !ordered)
+		{
+			// A paragraph or heading at the left margin ends every list; blank and indented
+			// continuation lines stay inside the items around them.
+			if (trimmed.Length > 0 && leadingSpaces == 0)
+			{
+				enclosing.Clear();
+			}
+
+			return line;
+		}
+
+		enclosing.RemoveAll(item => item.Indent >= leadingSpaces);
+		bool underOrderedItem = enclosing.Exists(item => item.Ordered);
+		enclosing.Add((leadingSpaces, ordered));
+
+		if (!bullet)
+		{
+			return line;
+		}
+
+		string newIndent = underOrderedItem ? line[..leadingSpaces] : new(' ', leadingSpaces / indent * indent);
+		return $"{newIndent}{marker} {trimmed[2..]}";
 	}
 
 	/// <summary>
@@ -400,6 +432,9 @@ internal static partial class MarkdownLint
 
 	[GeneratedRegex(@"^ {0,3}([-*_])( *\1){2,} *$")]
 	private static partial Regex ThematicBreakRegex();
+
+	[GeneratedRegex(@"^\d{1,9}[.)]( |$)")]
+	private static partial Regex OrderedListItemRegex();
 
 	[GeneratedRegex(@"//.*?(\r?\n|$)")]
 	private static partial Regex RemoveLineCommentsRegex();
