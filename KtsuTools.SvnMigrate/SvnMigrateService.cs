@@ -9,6 +9,7 @@ using System.Runtime.CompilerServices;
 
 namespace KtsuTools.SvnMigrate;
 
+using System.Diagnostics.CodeAnalysis;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Process;
 using Spectre.Console;
@@ -64,7 +65,7 @@ public class SvnMigrateService(IProcessService processService)
 					task.Value = 50;
 
 					// Phase 2: Cleanup references
-					task.Description = "[green]Converting git-svn references to local branches...[/]";
+					task.Description = "[green]Converting git-svn references to local branches and tags...[/]";
 					await CleanupGitSvnReferencesAsync(gitRepoPath, ct).ConfigureAwait(false);
 					task.Value = 80;
 
@@ -151,27 +152,93 @@ public class SvnMigrateService(IProcessService processService)
 
 		if (branchResult.ExitCode != 0)
 		{
-			return;
+			throw new InvalidOperationException($"git branch -r failed: {string.Join(Environment.NewLine, branchResult.Errors)}");
 		}
+
+		List<string> failures = [];
 
 		foreach (string line in branchResult.Output)
 		{
-			string branch = line.Trim();
-			if (string.IsNullOrEmpty(branch) ||
-				branch.Contains("git-svn", StringComparison.Ordinal) ||
-				branch.Contains("trunk", StringComparison.Ordinal))
+			// git-svn --stdlayout names the SVN layout under origin/: trunk is origin/trunk, a branch is
+			// origin/<branch>, and a tag is origin/tags/<tag>. Only refs in that layout are converted.
+			string remoteRef = line.Trim();
+			if (!TryClassifyRemoteRef(remoteRef, out string? localName, out bool isTag))
 			{
 				continue;
 			}
 
-			if (branch.StartsWith("origin/", StringComparison.OrdinalIgnoreCase))
+			// A tag becomes a git tag rather than a tags/<name> branch, so the migrated repository
+			// carries its releases as tags once it is pushed.
+			string[] arguments = isTag
+				? ["tag", localName, remoteRef]
+				: ["checkout", "-b", localName, remoteRef];
+
+			ProcessResult result = await processService.RunAsync("git", arguments, gitRepoPath, ct).ConfigureAwait(false);
+			if (result.ExitCode != 0)
 			{
-				string localName = branch[7..];
-				await processService.RunAsync("git", ["checkout", "-b", localName, branch], gitRepoPath, ct).ConfigureAwait(false);
+				failures.Add($"git {string.Join(' ', arguments)}: {string.Join(' ', result.Errors)}");
 			}
 		}
 
-		await processService.RunAsync("git", "checkout master", gitRepoPath, ct).ConfigureAwait(false);
+		ProcessResult checkout = await processService.RunAsync("git", "checkout master", gitRepoPath, ct).ConfigureAwait(false);
+		if (checkout.ExitCode != 0)
+		{
+			failures.Add($"git checkout master: {string.Join(' ', checkout.Errors)}");
+		}
+
+		// Every ref is attempted before failing, so one bad name does not hide the others; a branch
+		// or tag that could not be created would otherwise be missing from the migration unnoticed.
+		if (failures.Count > 0)
+		{
+			throw new InvalidOperationException(
+				$"could not convert {failures.Count} git-svn reference(s):{Environment.NewLine}{string.Join(Environment.NewLine, failures)}");
+		}
+	}
+
+	/// <summary>
+	/// Works out what a git-svn remote ref becomes in the migrated repository.
+	/// </summary>
+	/// <param name="remoteRef">A ref as <c>git branch -r</c> lists it, such as <c>origin/tags/v1.0</c>.</param>
+	/// <param name="localName">The local branch or tag name to create.</param>
+	/// <param name="isTag">Whether the ref is an SVN tag, to be created as a git tag.</param>
+	/// <returns>False for a ref that is not converted: trunk, which master already tracks, and git-svn's own refs.</returns>
+	internal static bool TryClassifyRemoteRef(string remoteRef, [NotNullWhen(true)] out string? localName, out bool isTag)
+	{
+		const string RemotePrefix = "origin/";
+		const string TagPrefix = "tags/";
+
+		localName = null;
+		isTag = false;
+
+		if (string.IsNullOrEmpty(remoteRef) ||
+			!remoteRef.StartsWith(RemotePrefix, StringComparison.Ordinal) ||
+			remoteRef.Contains("git-svn", StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		string name = remoteRef[RemotePrefix.Length..];
+
+		// Only trunk itself is skipped. A branch whose name merely contains "trunk", such as
+		// trunk-2.0 or merge-trunk-fixes, is a branch like any other.
+		if (name.Length == 0 || name == "trunk")
+		{
+			return false;
+		}
+
+		if (name.StartsWith(TagPrefix, StringComparison.Ordinal))
+		{
+			name = name[TagPrefix.Length..];
+			if (name.Length == 0)
+			{
+				return false;
+			}
+
+			isTag = true;
+		}
+
+		localName = name;
+		return true;
 	}
 
 	private async Task FinalizeRepositoryAsync(string gitRepoPath, CancellationToken ct) =>
