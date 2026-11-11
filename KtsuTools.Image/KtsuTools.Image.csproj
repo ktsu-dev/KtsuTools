@@ -10,7 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Spectre.Console.Ansi" />
-    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="ktsu.Imaging" />
     <PackageReference Include="ktsu.Extensions" />
     <PackageReference Include="ktsu.Semantics.Paths" />
     <PackageReference Include="ktsu.Semantics.Strings" />
