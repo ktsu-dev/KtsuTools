@@ -11,9 +11,10 @@ using KtsuTools.Core.UI;
 using KtsuTools.Repo;
 using Spectre.Console.Cli;
 
-public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitCommand.Settings>
+public sealed class GitCommand(RepoService repoService, GitPassThrough passThrough) : AsyncCommand<GitCommand.Settings>
 {
 	private readonly RepoService repoService = repoService;
+	private readonly GitPassThrough passThrough = passThrough;
 
 	public sealed class Settings : CommandSettings
 	{
@@ -41,9 +42,11 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 		// Spectre claims any option it doesn't recognize, such as --short, and parks it in
 		// Remaining.Parsed with its position and short-or-long form lost, so rebuilding the git
 		// command line from Parsed would silently run something other than what was typed. Only a
-		// literal '--' preserves the flags, coming back verbatim and in order through Remaining.Raw.
-		// Spectre mirrors those into Parsed too, so a flag is genuinely lost only when it shows up
-		// in Parsed without showing up in Raw, which is exactly the forgotten-separator case.
+		// literal '--' preserves the flags. Program splits those off before Spectre sees them (see
+		// GitPassThrough), since Spectre mangles short flags such as -1 even after a '--'. A host
+		// that hands Spectre the separator instead gets them back through Remaining.Raw, which
+		// Spectre mirrors into Parsed too, so a flag is genuinely lost only when it shows up in
+		// Parsed without showing up in Raw, which is exactly the forgotten-separator case.
 		HashSet<string> rawTokens = new(StringComparer.Ordinal);
 		foreach (string token in context.Remaining.Raw)
 		{
@@ -67,7 +70,7 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 			return 1;
 		}
 
-		string[] args = [.. settings.Args, .. context.Remaining.Raw];
+		string[] args = [.. settings.Args, .. context.Remaining.Raw, .. passThrough.Arguments];
 
 		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 
