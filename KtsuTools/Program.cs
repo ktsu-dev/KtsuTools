@@ -46,12 +46,28 @@ internal static class Program
 		services.AddSingleton<SyncConfigService>();
 		services.AddSingleton<FileDedupeService>();
 
+		return Run(args, services);
+	}
+
+	/// <summary>
+	/// Builds the app over <paramref name="services"/> and runs it. Kept apart from <see cref="Main"/>
+	/// so a test can run a command line exactly the way the shipped executable does.
+	/// </summary>
+	/// <param name="args">The process arguments.</param>
+	/// <param name="services">The services the commands are resolved from.</param>
+	/// <returns>The exit code.</returns>
+	internal static int Run(string[] args, IServiceCollection services)
+	{
+		// Spectre tokenizes even what follows a '--', so the git pass-through is held back from it.
+		string[] cliArgs = GitPassThrough.Split(args, out GitPassThrough passThrough);
+		services.AddSingleton(passThrough);
+
 		TypeRegistrar registrar = new(services);
 		CommandApp app = new(registrar);
 
 		app.Configure(ConfigureCommands);
 
-		return app.Run(args);
+		return app.Run(cliArgs);
 	}
 
 	/// <summary>

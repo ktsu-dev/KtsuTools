@@ -59,7 +59,11 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 	/// <param name="baseBranchByRepoRoot">The branch each repository was on before the sync, which is what the pull request targets.</param>
 	/// <param name="syncedFiles">The files the sync copied, used to describe the change.</param>
 	/// <param name="ct">Cancellation token.</param>
-	public async Task OpenAsync(
+	/// <returns>
+	/// The number of repositories in which opening the pull request failed. A repository skipped
+	/// because it has no GitHub remote or no recorded base branch is not counted.
+	/// </returns>
+	public async Task<int> OpenAsync(
 		IReadOnlyList<string> repoRoots,
 		string branchName,
 		IReadOnlyDictionary<string, string> baseBranchByRepoRoot,
@@ -71,7 +75,7 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 
 		if (repoRoots.Count == 0)
 		{
-			return;
+			return 0;
 		}
 
 		AnsiConsole.WriteLine();
@@ -80,11 +84,12 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 		if (!hasGhCli && !await EnsureApiFallbackAsync(ct).ConfigureAwait(false))
 		{
 			AnsiConsole.MarkupLine("[yellow]Skipping pull requests: the gh CLI is not installed and no GitHub token was found in GH_TOKEN or GITHUB_TOKEN.[/]");
-			return;
+			return 0;
 		}
 
 		string title = BuildTitle(syncedFiles);
 		string body = BuildBody(syncedFiles, branchName);
+		int failed = 0;
 
 		foreach (string repoRoot in repoRoots)
 		{
@@ -105,11 +110,16 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 				continue;
 			}
 
-			await OpenForRepoAsync(repoRoot, slug, branchName, baseBranch, title, body, hasGhCli, ct).ConfigureAwait(false);
+			if (!await OpenForRepoAsync(repoRoot, slug, branchName, baseBranch, title, body, hasGhCli, ct).ConfigureAwait(false))
+			{
+				failed++;
+			}
 		}
+
+		return failed;
 	}
 
-	private async Task OpenForRepoAsync(
+	private async Task<bool> OpenForRepoAsync(
 		string repoRoot,
 		GitHubSlug slug,
 		string branchName,
@@ -126,7 +136,7 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 		if (existing is not null)
 		{
 			AnsiConsole.MarkupLine($"[dim]Pull request already open for {branchName.EscapeMarkup()} in {slug.ToString().EscapeMarkup()}:[/] {existing.ToString().EscapeMarkup()}");
-			return;
+			return true;
 		}
 
 		Uri? created = useGhCli
@@ -138,11 +148,15 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 		if (created is not null)
 		{
 			AnsiConsole.MarkupLine($"[green]Opened pull request in {slug.ToString().EscapeMarkup()}:[/] {created.ToString().EscapeMarkup()}");
+			return true;
 		}
-		else if (!useGhCli)
+
+		if (!useGhCli)
 		{
 			AnsiConsole.MarkupLine($"[red]GitHub rejected the pull request in:[/] {slug.ToString().EscapeMarkup()}");
 		}
+
+		return false;
 	}
 
 	private async Task<bool> IsGhCliAvailableAsync(CancellationToken ct)
