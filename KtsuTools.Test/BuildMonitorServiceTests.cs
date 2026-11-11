@@ -5,6 +5,7 @@ namespace KtsuTools.Test;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
+using System.Net.Http;
 using KtsuTools.BuildMonitor;
 using KtsuTools.Core.Services.GitHub;
 using Moq;
@@ -118,6 +119,63 @@ public class BuildMonitorServiceTests
 
 		Assert.AreEqual("mine", repos.Single().Name);
 		repositories.Verify(r => r.GetAllForOrg(It.IsAny<string>()), Times.Never);
+	}
+
+	[TestMethod]
+	public async Task RenderDashboardShowsANetworkFailureInsteadOfThrowing()
+	{
+		Mock<IGitHubService> api = AuthenticatedApi();
+		api.Setup(s => s.GetRepositoriesAsync("ktsu-dev", It.IsAny<CancellationToken>()))
+			.ThrowsAsync(new HttpRequestException("No such host is known."));
+
+		string output = await RenderAsync(api.Object).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "API Error: No such host is known.");
+	}
+
+	[TestMethod]
+	public async Task GetWorkflowRunsShowsOnlyACompletedRunAsCompleted()
+	{
+		Mock<IGitHubClient> client = new() { DefaultValue = DefaultValue.Mock };
+		WorkflowRunsResponse response = new SimpleJsonSerializer().Deserialize<WorkflowRunsResponse>(
+			"""
+			{"total_count":2,"workflow_runs":[
+			{"id":1,"name":"CI","status":"in_progress","conclusion":null,"head_branch":"main","html_url":"https://github.com/ktsu-dev/a/actions/runs/1","created_at":"2026-11-02T10:00:00Z","updated_at":"2026-11-02T10:05:00Z"},
+			{"id":2,"name":"CI","status":"completed","conclusion":"success","head_branch":"main","html_url":"https://github.com/ktsu-dev/a/actions/runs/2","created_at":"2026-11-02T09:00:00Z","updated_at":"2026-11-02T09:07:00Z"}]}
+			""");
+		client.Setup(c => c.Actions.Workflows.Runs.List("ktsu-dev", "a")).ReturnsAsync(response);
+
+		IReadOnlyList<GitHubWorkflowRun> runs = await new GitHubService(client.Object).GetWorkflowRunsAsync("ktsu-dev", "a").ConfigureAwait(false);
+
+		Assert.IsNull(runs[0].CompletedAt, "A running run must not get a completion time.");
+		Assert.AreEqual(DateTimeOffset.Parse("2026-11-02T09:07:00Z", CultureInfo.InvariantCulture), runs[1].CompletedAt);
+		Assert.AreEqual("success", runs[1].Conclusion);
+	}
+
+	[TestMethod]
+	public async Task GetRateLimitReadsTheCoreLimit()
+	{
+		Mock<IGitHubClient> client = new() { DefaultValue = DefaultValue.Mock };
+		MiscellaneousRateLimit limits = new SimpleJsonSerializer().Deserialize<MiscellaneousRateLimit>(
+			"""{"resources":{"core":{"limit":5000,"remaining":4321,"reset":1762077600}},"rate":{"limit":5000,"remaining":4321,"reset":1762077600}}""");
+		client.Setup(c => c.RateLimit.GetRateLimits()).ReturnsAsync(limits);
+
+		GitHubRateLimitInfo info = await new GitHubService(client.Object).GetRateLimitAsync().ConfigureAwait(false);
+
+		Assert.AreEqual(4321, info.Remaining);
+		Assert.AreEqual(5000, info.Limit);
+	}
+
+	[TestMethod]
+	public async Task RerunAndCancelReportWhetherGitHubAcceptedThem()
+	{
+		Mock<IGitHubClient> client = new() { DefaultValue = DefaultValue.Mock };
+		client.Setup(c => c.Actions.Workflows.Runs.Rerun("ktsu-dev", "a", 1)).ThrowsAsync(new NotFoundException("Not Found", HttpStatusCode.NotFound));
+		client.Setup(c => c.Actions.Workflows.Runs.Cancel("ktsu-dev", "a", 1)).Returns(Task.CompletedTask);
+		GitHubService service = new(client.Object);
+
+		Assert.IsFalse(await service.RerunWorkflowAsync("ktsu-dev", "a", 1).ConfigureAwait(false));
+		Assert.IsTrue(await service.CancelWorkflowAsync("ktsu-dev", "a", 1).ConfigureAwait(false));
 	}
 
 	private static Mock<IGitHubService> AuthenticatedApi()
