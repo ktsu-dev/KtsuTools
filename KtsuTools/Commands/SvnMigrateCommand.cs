@@ -8,6 +8,7 @@ using System.IO;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.SvnMigrate;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 public sealed class SvnMigrateCommand(SvnMigrateService svnMigrateService) : AsyncCommand<SvnMigrateCommand.Settings>
@@ -33,6 +34,21 @@ public sealed class SvnMigrateCommand(SvnMigrateService svnMigrateService) : Asy
 		[Description("Preserve empty directories during migration")]
 		[DefaultValue(true)]
 		public bool PreserveEmptyDirs { get; init; } = true;
+
+		/// <summary>
+		/// Rejects an <c>--svn-url</c> that is not an absolute URL svn can reach, before
+		/// <see cref="ExecuteAsync"/> builds a <see cref="Uri"/> from it. A URL pasted without its scheme
+		/// (<c>svn.example.com/repo</c>) would otherwise crash with a <see cref="UriFormatException"/>.
+		/// </summary>
+		public override ValidationResult Validate() =>
+			IsSupportedSvnUrl(SvnUrl)
+				? ValidationResult.Success()
+				: ValidationResult.Error($"--svn-url must be an absolute http, https, svn, svn+ssh or file URL (e.g. https://svn.example.com/repo), got '{SvnUrl}'.");
+
+		private static bool IsSupportedSvnUrl(string? value) =>
+			Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+			&& (uri.Scheme is "http" or "https" or "svn" or "file"
+				|| uri.Scheme.StartsWith("svn+", StringComparison.Ordinal));
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

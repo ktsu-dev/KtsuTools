@@ -32,7 +32,7 @@ public class SvnMigrateService(IProcessService processService)
 		string? authorsFilePath = authorsFile?.ToString();
 
 		// Validate prerequisites
-		List<string> errors = await ValidateAsync(svnUrl, gitRepoPath, authorsFilePath, ct).ConfigureAwait(false);
+		List<string> errors = await ValidateAsync(gitRepoPath, authorsFilePath, ct).ConfigureAwait(false);
 		if (errors.Count > 0)
 		{
 			foreach (string error in errors)
@@ -91,14 +91,9 @@ public class SvnMigrateService(IProcessService processService)
 		}
 	}
 
-	private async Task<List<string>> ValidateAsync(Uri svnUrl, string gitRepoPath, string? authorsFile, CancellationToken ct)
+	private async Task<List<string>> ValidateAsync(string gitRepoPath, string? authorsFile, CancellationToken ct)
 	{
 		List<string> errors = [];
-
-		if (string.IsNullOrWhiteSpace(svnUrl.ToString()))
-		{
-			errors.Add("SVN repository URL is required.");
-		}
 
 		if (string.IsNullOrWhiteSpace(gitRepoPath))
 		{

@@ -230,7 +230,7 @@ internal static class Program
 
 		config.AddCommand<SvnMigrateCommand>("svn-migrate")
 			.WithDescription("Migrate SVN repository to Git")
-			.WithExample("svn-migrate", "--svn-url", "svn://...", "--target", "./repo");
+			.WithExample("svn-migrate", "--svn-url", "svn://svn.example.com/repo", "--target", "./repo");
 
 		config.AddCommand<SyncCommand>("sync")
 			.WithDescription("Synchronize file contents across repositories")
