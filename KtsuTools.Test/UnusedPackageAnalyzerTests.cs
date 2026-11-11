@@ -80,6 +80,59 @@ public class UnusedPackageAnalyzerTests
 	}
 
 	[TestMethod]
+	public void DoesNotReportAPackageImportedOnlyFromRazor()
+	{
+		WriteProject(
+			"Site",
+			"""
+			    <PackageReference Include="MudBlazor" Version="8.0.0" />
+			    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+			""",
+			("_Imports.razor", "@using Microsoft.AspNetCore.Components.Web\n@using MudBlazor\n"),
+			("Index.razor", "@page \"/\"\n\n<MudButton>Go</MudButton>\n"),
+			("Program.cs", "namespace Site; internal static class Program { }"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "MudBlazor").Usage);
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "Newtonsoft.Json").Usage, "a package nothing names is still reported");
+	}
+
+	[TestMethod]
+	public void DoesNotReportAPackageInjectedIntoACshtmlView()
+	{
+		WriteProject(
+			"Mvc",
+			"""    <PackageReference Include="Serilog" Version="4.0.0" />""",
+			("Index.cshtml", "@model object\n@inject Serilog.ILogger Log\n<p>Hi</p>\n"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Serilog").Usage);
+	}
+
+	[TestMethod]
+	public void DoesNotReportAPackageMappedOnlyFromXaml()
+	{
+		WriteProject(
+			"Desktop",
+			"""
+			    <PackageReference Include="MahApps.Metro" Version="2.4.10" />
+			    <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.0.0" />
+			    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+			""",
+			("MainWindow.xaml", "<Window xmlns:mah=\"clr-namespace:MahApps.Metro.Controls;assembly=MahApps.Metro\" />"),
+			("Grid.axaml", "<UserControl xmlns:dg=\"using:Avalonia.Controls.DataGrid\" />"),
+			("App.cs", "namespace Desktop; internal static class App { }"));
+
+		UnusedPackageReport report = UnusedPackageAnalyzer.Analyze(root);
+
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "MahApps.Metro").Usage);
+		Assert.AreEqual(PackageUsage.Used, Finding(report, "Avalonia.Controls.DataGrid").Usage);
+		Assert.AreEqual(PackageUsage.Unused, Finding(report, "Newtonsoft.Json").Usage, "a package nothing names is still reported");
+	}
+
+	[TestMethod]
 	public void TreatsANamespaceBeneathThePackageIdAsUse()
 	{
 		WriteProject(
