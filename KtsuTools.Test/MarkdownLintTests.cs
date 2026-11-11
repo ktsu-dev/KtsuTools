@@ -65,6 +65,9 @@ public class MarkdownLintTests
 			" * Doc comment",
 			" + not a list",
 			" */",
+			"-old  ",
+			"+new\t",
+			"keep three   ",
 			closingFence);
 
 		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
@@ -115,6 +118,46 @@ public class MarkdownLintTests
 		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
 
 		Assert.AreEqual(input, result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownKeepsATwoSpaceHardLineBreakWithNoConfig()
+	{
+		string input = Lines("Line one  ", "Line two");
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(input, result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownTrimsTrailingSpacesThatAreNotAHardLineBreak()
+	{
+		string result = MarkdownLint.FormatMarkdown(Lines("One space ", "Three spaces   ", "Tab\t"), configPath: null);
+
+		Assert.AreEqual(Lines("One space", "Three spaces", "Tab"), result);
+	}
+
+	[TestMethod]
+	[DataRow("{ \"MD009\": { \"br_spaces\": 3 } }", "Line one   ", "Line one   ")]
+	[DataRow("{ \"MD009\": { \"br_spaces\": 3 } }", "Line one  ", "Line one")]
+	[DataRow("{ \"MD009\": { \"br_spaces\": 1 } }", "Line one ", "Line one")]
+	[DataRow("{ \"MD009\": { \"br_spaces\": 0 } }", "Line one  ", "Line one")]
+	[DataRow("{ \"MD009\": { \"strict\": false } }", "Line one  ", "Line one  ")]
+	public void FormatMarkdownHonoursAConfiguredHardLineBreakWidth(string config, string line, string expected)
+	{
+		string configPath = Path.Join(Path.GetTempPath(), $"ktsu_mdlint_{Guid.NewGuid():N}.json");
+		File.WriteAllText(configPath, config);
+		try
+		{
+			string result = MarkdownLint.FormatMarkdown(Lines(line, "Line two"), configPath);
+
+			Assert.AreEqual(Lines(expected, "Line two"), result);
+		}
+		finally
+		{
+			File.Delete(configPath);
+		}
 	}
 
 	[TestMethod]
