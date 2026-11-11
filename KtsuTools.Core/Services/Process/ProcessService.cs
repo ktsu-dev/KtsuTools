@@ -3,7 +3,9 @@
 namespace KtsuTools.Core.Services.Process;
 
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -75,12 +77,33 @@ public class ProcessService : IProcessService
 			}
 		};
 
-		process.Start();
+		try
+		{
+			process.Start();
+		}
+		catch (Win32Exception ex) when (IsMissingExecutable(ex, workingDirectory))
+		{
+			throw new ExecutableNotFoundException(startInfo.FileName, ex);
+		}
+
 		process.BeginOutputReadLine();
 		process.BeginErrorReadLine();
 
 		await process.WaitForExitAsync(ct).ConfigureAwait(false);
 
 		return new ProcessResult(process.ExitCode, outputLines, errorLines);
+	}
+
+	/// <summary>
+	/// Tells a missing executable apart from the other reasons a start can fail. Both a missing
+	/// executable and a missing working directory report "file not found" (ENOENT on Unix,
+	/// ERROR_FILE_NOT_FOUND on Windows), so a working directory that does not exist is left to
+	/// surface as the original error.
+	/// </summary>
+	private static bool IsMissingExecutable(Win32Exception exception, string? workingDirectory)
+	{
+		const int FileNotFound = 2;
+		return exception.NativeErrorCode == FileNotFound
+			&& (workingDirectory is null || Directory.Exists(workingDirectory));
 	}
 }
