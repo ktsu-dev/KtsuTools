@@ -23,6 +23,10 @@ public class SvnMigrateServiceTests
 {
 	private const string EncodedSvnUrl = "https://svn.example.com/My%20Project";
 
+	private static readonly string[] ExpectedTag = ["tag", "v1.0", "origin/tags/v1.0"];
+
+	private static readonly string[] ExpectedBranch = ["checkout", "-b", "trunk-2.0", "origin/trunk-2.0"];
+
 	[TestMethod]
 	[DoNotParallelize]
 	public async Task CloneReceivesTheUrlTargetAndAuthorsFileAsIntactArguments()
@@ -76,6 +80,46 @@ public class SvnMigrateServiceTests
 	}
 
 	[TestMethod]
+	[DoNotParallelize]
+	public async Task SvnTagsBecomeGitTagsAndOnlyTrunkItselfIsSkipped()
+	{
+		using TempDir root = TempDir.Create();
+		RecordingGit git = new() { RemoteRefs = ["  origin/trunk", "  origin/tags/v1.0", "  origin/trunk-2.0", "  git-svn"] };
+
+		int exitCode = await RunMigrationAsync(git, Path.Join(root.Root, "target"), authorsFile: null).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exitCode);
+		List<string[]> converted = [.. git.Calls
+			.Select(c => c.Argv.ToArray())
+			.Where(argv => argv[0] is "tag" || argv.Take(2).SequenceEqual(["checkout", "-b"]))];
+
+		Assert.AreEqual(2, converted.Count, string.Join(" | ", converted.Select(argv => string.Join(' ', argv))));
+		CollectionAssert.AreEqual(ExpectedTag, converted[0], "An SVN tag must become a git tag.");
+		CollectionAssert.AreEqual(ExpectedBranch, converted[1], "A branch whose name contains \"trunk\" is still a branch.");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ARefThatCannotBeConvertedReportsMigrationFailedAfterTryingTheRest()
+	{
+		using TempDir root = TempDir.Create();
+		RecordingGit git = new()
+		{
+			RemoteRefs = ["  origin/feature", "  origin/tags/v1.0"],
+			FailingCommand = ["checkout", "-b", "feature", "origin/feature"],
+		};
+		int exitCode = -1;
+
+		string output = await ConsoleCapture.CaptureAsync(async () =>
+			exitCode = await RunMigrationAsync(git, Path.Join(root.Root, "target"), authorsFile: null).ConfigureAwait(false)).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exitCode);
+		Assert.Contains("Migration failed", output);
+		Assert.Contains("origin/feature", output, "The ref that failed must be named.");
+		Assert.IsTrue(git.Calls.Any(c => c.Argv.SequenceEqual(["tag", "v1.0", "origin/tags/v1.0"])), "One failure must not stop the remaining refs from being converted.");
+	}
+
+	[TestMethod]
 	public async Task ProcessServicePassesAListArgumentWithSpacesIntact()
 	{
 		using TempDir root = TempDir.Create();
@@ -124,6 +168,12 @@ public class SvnMigrateServiceTests
 
 		public int CloneExitCode { get; init; }
 
+		/// <summary>The lines <c>git branch -r</c> prints.</summary>
+		public IReadOnlyList<string> RemoteRefs { get; init; } = [];
+
+		/// <summary>An argv that exits non-zero, standing in for a ref git refuses to create.</summary>
+		public IReadOnlyList<string>? FailingCommand { get; init; }
+
 		public List<(IReadOnlyList<string> Argv, string? WorkingDirectory)> Calls { get; } = [];
 
 		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory = null, CancellationToken ct = default) =>
@@ -153,6 +203,16 @@ public class SvnMigrateServiceTests
 				{
 					_ = Directory.CreateDirectory(arguments[3]);
 				}
+			}
+
+			if (arguments.SequenceEqual(["branch", "-r"]))
+			{
+				return Task.FromResult(new ProcessResult(0, [.. RemoteRefs], []));
+			}
+
+			if (FailingCommand is not null && arguments.SequenceEqual(FailingCommand))
+			{
+				return Task.FromResult(new ProcessResult(128, [], ["fatal: cannot create ref"]));
 			}
 
 			return Task.FromResult(new ProcessResult(0, [], []));

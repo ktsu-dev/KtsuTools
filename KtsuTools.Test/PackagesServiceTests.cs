@@ -163,6 +163,29 @@ public class PackagesServiceTests
 	}
 
 	[TestMethod]
+	public async Task SaysTheOrphanCheckWasSkippedForASingleProject()
+	{
+		WriteProject("Sample", """    <PackageReference Include="Newtonsoft.Json" />""", "using Newtonsoft.Json;\n");
+		string projectDirectory = Path.Combine(root, "Sample");
+		await File.WriteAllTextAsync(Path.Combine(projectDirectory, "Directory.Packages.props"), """
+			<Project>
+			  <ItemGroup>
+			    <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+			    <PackageVersion Include="Used.Elsewhere" Version="1.0.0" />
+			  </ItemGroup>
+			</Project>
+			""").ConfigureAwait(false);
+		PackagesService service = BuildService();
+		string projectPath = Path.Combine(projectDirectory, "Sample.csproj");
+
+		string output = await ConsoleCapture.CaptureAsync(
+			() => service.FindUnusedAsync(AbsoluteFilePath.Create<AbsoluteFilePath>(projectPath))).ConfigureAwait(false);
+
+		Assert.IsFalse(output.Contains("Used.Elsewhere", StringComparison.Ordinal), output);
+		StringAssert.Contains(output, "was not checked for unused PackageVersion entries", StringComparison.Ordinal);
+	}
+
+	[TestMethod]
 	public async Task SucceedsWithoutFindings()
 	{
 		WriteProject("Sample", """    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />""", "using Newtonsoft.Json;\n");

@@ -121,6 +121,57 @@ public class MarkdownLintTests
 	}
 
 	[TestMethod]
+	[DataRow("1. ", "   ")]
+	[DataRow("10. ", "    ")]
+	[DataRow("1) ", "   ")]
+	public void FormatMarkdownKeepsABulletNestedUnderAnOrderedItemInsideIt(string orderedMarker, string contentIndent)
+	{
+		string input = Lines(
+			$"{orderedMarker}first",
+			$"{contentIndent}- nested",
+			$"{contentIndent}  - deeper",
+			string.Empty,
+			$"{contentIndent}- after a blank line",
+			"2. second");
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(input, result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownStillNormalizesAnOrderedItemsBulletMarker()
+	{
+		string result = MarkdownLint.FormatMarkdown(Lines("1. first", "   * nested"), configPath: null);
+
+		Assert.AreEqual(Lines("1. first", "   - nested"), result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownReindentsABulletListAfterAnOrderedListEnds()
+	{
+		string input = Lines(
+			"1. first",
+			string.Empty,
+			"Paragraph",
+			string.Empty,
+			"- top",
+			"   - nested");
+
+		string result = MarkdownLint.FormatMarkdown(input, configPath: null);
+
+		Assert.AreEqual(Lines("1. first", string.Empty, "Paragraph", string.Empty, "- top", "  - nested"), result);
+	}
+
+	[TestMethod]
+	public void FormatMarkdownReindentsBulletsNestedOnlyUnderBullets()
+	{
+		string result = MarkdownLint.FormatMarkdown(Lines("- top", "   - nested", "     - deeper"), configPath: null);
+
+		Assert.AreEqual(Lines("- top", "  - nested", "    - deeper"), result);
+	}
+
+	[TestMethod]
 	public void FormatMarkdownKeepsATwoSpaceHardLineBreakWithNoConfig()
 	{
 		string input = Lines("Line one  ", "Line two");

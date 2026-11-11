@@ -281,9 +281,17 @@ public class MergeService
 		return Math.Max(0.0, (double)unchangedLines / totalLines);
 	}
 
-	private const int DiffLineCap = 50;
+	/// <summary>Most changed lines a preview shows; unchanged context does not count toward it.</summary>
+	internal const int DiffLineCap = 50;
 
-	private static void ShowDiff(string content1, string content2, string path1, string path2, DiffStyle style)
+	/// <summary>Unchanged lines the git-style preview shows on each side of a change, as <c>git diff</c> does.</summary>
+	internal const int DiffContextLines = 3;
+
+	/// <summary>
+	/// Prints a preview of how <paramref name="content2"/> differs from <paramref name="content1"/>.
+	/// The cap counts changed lines only, so a difference far down a long file is still shown.
+	/// </summary>
+	internal static void ShowDiff(string content1, string content2, string path1, string path2, DiffStyle style)
 	{
 		AnsiConsole.MarkupLine($"[dim]--- {Path.GetFileName(path1).EscapeMarkup()}[/]");
 		AnsiConsole.MarkupLine($"[dim]+++ {Path.GetFileName(path2).EscapeMarkup()}[/]");
@@ -308,70 +316,89 @@ public class MergeService
 		SideBySideDiffModel diff = diffBuilder.BuildDiffModel(content1, content2);
 
 		int total = Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count);
-		int maxLines = Math.Min(DiffLineCap, total);
+		List<(bool Deleted, string Text)> changed = [];
 
-		for (int i = 0; i < maxLines; i++)
+		for (int i = 0; i < total; i++)
 		{
 			DiffPiece? oldLine = i < diff.OldText.Lines.Count ? diff.OldText.Lines[i] : null;
 			DiffPiece? newLine = i < diff.NewText.Lines.Count ? diff.NewText.Lines[i] : null;
 
-			if (oldLine?.Type == ChangeType.Deleted)
+			if (oldLine?.Type is ChangeType.Deleted or ChangeType.Modified)
 			{
-				AnsiConsole.MarkupLine($"[red]- {oldLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
+				changed.Add((true, oldLine.Text ?? string.Empty));
 			}
-			else if (newLine?.Type == ChangeType.Inserted)
+
+			if (newLine?.Type is ChangeType.Inserted or ChangeType.Modified)
 			{
-				AnsiConsole.MarkupLine($"[green]+ {newLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
-			}
-			else if (oldLine?.Type == ChangeType.Modified)
-			{
-				AnsiConsole.MarkupLine($"[red]- {oldLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
-				if (newLine is not null)
-				{
-					AnsiConsole.MarkupLine($"[green]+ {newLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
-				}
+				changed.Add((false, newLine.Text ?? string.Empty));
 			}
 		}
 
-		if (total > maxLines)
+		foreach ((bool deleted, string text) in changed.Take(DiffLineCap))
 		{
-			AnsiConsole.MarkupLine("[dim]... (truncated)[/]");
+			AnsiConsole.MarkupLine(deleted
+				? $"[red]- {text.EscapeMarkup()}[/]"
+				: $"[green]+ {text.EscapeMarkup()}[/]");
 		}
+
+		ShowTruncation(changed.Count - DiffLineCap);
 	}
 
 	private static void ShowUnifiedDiff(string content1, string content2)
 	{
-		DiffPaneModel diff = InlineDiffBuilder.Diff(content1, content2);
+		List<DiffPiece> lines = [.. InlineDiffBuilder.Diff(content1, content2).Lines.Where(line => line.Type != ChangeType.Imaginary)];
+		List<int> changedIndices = [.. Enumerable.Range(0, lines.Count).Where(i => lines[i].Type != ChangeType.Unchanged)];
 
-		int rendered = 0;
-		foreach (DiffPiece line in diff.Lines)
+		// Only changes within the cap are shown; context is taken around those alone, so it
+		// never runs on into a change the preview leaves out.
+		int shownChanges = Math.Min(DiffLineCap, changedIndices.Count);
+		int lastVisible = shownChanges < changedIndices.Count ? changedIndices[shownChanges] - 1 : lines.Count - 1;
+		bool[] visible = new bool[lines.Count];
+
+		for (int c = 0; c < shownChanges; c++)
 		{
-			if (rendered >= DiffLineCap)
+			int index = changedIndices[c];
+			int from = Math.Max(0, index - DiffContextLines);
+			int to = Math.Min(lastVisible, index + DiffContextLines);
+
+			for (int i = from; i <= to; i++)
 			{
-				AnsiConsole.MarkupLine("[dim]... (truncated)[/]");
-				return;
+				visible[i] = true;
+			}
+		}
+
+		int previous = -1;
+
+		for (int i = 0; i < lines.Count; i++)
+		{
+			if (!visible[i])
+			{
+				continue;
 			}
 
-			string text = line.Text?.EscapeMarkup() ?? string.Empty;
-			switch (line.Type)
+			if (previous >= 0 && i > previous + 1)
 			{
-				case ChangeType.Inserted:
-					AnsiConsole.MarkupLine($"[green]+{text}[/]");
-					break;
-				case ChangeType.Deleted:
-					AnsiConsole.MarkupLine($"[red]-{text}[/]");
-					break;
-				case ChangeType.Modified:
-					AnsiConsole.MarkupLine($"[red]-{text}[/]");
-					break;
-				case ChangeType.Unchanged:
-					AnsiConsole.MarkupLine($"[dim] {text}[/]");
-					break;
-				case ChangeType.Imaginary:
-					continue;
+				AnsiConsole.MarkupLine("[dim]...[/]");
 			}
 
-			rendered++;
+			previous = i;
+			string text = lines[i].Text?.EscapeMarkup() ?? string.Empty;
+			AnsiConsole.MarkupLine(lines[i].Type switch
+			{
+				ChangeType.Inserted => $"[green]+{text}[/]",
+				ChangeType.Deleted or ChangeType.Modified => $"[red]-{text}[/]",
+				_ => $"[dim] {text}[/]",
+			});
+		}
+
+		ShowTruncation(changedIndices.Count - shownChanges);
+	}
+
+	private static void ShowTruncation(int omittedChangedLines)
+	{
+		if (omittedChangedLines > 0)
+		{
+			AnsiConsole.MarkupLine($"[dim]... (truncated: {omittedChangedLines} more changed line{(omittedChangedLines == 1 ? string.Empty : "s")} not shown)[/]");
 		}
 	}
 

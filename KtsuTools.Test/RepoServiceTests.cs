@@ -596,10 +596,61 @@ public class RepoServiceTests
 			int exit = await service.PullAllAsync(rootPath).ConfigureAwait(false);
 
 			Assert.AreEqual(1, exit, "A failed pull should surface in the aggregate exit code.");
-			Assert.AreEqual(2, fake.Calls.Count, "Both repositories should be pulled.");
-			Assert.IsTrue(
-				fake.Calls.All(c => c.Command == "git" && c.Arguments.StartsWith("pull", StringComparison.Ordinal)),
-				"Each repository should be pulled with git pull.");
+			List<(string Command, string Arguments, string? WorkingDirectory)> pulls = [.. fake.Calls.Where(c => c.Arguments.StartsWith("pull", StringComparison.Ordinal))];
+			Assert.AreEqual(2, pulls.Count, "Both repositories should be pulled.");
+			Assert.IsTrue(pulls.All(c => c.Command == "git"), "Each repository should be pulled with git pull.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task PullAllAsyncSkipsARepositoryWithNoUpstream()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_pull_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "good", ".git"));
+		Directory.CreateDirectory(Path.Join(root, "local", ".git"));
+		try
+		{
+			RecordingPullProcessService fake = new(failInDirNamed: "local", noUpstreamInDirNamed: "local");
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = 0;
+			string output = await CaptureConsoleAsync(async () => exit = await service.PullAllAsync(rootPath).ConfigureAwait(false)).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit, "A repository with no upstream has nothing to pull, which is not a failure.");
+			StringAssert.Contains(output, "SKIP local (no upstream)");
+			Assert.IsFalse(output.Contains("FAIL", StringComparison.Ordinal), output);
+			Assert.IsFalse(
+				fake.Calls.Any(c => c.Arguments.StartsWith("pull", StringComparison.Ordinal) && Path.GetFileName(c.WorkingDirectory) == "local"),
+				"A repository with no upstream should not be pulled.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task PullAllAsyncShowsTheReasonForAFailedPull()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_pull_{Guid.NewGuid():N}");
+		Directory.CreateDirectory(Path.Join(root, "bad", ".git"));
+		try
+		{
+			RecordingPullProcessService fake = new(failInDirNamed: "bad");
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = 0;
+			string output = await CaptureConsoleAsync(async () => exit = await service.PullAllAsync(rootPath).ConfigureAwait(false)).ConfigureAwait(false);
+
+			Assert.AreEqual(1, exit);
+			StringAssert.Contains(output, "FAIL bad");
+			StringAssert.Contains(output, "fatal: could not read from remote repository");
 		}
 		finally
 		{
@@ -753,6 +804,39 @@ public class RepoServiceTests
 			int exit = await service.BuildAndTestAsync(rootPath, parallel: true).ConfigureAwait(false);
 
 			Assert.AreEqual(1, exit, "Aggregated exit code should be non-zero when any solution fails.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	public async Task BuildAndTestAsyncNamesTheChosenSolutionWhenAFolderHoldsSlnAndSlnx()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_slnx_{Guid.NewGuid():N}");
+		string repo = Path.Join(root, "repo");
+		Directory.CreateDirectory(repo);
+		try
+		{
+			// Partway through the sln -> slnx migration: a bare 'dotnet build' here stops with MSB1011.
+			string sln = Path.Join(repo, "Foo.sln");
+			string slnx = Path.Join(repo, "Foo.slnx");
+			await File.WriteAllTextAsync(sln, string.Empty).ConfigureAwait(false);
+			await File.WriteAllTextAsync(slnx, string.Empty).ConfigureAwait(false);
+
+			RecordingFetchProcessService fake = new();
+			RepoService service = new(new Mock<IGitService>().Object, fake);
+			AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+
+			int exit = await service.BuildAndTestAsync(rootPath).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exit);
+			Assert.AreEqual(2, fake.Calls.Count, "Expected one build and one test of the single chosen solution.");
+			string expectedSolution = IProcessService.QuoteArgument(slnx);
+			Assert.AreEqual($"build {expectedSolution} --nologo -v q", fake.Calls[0].Arguments);
+			Assert.AreEqual($"test {expectedSolution} --nologo --no-build -v q", fake.Calls[1].Arguments);
+			Assert.AreEqual(repo, fake.Calls[0].WorkingDirectory);
 		}
 		finally
 		{
@@ -1085,7 +1169,7 @@ public class RepoServiceTests
 		}
 	}
 
-	private sealed class RecordingPullProcessService(string failInDirNamed) : IProcessService
+	private sealed class RecordingPullProcessService(string failInDirNamed, string? noUpstreamInDirNamed = null) : IProcessService
 	{
 		public List<(string Command, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
 
@@ -1096,8 +1180,16 @@ public class RepoServiceTests
 		{
 			Calls.Add((command, arguments, workingDirectory));
 
-			bool fails = workingDirectory is not null &&
-				string.Equals(Path.GetFileName(workingDirectory), failInDirNamed, StringComparison.OrdinalIgnoreCase);
+			string? dirName = workingDirectory is null ? null : Path.GetFileName(workingDirectory);
+
+			if (arguments.StartsWith("rev-parse", StringComparison.Ordinal))
+			{
+				return Task.FromResult(string.Equals(dirName, noUpstreamInDirNamed, StringComparison.OrdinalIgnoreCase)
+					? new ProcessResult(128, [], ["fatal: no upstream configured for branch 'local-only'"])
+					: new ProcessResult(0, ["origin/main"], []));
+			}
+
+			bool fails = string.Equals(dirName, failInDirNamed, StringComparison.OrdinalIgnoreCase);
 
 			return Task.FromResult(fails
 				? new ProcessResult(1, [], ["fatal: could not read from remote repository"])
