@@ -1009,7 +1009,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 		if (args.Count == 0)
 		{
-			ErrorDisplay.ShowError("Specify a git command, for example: ktsu git status");
+			ErrorDisplay.ShowError("Specify a git command to run, for example 'status'.");
 			return 1;
 		}
 
