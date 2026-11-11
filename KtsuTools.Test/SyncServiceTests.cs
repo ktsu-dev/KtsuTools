@@ -497,16 +497,52 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
-	public async Task CommitFilesLeavesARepositoryUncommittedWhenItsCheckoutConflicts()
+	[DataRow("a newer version", DisplayName = "content differs from the branch's copy")]
+	[DataRow("a different version", DisplayName = "content matches the branch's copy")]
+	public async Task CommitFilesReusesASyncBranchThatHoldsADifferentCopyOfTheFile(string synced)
 	{
 		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		_ = repo.Commit("shared.txt", "the original version", "A Human");
 		string originalBranch = repo.CurrentBranch;
 		string originalTip = repo.HeadSha;
 
-		// The sync branch already changed the same file, so checking it out over an uncommitted
-		// local edit is a conflict libgit2 refuses.
-		_ = repo.CommitOnBranch("sync/shared", "shared.txt", "a different version", "KtsuTools");
-		repo.Write("shared.txt", "local edit");
+		// A previous run's sync branch already changed the same file, so a plain checkout over the
+		// newly copied file is refused, whether or not the new copy matches the branch's.
+		string branchTip = repo.CommitOnBranch("sync/shared", "shared.txt", "a different version", "KtsuTools");
+		repo.Write("shared.txt", synced);
+
+		IReadOnlyList<SyncService.BranchSwitch> switches = await SyncService.CommitFilesAsync(
+			[Path.Join(repo.Root, "shared.txt")],
+			"sync/shared").ConfigureAwait(false);
+
+		Assert.AreEqual(1, switches.Count, "The existing sync branch must be reused, not skipped.");
+		Assert.AreEqual(synced, TestGit.Run(repo.Root, "show", "sync/shared:shared.txt"), "The copied content must be on the sync branch.");
+		if (synced != "a different version")
+		{
+			Assert.AreNotEqual(branchTip, repo.TipOf("sync/shared"), "The new content must be committed on the sync branch.");
+		}
+
+		await SyncService.RestoreBranchesAsync(switches).ConfigureAwait(false);
+
+		Assert.AreEqual(originalBranch, repo.CurrentBranch);
+		Assert.AreEqual(originalTip, repo.TipOf(originalBranch), "Nothing may be committed on the original branch.");
+		Assert.AreEqual("the original version", repo.Read("shared.txt"), "The original branch must not be left with the synced file modified.");
+		Assert.AreEqual(string.Empty, TestGit.Run(repo.Root, "status", "--porcelain"), "The original branch must be left clean.");
+	}
+
+	[TestMethod]
+	public async Task CommitFilesLeavesARepositoryUncommittedWhenTheUsersOwnEditsBlockTheCheckout()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		_ = repo.Commit("mywork.txt", "committed", "A Human");
+		string originalBranch = repo.CurrentBranch;
+		string originalTip = repo.HeadSha;
+
+		// The branch changed a file the user is also editing. Forcing the switch would throw the
+		// user's edit away, so the refusal must stand.
+		_ = repo.CommitOnBranch("sync/shared", "mywork.txt", "changed on the branch", "KtsuTools");
+		repo.Write("mywork.txt", "in progress");
+		repo.Write("shared.txt", "synced content");
 
 		IReadOnlyList<SyncService.BranchSwitch> switches = await SyncService.CommitFilesAsync(
 			[Path.Join(repo.Root, "shared.txt")],
@@ -515,6 +551,8 @@ public class SyncServiceTests
 		Assert.AreEqual(0, switches.Count, "A repo that could not be switched must not be reported as switched.");
 		Assert.AreEqual(originalBranch, repo.CurrentBranch);
 		Assert.AreEqual(originalTip, repo.HeadSha, "The commit must not land in place when the branch was the point.");
+		Assert.AreEqual("in progress", repo.Read("mywork.txt"), "The user's edit must survive.");
+		Assert.AreEqual("synced content", repo.Read("shared.txt"), "The copied file must not be discarded.");
 	}
 
 	[TestMethod]
