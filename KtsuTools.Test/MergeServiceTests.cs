@@ -63,6 +63,49 @@ public class MergeServiceTests
 	}
 
 	[TestMethod]
+	public async Task RunMergeAsyncWithAPatternMergesOnlyCopiesOfTheSameFile()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string subA = Path.Join(root, "a");
+		string subB = Path.Join(root, "b");
+		Directory.CreateDirectory(subA);
+		Directory.CreateDirectory(subB);
+		try
+		{
+			const string ciA = "name: CI\non: push\n";
+			const string ciB = "name: CI\non: pull_request\n";
+			const string dependabot = "version: 2\nupdates: []\n";
+			await File.WriteAllTextAsync(Path.Join(subA, "ci.yml"), ciA).ConfigureAwait(false);
+			await File.WriteAllTextAsync(Path.Join(subB, "ci.yml"), ciB).ConfigureAwait(false);
+			await File.WriteAllTextAsync(Path.Join(subA, "dependabot.yml"), dependabot).ConfigureAwait(false);
+			List<(string[] Version1, string[] Version2)> blocks = [];
+			int result = 0;
+
+			await ConsoleCapture.CaptureAsync(async () =>
+			{
+				AbsoluteDirectoryPath rootPath = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root);
+				result = await MergeService.RunMergeAsync(rootPath, "*.yml", DiffStyle.Git, (version1, version2) =>
+				{
+					blocks.Add((version1, version2));
+					return BlockChoice.UseVersion2;
+				}, CancellationToken.None).ConfigureAwait(false);
+			}).ConfigureAwait(false);
+
+			Assert.AreEqual(0, result);
+			Assert.AreEqual(dependabot, await File.ReadAllTextAsync(Path.Join(subA, "dependabot.yml")).ConfigureAwait(false), "dependabot.yml has no other copy, so it must be left alone.");
+			string mergedA = await File.ReadAllTextAsync(Path.Join(subA, "ci.yml")).ConfigureAwait(false);
+			string mergedB = await File.ReadAllTextAsync(Path.Join(subB, "ci.yml")).ConfigureAwait(false);
+			Assert.AreEqual(mergedA, mergedB, "The two ci.yml copies should be merged into one.");
+			Assert.IsTrue(mergedA.StartsWith("name: CI\n", StringComparison.Ordinal), $"ci.yml should only ever be merged with ci.yml, but became: {mergedA}");
+			Assert.IsFalse(blocks.Any(b => b.Version1.Concat(b.Version2).Any(line => line.Contains("updates", StringComparison.Ordinal))), "A dependabot.yml line was offered in a ci.yml merge.");
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestMethod]
 	public async Task RunMergeAsyncKeepsEachFilesByteOrderMark()
 	{
 		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");

@@ -59,7 +59,10 @@ public class MergeService
 	/// Runs the merge operation for files matching a pattern in a directory.
 	/// </summary>
 	/// <param name="directory">Absolute root directory under which to search.</param>
-	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="filename">
+	/// Glob pattern to match against filenames. Only copies of the same file name are merged with one
+	/// another, so a pattern such as <c>*.yml</c> merges each name's copies on their own.
+	/// </param>
 	/// <param name="diffStyle">How to render conflict diffs.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
@@ -103,6 +106,49 @@ public class MergeService
 
 		AnsiConsole.MarkupLine($"[green]Found {files.Count} file(s) matching pattern.[/]");
 
+		// Only copies of the same file are merged. A pattern such as *.yml also matches unrelated files
+		// that merely share an extension, such as a CI workflow and a dependabot config, and merging
+		// those would overwrite each with the other's content.
+		List<List<string>> nameGroups = [.. files.GroupBy(f => Path.GetFileName(f), FileNameComparer).Select(g => g.ToList())];
+
+		foreach (List<string> copies in nameGroups)
+		{
+			string name = Path.GetFileName(copies[0]);
+
+			if (nameGroups.Count > 1)
+			{
+				AnsiConsole.Write(new Rule($"[bold]{name.EscapeMarkup()}[/]").LeftJustified());
+			}
+
+			if (copies.Count < 2)
+			{
+				AnsiConsole.MarkupLine($"[dim]Only one {name.EscapeMarkup()} found. Nothing to merge.[/]");
+				continue;
+			}
+
+			int exitCode = await MergeCopiesAsync(fullPath, copies, diffStyle, chooseBlock, ct).ConfigureAwait(false);
+			if (exitCode != 0)
+			{
+				return exitCode;
+			}
+		}
+
+		return 0;
+	}
+
+	/// <summary>
+	/// File names compare by the platform's rules: case-insensitively on Windows and macOS, where
+	/// <c>CI.yml</c> and <c>ci.yml</c> name the same file, and case-sensitively elsewhere.
+	/// </summary>
+	private static readonly StringComparer FileNameComparer =
+		OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+	/// <summary>
+	/// Iteratively merges copies of one file until every copy has identical content.
+	/// </summary>
+	/// <returns>Exit code (0 for success).</returns>
+	private static async Task<int> MergeCopiesAsync(string fullPath, List<string> files, DiffStyle diffStyle, Func<string[], string[], BlockChoice>? chooseBlock, CancellationToken ct)
+	{
 		// Group files by content hash
 		Dictionary<string, FileGroup> groups = await GroupFilesByHashAsync(files, ct).ConfigureAwait(false);
 
