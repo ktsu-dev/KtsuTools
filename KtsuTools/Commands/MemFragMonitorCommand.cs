@@ -23,10 +23,17 @@ public sealed class MemFragMonitorCommand(MemFragService memFragService) : Async
 		[DefaultValue(1000)]
 		public int RefreshInterval { get; init; }
 
-		public override ValidationResult Validate() =>
-			RefreshInterval > 0
+		public override ValidationResult Validate()
+		{
+			if (ProcessId <= 0)
+			{
+				return ValidationResult.Error($"--pid must be a process ID greater than zero (got {ProcessId}).");
+			}
+
+			return RefreshInterval > 0
 				? ValidationResult.Success()
 				: ValidationResult.Error($"--refresh must be greater than zero milliseconds (got {RefreshInterval}).");
+		}
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)
