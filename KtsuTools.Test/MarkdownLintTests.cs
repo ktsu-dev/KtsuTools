@@ -165,6 +165,38 @@ public class MarkdownLintTests
 		StringAssert.Contains(output.ReplaceLineEndings(string.Empty), Path.GetFileName(Path.GetDirectoryName(configPath)!));
 	}
 
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task FormatMarkdownWarnsWhenTheConfigIsJsonNull()
+	{
+		string configPath = WriteConfig(".markdownlint.json", "null");
+
+		string output = await ConsoleCapture.CaptureAsync(() =>
+		{
+			string result = MarkdownLint.FormatMarkdown(Lines("* item"), configPath);
+			Assert.AreEqual(Lines("- item"), result);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "holds null rather than an object");
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task FormatMarkdownWarnsWhenTheConfigCannotBeRead()
+	{
+		string configPath = Path.Combine(Path.GetTempPath(), "ktsu-markdownlint-" + Guid.NewGuid().ToString("N"), ".markdownlint.json");
+
+		string output = await ConsoleCapture.CaptureAsync(() =>
+		{
+			string result = MarkdownLint.FormatMarkdown(Lines("* item"), configPath);
+			Assert.AreEqual(Lines("- item"), result);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "ignoring markdownlint config");
+	}
+
 	private static string WriteConfig(string fileName, string content)
 	{
 		string directory = Path.Combine(Path.GetTempPath(), "ktsu-markdownlint-" + Guid.NewGuid().ToString("N"));
