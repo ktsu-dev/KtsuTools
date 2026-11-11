@@ -6,6 +6,7 @@ using System.ComponentModel;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.Services.Process;
 using KtsuTools.SvnMigrate;
+using Spectre.Console.Cli;
 
 /// <summary>
 /// Pins what happens when a tool ktools shells out to, such as git, is not installed: the error names
@@ -67,6 +68,58 @@ public class MissingExecutableTests
 
 		Assert.AreEqual(-1, exitCode);
 		Assert.Contains("Error: something else broke", output);
+	}
+
+	[TestMethod]
+	public void ConstructorsNameTheCommandAndKeepTheCause()
+	{
+		Win32Exception cause = new(2);
+
+		Assert.AreEqual(string.Empty, new ExecutableNotFoundException().Command);
+		Assert.AreEqual("git", new ExecutableNotFoundException("git").Command);
+		Assert.IsNull(new ExecutableNotFoundException("git").InnerException);
+		Assert.AreSame(cause, new ExecutableNotFoundException("git", cause).InnerException);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task AMissingExecutableWrappedInAnotherExceptionStillExitsOne()
+	{
+		int exitCode = 0;
+		string output = await ConsoleCapture.CaptureAsync(() =>
+		{
+			exitCode = Program.HandleException(
+				new InvalidOperationException("outer", new ExecutableNotFoundException("git")));
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exitCode);
+		Assert.Contains("'git' was not found", output);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ACommandLineErrorIsRenderedAsSpectreRendersIt()
+	{
+		CommandApp app = new();
+		app.Configure(config =>
+		{
+			Program.ConfigureCommands(config);
+			config.PropagateExceptions();
+		});
+
+		CommandAppException parseError = Assert.ThrowsExactly<CommandParseException>(() => app.Run(["no-such-command"]));
+		Assert.IsNotNull(parseError.Pretty, "Spectre should supply a rendered form of a parse error.");
+
+		int exitCode = 0;
+		string output = await ConsoleCapture.CaptureAsync(() =>
+		{
+			exitCode = Program.HandleException(parseError);
+			return Task.CompletedTask;
+		}).ConfigureAwait(false);
+
+		Assert.AreEqual(-1, exitCode);
+		Assert.Contains("no-such-command", output);
 	}
 
 	[TestMethod]
