@@ -355,7 +355,7 @@ public class PackagesService(IProcessService processService)
 		{
 			string content = await File.ReadAllTextAsync(projectFile, ct).ConfigureAwait(false);
 			XDocument doc = XDocument.Parse(content);
-			IEnumerable<XElement> packageRefs = doc.Descendants("PackageReference");
+			IEnumerable<XElement> packageRefs = ProjectXml.PackageReferences(doc);
 
 			foreach (XElement packageRef in packageRefs)
 			{
@@ -387,7 +387,7 @@ public class PackagesService(IProcessService processService)
 		{
 			string content = await File.ReadAllTextAsync(projectFile, ct).ConfigureAwait(false);
 			XDocument doc = XDocument.Parse(content, LoadOptions.PreserveWhitespace);
-			IEnumerable<XElement> packageRefs = doc.Descendants("PackageReference");
+			IEnumerable<XElement> packageRefs = ProjectXml.PackageReferences(doc);
 
 			foreach (XElement packageRef in packageRefs)
 			{
@@ -585,7 +585,7 @@ public class PackagesService(IProcessService processService)
 		{
 			string content = await File.ReadAllTextAsync(projectFile, ct).ConfigureAwait(false);
 			XDocument doc = XDocument.Parse(content, LoadOptions.PreserveWhitespace);
-			IEnumerable<XElement> packageRefs = doc.Descendants("PackageReference");
+			IEnumerable<XElement> packageRefs = ProjectXml.PackageReferences(doc);
 
 			foreach (XElement packageRef in packageRefs)
 			{

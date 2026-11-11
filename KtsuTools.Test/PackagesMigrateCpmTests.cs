@@ -160,4 +160,30 @@ public class PackagesMigrateCpmTests
 		Assert.AreEqual("13.0.1", ReadPackageVersions()["Newtonsoft.Json"]);
 		StringAssert.Contains(await File.ReadAllTextAsync(PropsPath).ConfigureAwait(false), "<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>");
 	}
+
+	[TestMethod]
+	public async Task MigratesAProjectInTheMsBuild2003Namespace()
+	{
+		string projectDirectory = Path.Combine(root, "Legacy");
+		Directory.CreateDirectory(projectDirectory);
+		string projectPath = Path.Combine(projectDirectory, "Legacy.csproj");
+		await File.WriteAllTextAsync(projectPath, """
+			<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+			  <ItemGroup>
+			    <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
+			  </ItemGroup>
+			</Project>
+			""").ConfigureAwait(false);
+
+		int exitCode = await BuildService().MigrateToCpmAsync(RootPath).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exitCode);
+		Assert.AreEqual("12.0.1", ReadPackageVersions()["Newtonsoft.Json"]);
+
+		XDocument project = XDocument.Load(projectPath);
+		XNamespace ns = "http://schemas.microsoft.com/developer/msbuild/2003";
+		XElement reference = project.Descendants(ns + "PackageReference").Single();
+		Assert.AreEqual("Newtonsoft.Json", reference.Attribute("Include")?.Value);
+		Assert.IsNull(reference.Attribute("Version"), "A centrally managed reference keeps its Version, so restore fails with NU1008.");
+	}
 }

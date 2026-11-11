@@ -151,4 +151,23 @@ public class PackagesUpdateTests
 			"A concrete project version must not overwrite a central property indirection.");
 		Assert.IsTrue(props.StartsWith("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<Project>", StringComparison.Ordinal), "The declaration is kept, with no blank line added after it.");
 	}
+
+	[TestMethod]
+	public async Task UpdateRewritesAReferenceInTheMsBuild2003Namespace()
+	{
+		string original = string.Join("\n",
+			"<Project ToolsVersion=\"15.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">",
+			"  <ItemGroup>",
+			"    <PackageReference Include=\"Newtonsoft.Json\" Version=\"12.0.1\" />",
+			"  </ItemGroup>",
+			"</Project>",
+			string.Empty);
+		string projectPath = Path.Join(root, "Legacy.csproj");
+		await File.WriteAllTextAsync(projectPath, original).ConfigureAwait(false);
+
+		await PackagesService.UpdatePackageVersionInFileAsync(projectPath, "Newtonsoft.Json", "13.0.4", CancellationToken.None).ConfigureAwait(false);
+
+		string updated = await File.ReadAllTextAsync(projectPath).ConfigureAwait(false);
+		Assert.AreEqual(original.Replace("Version=\"12.0.1\"", "Version=\"13.0.4\"", StringComparison.Ordinal), updated);
+	}
 }

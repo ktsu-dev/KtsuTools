@@ -110,7 +110,7 @@ internal static partial class UnusedPackageAnalyzer
 		string projectDirectory = Path.GetDirectoryName(projectFile) ?? ".";
 		SourceIndex source = SourceIndex.Build(projectDirectory, doc);
 
-		foreach (XElement packageRef in doc.Descendants("PackageReference"))
+		foreach (XElement packageRef in ProjectXml.PackageReferences(doc))
 		{
 			string? packageId = packageRef.Attribute(IncludeAttribute)?.Value;
 
