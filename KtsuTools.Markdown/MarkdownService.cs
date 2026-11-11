@@ -32,50 +32,13 @@ public class MarkdownService
 #pragma warning restore CA1822, S2325
 	{
 		Ensure.NotNull(directoryPath);
-		string fullPath = directoryPath.ToString();
-
-		if (!Directory.Exists(fullPath))
-		{
-			AnsiConsole.MarkupLine($"[red]Error: Directory '{fullPath.EscapeMarkup()}' does not exist.[/]");
-			return 0;
-		}
-
-		List<string> markdownFiles = FindMarkdownFiles(fullPath);
-
-		if (markdownFiles.Count == 0)
-		{
-			AnsiConsole.MarkupLine("[yellow]No markdown files found.[/]");
-			return 0;
-		}
-
-		int modifiedCount = 0;
-
-		await AnsiConsole.Progress()
-			.AutoClear(false)
-			.HideCompleted(false)
-			.StartAsync(async progressContext =>
-			{
-				ProgressTask task = progressContext.AddTask("[green]Cleaning markdown files[/]", maxValue: markdownFiles.Count);
-
-				foreach (string filePath in markdownFiles)
-				{
-					ct.ThrowIfCancellationRequested();
-
-					bool changed = await ProcessFileForCleanAsync(filePath, applyLinting, standardizeLineEndings, ct).ConfigureAwait(false);
-
-					if (changed)
-					{
-						modifiedCount++;
-						string relativePath = Path.GetRelativePath(fullPath, filePath);
-						AnsiConsole.MarkupLine($"  [blue]Updated:[/] {relativePath.EscapeMarkup()}");
-					}
-
-					task.Increment(1);
-				}
-			}).ConfigureAwait(false);
-
-		AnsiConsole.MarkupLine($"[green]Cleaned {modifiedCount} of {markdownFiles.Count} files.[/]");
-		return modifiedCount;
+		return await ProcessMarkdownFilesAsync(
+			directoryPath.ToString(),
+			"Cleaning",
+			"Updated",
+			"Cleaned",
+			(filePath, token) => ProcessFileForCleanAsync(filePath, applyLinting, standardizeLineEndings, token),
+			ct).ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -89,8 +52,28 @@ public class MarkdownService
 #pragma warning restore CA1822, S2325
 	{
 		Ensure.NotNull(directoryPath);
-		string fullPath = directoryPath.ToString();
+		return await ProcessMarkdownFilesAsync(directoryPath.ToString(), "Linting", "Linted", "Linted", LintFileAsync, ct).ConfigureAwait(false);
+	}
 
+	/// <summary>
+	/// Runs <paramref name="processFile"/> over every markdown file <see cref="FindMarkdownFiles"/> finds
+	/// below <paramref name="fullPath"/>, with a progress bar, and reports each file it changed.
+	/// </summary>
+	/// <param name="fullPath">The root directory to scan.</param>
+	/// <param name="taskVerb">The progress bar's verb, such as "Linting".</param>
+	/// <param name="changedLabel">The label for each changed file, such as "Linted".</param>
+	/// <param name="summaryVerb">The summary's verb, such as "Linted".</param>
+	/// <param name="processFile">Processes one file and returns whether it changed.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>The number of files that were modified.</returns>
+	private static async Task<int> ProcessMarkdownFilesAsync(
+		string fullPath,
+		string taskVerb,
+		string changedLabel,
+		string summaryVerb,
+		Func<string, CancellationToken, Task<bool>> processFile,
+		CancellationToken ct)
+	{
 		if (!Directory.Exists(fullPath))
 		{
 			AnsiConsole.MarkupLine($"[red]Error: Directory '{fullPath.EscapeMarkup()}' does not exist.[/]");
@@ -112,26 +95,26 @@ public class MarkdownService
 			.HideCompleted(false)
 			.StartAsync(async progressContext =>
 			{
-				ProgressTask task = progressContext.AddTask("[green]Linting markdown files[/]", maxValue: markdownFiles.Count);
+				ProgressTask task = progressContext.AddTask($"[green]{taskVerb} markdown files[/]", maxValue: markdownFiles.Count);
 
 				foreach (string filePath in markdownFiles)
 				{
 					ct.ThrowIfCancellationRequested();
 
-					bool changed = await LintFileAsync(filePath, ct).ConfigureAwait(false);
+					bool changed = await processFile(filePath, ct).ConfigureAwait(false);
 
 					if (changed)
 					{
 						modifiedCount++;
 						string relativePath = Path.GetRelativePath(fullPath, filePath);
-						AnsiConsole.MarkupLine($"  [blue]Linted:[/] {relativePath.EscapeMarkup()}");
+						AnsiConsole.MarkupLine($"  [blue]{changedLabel}:[/] {relativePath.EscapeMarkup()}");
 					}
 
 					task.Increment(1);
 				}
 			}).ConfigureAwait(false);
 
-		AnsiConsole.MarkupLine($"[green]Linted {modifiedCount} of {markdownFiles.Count} files.[/]");
+		AnsiConsole.MarkupLine($"[green]{summaryVerb} {modifiedCount} of {markdownFiles.Count} files.[/]");
 		return modifiedCount;
 	}
 
