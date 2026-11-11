@@ -6,11 +6,21 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+using Spectre.Console;
+
 internal static partial class MarkdownLint
 {
 	private static readonly ConcurrentDictionary<string, string?> ConfigPathCache = new();
 	private static readonly ConcurrentDictionary<string, Dictionary<string, JsonElement>> ParsedConfigCache = new();
+	private static readonly ConcurrentDictionary<string, byte> WarnedConfigPaths = new();
 	private static readonly string[] ConfigFileNames = [".markdownlint.json", ".markdownlint.jsonc"];
+
+	// markdownlint reads both .markdownlint.json and .markdownlint.jsonc as JSONC.
+	private static readonly JsonSerializerOptions ConfigJsonOptions = new()
+	{
+		ReadCommentHandling = JsonCommentHandling.Skip,
+		AllowTrailingCommas = true,
+	};
 
 	internal static string? FindNearestConfigPath(string filePath)
 	{
@@ -64,30 +74,34 @@ internal static partial class MarkdownLint
 		{
 			string content = File.ReadAllText(configPath);
 
-			if (configPath.EndsWith(".jsonc", StringComparison.OrdinalIgnoreCase))
-			{
-				content = RemoveLineCommentsRegex().Replace(content, "$1");
-				content = RemoveBlockCommentsRegex().Replace(content, string.Empty);
-			}
-
-			config = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(content);
+			config = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(content, ConfigJsonOptions);
 			if (config is not null)
 			{
 				ParsedConfigCache[configPath] = config;
 				return true;
 			}
+
+			WarnConfigIgnored(configPath, "it holds null rather than an object.");
 		}
-		catch (JsonException)
+		catch (JsonException ex)
 		{
-			// Invalid JSON config - fall through to return false
+			WarnConfigIgnored(configPath, ex.Message);
 		}
-		catch (IOException)
+		catch (IOException ex)
 		{
-			// Config file unreadable - fall through to return false
+			WarnConfigIgnored(configPath, ex.Message);
 		}
 
 		config = null;
 		return false;
+	}
+
+	private static void WarnConfigIgnored(string configPath, string reason)
+	{
+		if (WarnedConfigPaths.TryAdd(configPath, 0))
+		{
+			AnsiConsole.MarkupLine($"[yellow]Warning: ignoring markdownlint config '{configPath.EscapeMarkup()}', which could not be read: {reason.EscapeMarkup()} Every rule runs with its defaults.[/]");
+		}
 	}
 
 	internal static string FormatMarkdown(string content, string? configPath)
@@ -442,10 +456,4 @@ internal static partial class MarkdownLint
 
 	[GeneratedRegex(@"^\d{1,9}[.)]( |$)")]
 	private static partial Regex OrderedListItemRegex();
-
-	[GeneratedRegex(@"//.*?(\r?\n|$)")]
-	private static partial Regex RemoveLineCommentsRegex();
-
-	[GeneratedRegex(@"/\*.*?\*/", RegexOptions.Singleline)]
-	private static partial Regex RemoveBlockCommentsRegex();
 }
