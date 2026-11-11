@@ -70,6 +70,21 @@ public class RepoGitTests
 	}
 
 	[TestMethod]
+	public async Task RunGitAsyncPassesBackslashesAndQuotesThroughToGitUnchanged()
+	{
+		using TempTree tree = TempTree.WithRepos("repo-a");
+		string[] args = ["add", ".\\My Folder\\", "x\\\"y z", "a\\\\b", "", "last"];
+
+		RecordingProcessService fake = new();
+		await CreateService(fake).RunGitAsync(tree.Root, args, color: false).ConfigureAwait(false);
+
+		CollectionAssert.AreEqual(
+			args,
+			SplitCommandLine(fake.Calls[0].Arguments),
+			"Splitting the command line as process start-up does should give back every argument unchanged.");
+	}
+
+	[TestMethod]
 	public async Task RunGitAsyncReturnsNonZeroWhenAnyRepositoryFails()
 	{
 		using TempTree tree = TempTree.WithRepos("good", "bad");
@@ -162,6 +177,91 @@ public class RepoGitTests
 
 	private static RepoService CreateService(IProcessService processService) =>
 		new(new Mock<IGitService>().Object, processService);
+
+	/// <summary>
+	/// Splits an argument string by the rules process start-up uses on Windows and in .NET
+	/// (CommandLineToArgvW): 2n backslashes before a quote are n backslashes and the quote toggles
+	/// quoting, 2n+1 are n backslashes and a literal quote, and other backslashes are literal.
+	/// </summary>
+	private static List<string> SplitCommandLine(string commandLine)
+	{
+		List<string> result = [];
+		System.Text.StringBuilder current = new();
+		bool inQuotes = false;
+		bool hasArgument = false;
+		int i = 0;
+
+		while (i < commandLine.Length)
+		{
+			char c = commandLine[i];
+
+			if (c == '\\')
+			{
+				int backslashes = 0;
+				while (i < commandLine.Length && commandLine[i] == '\\')
+				{
+					backslashes++;
+					i++;
+				}
+
+				if (i < commandLine.Length && commandLine[i] == '"')
+				{
+					_ = current.Append('\\', backslashes / 2);
+					if (backslashes % 2 == 1)
+					{
+						_ = current.Append('"');
+						i++;
+					}
+				}
+				else
+				{
+					_ = current.Append('\\', backslashes);
+				}
+
+				hasArgument = true;
+				continue;
+			}
+
+			if (c == '"')
+			{
+				if (inQuotes && i + 1 < commandLine.Length && commandLine[i + 1] == '"')
+				{
+					_ = current.Append('"');
+					i += 2;
+					continue;
+				}
+
+				inQuotes = !inQuotes;
+				hasArgument = true;
+				i++;
+				continue;
+			}
+
+			if (char.IsWhiteSpace(c) && !inQuotes)
+			{
+				if (hasArgument)
+				{
+					result.Add(current.ToString());
+					_ = current.Clear();
+					hasArgument = false;
+				}
+
+				i++;
+				continue;
+			}
+
+			_ = current.Append(c);
+			hasArgument = true;
+			i++;
+		}
+
+		if (hasArgument)
+		{
+			result.Add(current.ToString());
+		}
+
+		return result;
+	}
 
 	private sealed class RecordingProcessService(
 		Func<string, int>? exitCodeForWorkingDirectory = null,

@@ -42,7 +42,7 @@ public class GitCommandTests
 		using TempRepo repo = new();
 		RecordingProcessService fake = new();
 
-		// 'ktsu git -- status --short' puts everything into Raw and leaves the positional list empty.
+		// 'ktools git -- status --short' puts everything into Raw and leaves the positional list empty.
 		int exit = await ExecuteAsync(fake, repo.Root, args: [], raw: ["status", "--short"], parsed: ["--short"]).ConfigureAwait(false);
 
 		Assert.AreEqual(0, exit);
@@ -55,12 +55,46 @@ public class GitCommandTests
 		using TempRepo repo = new();
 		RecordingProcessService fake = new();
 
-		// 'ktsu git status --short' with no separator: Spectre takes --short and Raw stays empty,
+		// 'ktools git status --short' with no separator: Spectre takes --short and Raw stays empty,
 		// so the flag would silently vanish from the git command line.
 		int exit = await ExecuteAsync(fake, repo.Root, args: ["status"], raw: [], parsed: ["--short"]).ConfigureAwait(false);
 
 		Assert.AreEqual(1, exit, "A flag that cannot be forwarded must fail rather than run a different command.");
 		Assert.AreEqual(0, fake.Calls.Count, "Nothing should run when the command line is incomplete.");
+	}
+
+	[TestMethod]
+	public void SeparatorSuggestionNamesThisToolAndPutsGitFlagsAfterTheSeparator()
+	{
+		GitCommand.Settings settings = new() { Args = ["status"] };
+
+		string suggestion = GitCommand.BuildSeparatorSuggestion(settings, ["--short"]);
+
+		Assert.AreEqual($"{CliIdentity.Name} git -- status --short", suggestion);
+		Assert.AreEqual("ktools", CliIdentity.Name, "The suggestion must name the executable the user actually has.");
+	}
+
+	[TestMethod]
+	public void SeparatorSuggestionKeepsTheRequestedPath()
+	{
+		GitCommand.Settings settings = new() { Args = ["status"], Path = "/src/my repos", NoColor = true };
+
+		string suggestion = GitCommand.BuildSeparatorSuggestion(settings, ["--short"]);
+
+		// Without --path, pasting the suggestion would run git in the current directory instead.
+		Assert.AreEqual($"{CliIdentity.Name} git --path \"/src/my repos\" --no-color -- status --short", suggestion);
+	}
+
+	[TestMethod]
+	public async Task ExecuteWithNoGitCommandRunsNothing()
+	{
+		using TempRepo repo = new();
+		RecordingProcessService fake = new();
+
+		int exit = await ExecuteAsync(fake, repo.Root, args: []).ConfigureAwait(false);
+
+		Assert.AreEqual(1, exit);
+		Assert.AreEqual(0, fake.Calls.Count);
 	}
 
 	[TestMethod]

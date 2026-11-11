@@ -13,6 +13,7 @@
     <PackageReference Include="Humanizer.Core" ExcludeAssets="analyzers" />
     <PackageReference Include="ktsu.TextFilter" />
     <PackageReference Include="ktsu.IntervalAction" />
+    <PackageReference Include="Octokit" />
   </ItemGroup>
 
   <ItemGroup>

@@ -11,7 +11,21 @@ using Octokit;
 
 public class GitHubService : IGitHubService
 {
-	private GitHubClient? _client;
+	private IGitHubClient? _client;
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="GitHubService"/> class. Call
+	/// <see cref="InitializeAsync"/> before using it.
+	/// </summary>
+	public GitHubService()
+	{
+	}
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="GitHubService"/> class over an existing client.
+	/// </summary>
+	/// <param name="client">The client to make requests with.</param>
+	internal GitHubService(IGitHubClient client) => _client = client;
 
 	public bool IsAuthenticated => _client is not null;
 
@@ -26,8 +40,14 @@ public class GitHubService : IGitHubService
 
 	public async Task<IReadOnlyList<GitHubRepository>> GetRepositoriesAsync(string owner, CancellationToken ct = default)
 	{
-		GitHubClient client = GetClient();
-		IReadOnlyList<Repository> repos = await client.Repository.GetAllForUser(owner).ConfigureAwait(false);
+		IGitHubClient client = GetClient();
+
+		// /users/{owner}/repos lists only an organization's public repositories, so an organization
+		// is asked through its own endpoint, which includes the private ones the token can see.
+		User account = await client.User.Get(owner).ConfigureAwait(false);
+		IReadOnlyList<Repository> repos = account.Type == AccountType.Organization
+			? await client.Repository.GetAllForOrg(owner).ConfigureAwait(false)
+			: await client.Repository.GetAllForUser(owner).ConfigureAwait(false);
 		return
 		[
 			.. repos.Select(r => new GitHubRepository(r.Id, r.Name, r.FullName, new Uri(r.HtmlUrl), r.DefaultBranch)),
@@ -36,7 +56,7 @@ public class GitHubService : IGitHubService
 
 	public async Task<IReadOnlyList<GitHubWorkflowRun>> GetWorkflowRunsAsync(string owner, string repo, CancellationToken ct = default)
 	{
-		GitHubClient client = GetClient();
+		IGitHubClient client = GetClient();
 		WorkflowRunsResponse runs = await client.Actions.Workflows.Runs.List(owner, repo).ConfigureAwait(false);
 		return
 		[
@@ -48,13 +68,23 @@ public class GitHubService : IGitHubService
 				r.HeadBranch,
 				new Uri(r.HtmlUrl),
 				r.CreatedAt,
-				r.UpdatedAt)),
+				CompletedAtOf(r.Status, r.UpdatedAt))),
 		];
 	}
 
+	/// <summary>
+	/// When a run finished. GitHub has no completion time on a run, so a completed run's last update
+	/// stands in for it. A queued or running run has not completed, whatever its update time says.
+	/// </summary>
+	/// <param name="status">The run's status.</param>
+	/// <param name="updatedAt">When the run was last updated.</param>
+	/// <returns>The completion time, or <see langword="null"/> when the run has not completed.</returns>
+	internal static DateTimeOffset? CompletedAtOf(StringEnum<WorkflowRunStatus> status, DateTimeOffset updatedAt) =>
+		string.Equals(status.StringValue, "completed", StringComparison.OrdinalIgnoreCase) ? updatedAt : null;
+
 	public async Task<GitHubRateLimitInfo> GetRateLimitAsync(CancellationToken ct = default)
 	{
-		GitHubClient client = GetClient();
+		IGitHubClient client = GetClient();
 		MiscellaneousRateLimit rateLimit = await client.RateLimit.GetRateLimits().ConfigureAwait(false);
 		RateLimit core = rateLimit.Resources.Core;
 		return new GitHubRateLimitInfo(core.Remaining, core.Limit, core.Reset);
@@ -64,7 +94,7 @@ public class GitHubService : IGitHubService
 	{
 		try
 		{
-			GitHubClient client = GetClient();
+			IGitHubClient client = GetClient();
 			await client.Actions.Workflows.Runs.Rerun(owner, repo, runId).ConfigureAwait(false);
 			return true;
 		}
@@ -78,7 +108,7 @@ public class GitHubService : IGitHubService
 	{
 		try
 		{
-			GitHubClient client = GetClient();
+			IGitHubClient client = GetClient();
 			await client.Actions.Workflows.Runs.Cancel(owner, repo, runId).ConfigureAwait(false);
 			return true;
 		}
@@ -92,7 +122,7 @@ public class GitHubService : IGitHubService
 	{
 		try
 		{
-			GitHubClient client = GetClient();
+			IGitHubClient client = GetClient();
 
 			// The head filter is owner-qualified, which is what tells a branch in this repository
 			// apart from a same-named branch on a fork.
@@ -115,7 +145,7 @@ public class GitHubService : IGitHubService
 	{
 		try
 		{
-			GitHubClient client = GetClient();
+			IGitHubClient client = GetClient();
 			NewPullRequest request = new(title, headBranch, baseBranch) { Body = body };
 			PullRequest created = await client.PullRequest.Create(owner, repo, request).ConfigureAwait(false);
 			return new Uri(created.HtmlUrl);
@@ -126,6 +156,6 @@ public class GitHubService : IGitHubService
 		}
 	}
 
-	private GitHubClient GetClient() =>
+	private IGitHubClient GetClient() =>
 		_client ?? throw new InvalidOperationException("GitHub client not initialized. Call InitializeAsync first.");
 }

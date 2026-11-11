@@ -59,7 +59,10 @@ public class MergeService
 	/// Runs the merge operation for files matching a pattern in a directory.
 	/// </summary>
 	/// <param name="directory">Absolute root directory under which to search.</param>
-	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="filename">
+	/// Glob pattern to match against filenames. Only copies of the same file name are merged with one
+	/// another, so a pattern such as <c>*.yml</c> merges each name's copies on their own.
+	/// </param>
 	/// <param name="diffStyle">How to render conflict diffs.</param>
 	/// <param name="ct">Cancellation token.</param>
 	/// <returns>Exit code (0 for success).</returns>
@@ -103,6 +106,49 @@ public class MergeService
 
 		AnsiConsole.MarkupLine($"[green]Found {files.Count} file(s) matching pattern.[/]");
 
+		// Only copies of the same file are merged. A pattern such as *.yml also matches unrelated files
+		// that merely share an extension, such as a CI workflow and a dependabot config, and merging
+		// those would overwrite each with the other's content.
+		List<List<string>> nameGroups = [.. files.GroupBy(f => Path.GetFileName(f), FileNameComparer).Select(g => g.ToList())];
+
+		foreach (List<string> copies in nameGroups)
+		{
+			string name = Path.GetFileName(copies[0]);
+
+			if (nameGroups.Count > 1)
+			{
+				AnsiConsole.Write(new Rule($"[bold]{name.EscapeMarkup()}[/]").LeftJustified());
+			}
+
+			if (copies.Count < 2)
+			{
+				AnsiConsole.MarkupLine($"[dim]Only one {name.EscapeMarkup()} found. Nothing to merge.[/]");
+				continue;
+			}
+
+			int exitCode = await MergeCopiesAsync(fullPath, copies, diffStyle, chooseBlock, ct).ConfigureAwait(false);
+			if (exitCode != 0)
+			{
+				return exitCode;
+			}
+		}
+
+		return 0;
+	}
+
+	/// <summary>
+	/// File names compare by the platform's rules: case-insensitively on Windows and macOS, where
+	/// <c>CI.yml</c> and <c>ci.yml</c> name the same file, and case-sensitively elsewhere.
+	/// </summary>
+	private static readonly StringComparer FileNameComparer =
+		OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+	/// <summary>
+	/// Iteratively merges copies of one file until every copy has identical content.
+	/// </summary>
+	/// <returns>Exit code (0 for success).</returns>
+	private static async Task<int> MergeCopiesAsync(string fullPath, List<string> files, DiffStyle diffStyle, Func<string[], string[], BlockChoice>? chooseBlock, CancellationToken ct)
+	{
 		// Group files by content hash
 		Dictionary<string, FileGroup> groups = await GroupFilesByHashAsync(files, ct).ConfigureAwait(false);
 
@@ -281,9 +327,17 @@ public class MergeService
 		return Math.Max(0.0, (double)unchangedLines / totalLines);
 	}
 
-	private const int DiffLineCap = 50;
+	/// <summary>Most changed lines a preview shows; unchanged context does not count toward it.</summary>
+	internal const int DiffLineCap = 50;
 
-	private static void ShowDiff(string content1, string content2, string path1, string path2, DiffStyle style)
+	/// <summary>Unchanged lines the git-style preview shows on each side of a change, as <c>git diff</c> does.</summary>
+	internal const int DiffContextLines = 3;
+
+	/// <summary>
+	/// Prints a preview of how <paramref name="content2"/> differs from <paramref name="content1"/>.
+	/// The cap counts changed lines only, so a difference far down a long file is still shown.
+	/// </summary>
+	internal static void ShowDiff(string content1, string content2, string path1, string path2, DiffStyle style)
 	{
 		AnsiConsole.MarkupLine($"[dim]--- {Path.GetFileName(path1).EscapeMarkup()}[/]");
 		AnsiConsole.MarkupLine($"[dim]+++ {Path.GetFileName(path2).EscapeMarkup()}[/]");
@@ -308,70 +362,89 @@ public class MergeService
 		SideBySideDiffModel diff = diffBuilder.BuildDiffModel(content1, content2);
 
 		int total = Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count);
-		int maxLines = Math.Min(DiffLineCap, total);
+		List<(bool Deleted, string Text)> changed = [];
 
-		for (int i = 0; i < maxLines; i++)
+		for (int i = 0; i < total; i++)
 		{
 			DiffPiece? oldLine = i < diff.OldText.Lines.Count ? diff.OldText.Lines[i] : null;
 			DiffPiece? newLine = i < diff.NewText.Lines.Count ? diff.NewText.Lines[i] : null;
 
-			if (oldLine?.Type == ChangeType.Deleted)
+			if (oldLine?.Type is ChangeType.Deleted or ChangeType.Modified)
 			{
-				AnsiConsole.MarkupLine($"[red]- {oldLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
+				changed.Add((true, oldLine.Text ?? string.Empty));
 			}
-			else if (newLine?.Type == ChangeType.Inserted)
+
+			if (newLine?.Type is ChangeType.Inserted or ChangeType.Modified)
 			{
-				AnsiConsole.MarkupLine($"[green]+ {newLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
-			}
-			else if (oldLine?.Type == ChangeType.Modified)
-			{
-				AnsiConsole.MarkupLine($"[red]- {oldLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
-				if (newLine is not null)
-				{
-					AnsiConsole.MarkupLine($"[green]+ {newLine.Text?.EscapeMarkup() ?? string.Empty}[/]");
-				}
+				changed.Add((false, newLine.Text ?? string.Empty));
 			}
 		}
 
-		if (total > maxLines)
+		foreach ((bool deleted, string text) in changed.Take(DiffLineCap))
 		{
-			AnsiConsole.MarkupLine("[dim]... (truncated)[/]");
+			AnsiConsole.MarkupLine(deleted
+				? $"[red]- {text.EscapeMarkup()}[/]"
+				: $"[green]+ {text.EscapeMarkup()}[/]");
 		}
+
+		ShowTruncation(changed.Count - DiffLineCap);
 	}
 
 	private static void ShowUnifiedDiff(string content1, string content2)
 	{
-		DiffPaneModel diff = InlineDiffBuilder.Diff(content1, content2);
+		List<DiffPiece> lines = [.. InlineDiffBuilder.Diff(content1, content2).Lines.Where(line => line.Type != ChangeType.Imaginary)];
+		List<int> changedIndices = [.. Enumerable.Range(0, lines.Count).Where(i => lines[i].Type != ChangeType.Unchanged)];
 
-		int rendered = 0;
-		foreach (DiffPiece line in diff.Lines)
+		// Only changes within the cap are shown; context is taken around those alone, so it
+		// never runs on into a change the preview leaves out.
+		int shownChanges = Math.Min(DiffLineCap, changedIndices.Count);
+		int lastVisible = shownChanges < changedIndices.Count ? changedIndices[shownChanges] - 1 : lines.Count - 1;
+		bool[] visible = new bool[lines.Count];
+
+		for (int c = 0; c < shownChanges; c++)
 		{
-			if (rendered >= DiffLineCap)
+			int index = changedIndices[c];
+			int from = Math.Max(0, index - DiffContextLines);
+			int to = Math.Min(lastVisible, index + DiffContextLines);
+
+			for (int i = from; i <= to; i++)
 			{
-				AnsiConsole.MarkupLine("[dim]... (truncated)[/]");
-				return;
+				visible[i] = true;
+			}
+		}
+
+		int previous = -1;
+
+		for (int i = 0; i < lines.Count; i++)
+		{
+			if (!visible[i])
+			{
+				continue;
 			}
 
-			string text = line.Text?.EscapeMarkup() ?? string.Empty;
-			switch (line.Type)
+			if (previous >= 0 && i > previous + 1)
 			{
-				case ChangeType.Inserted:
-					AnsiConsole.MarkupLine($"[green]+{text}[/]");
-					break;
-				case ChangeType.Deleted:
-					AnsiConsole.MarkupLine($"[red]-{text}[/]");
-					break;
-				case ChangeType.Modified:
-					AnsiConsole.MarkupLine($"[red]-{text}[/]");
-					break;
-				case ChangeType.Unchanged:
-					AnsiConsole.MarkupLine($"[dim] {text}[/]");
-					break;
-				case ChangeType.Imaginary:
-					continue;
+				AnsiConsole.MarkupLine("[dim]...[/]");
 			}
 
-			rendered++;
+			previous = i;
+			string text = lines[i].Text?.EscapeMarkup() ?? string.Empty;
+			AnsiConsole.MarkupLine(lines[i].Type switch
+			{
+				ChangeType.Inserted => $"[green]+{text}[/]",
+				ChangeType.Deleted or ChangeType.Modified => $"[red]-{text}[/]",
+				_ => $"[dim] {text}[/]",
+			});
+		}
+
+		ShowTruncation(changedIndices.Count - shownChanges);
+	}
+
+	private static void ShowTruncation(int omittedChangedLines)
+	{
+		if (omittedChangedLines > 0)
+		{
+			AnsiConsole.MarkupLine($"[dim]... (truncated: {omittedChangedLines} more changed line{(omittedChangedLines == 1 ? string.Empty : "s")} not shown)[/]");
 		}
 	}
 
@@ -397,8 +470,8 @@ public class MergeService
 			return content1;
 		}
 
-		string[] lines1 = content1.Split('\n');
-		string[] lines2 = content2.Split('\n');
+		string[] lines1 = SplitLines(content1);
+		string[] lines2 = SplitLines(content2);
 		List<string> mergedLines = [];
 		int currentLine1 = 0;
 
@@ -420,6 +493,14 @@ public class MergeService
 
 		return string.Join('\n', mergedLines);
 	}
+
+	/// <summary>
+	/// Splits content into the lines DiffPlex numbers its blocks by. DiffPlex counts empty content as
+	/// no lines at all, where <see cref="string.Split(char, StringSplitOptions)"/> would return one
+	/// empty line, which would then be appended after the last block as an extra newline.
+	/// </summary>
+	private static string[] SplitLines(string content) =>
+		content.Length == 0 ? [] : content.Split('\n');
 
 	private static void AddUnchangedLines(List<string> mergedLines, string[] lines, int from, int to)
 	{

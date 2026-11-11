@@ -418,8 +418,7 @@ public class SyncServiceTests
 			repo.Write("shared.txt", "synced content");
 
 			Collection<string> changed = await SyncGit.FindChangedFilesAsync(
-				new HashSet<string>([linkedRoot], StringComparer.Ordinal),
-				new HashSet<string>(["shared.txt"], StringComparer.Ordinal)).ConfigureAwait(false);
+				[Path.Join(linkedRoot, "shared.txt")]).ConfigureAwait(false);
 
 			CollectionAssert.AreEqual(
 				new[] { Path.Join(linkedRoot, "shared.txt") },
@@ -498,16 +497,52 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
-	public async Task CommitFilesLeavesARepositoryUncommittedWhenItsCheckoutConflicts()
+	[DataRow("a newer version", DisplayName = "content differs from the branch's copy")]
+	[DataRow("a different version", DisplayName = "content matches the branch's copy")]
+	public async Task CommitFilesReusesASyncBranchThatHoldsADifferentCopyOfTheFile(string synced)
 	{
 		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		_ = repo.Commit("shared.txt", "the original version", "A Human");
 		string originalBranch = repo.CurrentBranch;
 		string originalTip = repo.HeadSha;
 
-		// The sync branch already changed the same file, so checking it out over an uncommitted
-		// local edit is a conflict libgit2 refuses.
-		_ = repo.CommitOnBranch("sync/shared", "shared.txt", "a different version", "KtsuTools");
-		repo.Write("shared.txt", "local edit");
+		// A previous run's sync branch already changed the same file, so a plain checkout over the
+		// newly copied file is refused, whether or not the new copy matches the branch's.
+		string branchTip = repo.CommitOnBranch("sync/shared", "shared.txt", "a different version", "KtsuTools");
+		repo.Write("shared.txt", synced);
+
+		IReadOnlyList<SyncService.BranchSwitch> switches = await SyncService.CommitFilesAsync(
+			[Path.Join(repo.Root, "shared.txt")],
+			"sync/shared").ConfigureAwait(false);
+
+		Assert.AreEqual(1, switches.Count, "The existing sync branch must be reused, not skipped.");
+		Assert.AreEqual(synced, TestGit.Run(repo.Root, "show", "sync/shared:shared.txt"), "The copied content must be on the sync branch.");
+		if (synced != "a different version")
+		{
+			Assert.AreNotEqual(branchTip, repo.TipOf("sync/shared"), "The new content must be committed on the sync branch.");
+		}
+
+		await SyncService.RestoreBranchesAsync(switches).ConfigureAwait(false);
+
+		Assert.AreEqual(originalBranch, repo.CurrentBranch);
+		Assert.AreEqual(originalTip, repo.TipOf(originalBranch), "Nothing may be committed on the original branch.");
+		Assert.AreEqual("the original version", repo.Read("shared.txt"), "The original branch must not be left with the synced file modified.");
+		Assert.AreEqual(string.Empty, TestGit.Run(repo.Root, "status", "--porcelain"), "The original branch must be left clean.");
+	}
+
+	[TestMethod]
+	public async Task CommitFilesLeavesARepositoryUncommittedWhenTheUsersOwnEditsBlockTheCheckout()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		_ = repo.Commit("mywork.txt", "committed", "A Human");
+		string originalBranch = repo.CurrentBranch;
+		string originalTip = repo.HeadSha;
+
+		// The branch changed a file the user is also editing. Forcing the switch would throw the
+		// user's edit away, so the refusal must stand.
+		_ = repo.CommitOnBranch("sync/shared", "mywork.txt", "changed on the branch", "KtsuTools");
+		repo.Write("mywork.txt", "in progress");
+		repo.Write("shared.txt", "synced content");
 
 		IReadOnlyList<SyncService.BranchSwitch> switches = await SyncService.CommitFilesAsync(
 			[Path.Join(repo.Root, "shared.txt")],
@@ -516,6 +551,8 @@ public class SyncServiceTests
 		Assert.AreEqual(0, switches.Count, "A repo that could not be switched must not be reported as switched.");
 		Assert.AreEqual(originalBranch, repo.CurrentBranch);
 		Assert.AreEqual(originalTip, repo.HeadSha, "The commit must not land in place when the branch was the point.");
+		Assert.AreEqual("in progress", repo.Read("mywork.txt"), "The user's edit must survive.");
+		Assert.AreEqual("synced content", repo.Read("shared.txt"), "The copied file must not be discarded.");
 	}
 
 	[TestMethod]
@@ -758,6 +795,64 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public async Task RunAsyncCommitsNothingWhenTheUserSkipsTheDifference()
+	{
+		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a", "repo-b");
+		string editedRepo = workspace.RepoRoots[0];
+		string otherRepo = workspace.RepoRoots[1];
+		string editedTip = TestGit.HeadSha(editedRepo);
+		string otherTip = TestGit.HeadSha(otherRepo);
+
+		// The user's unfinished edit is what makes the two copies differ.
+		await File.WriteAllTextAsync(Path.Join(editedRepo, "shared.txt"), "work in progress").ConfigureAwait(false);
+		RecordingProcessService fake = new();
+		int exit = -1;
+
+		// Two hash groups, then "(skip)" last: down twice and Enter. The "y" and Enter answer the
+		// commit prompt, which only appears if sync wrongly finds the skipped copy to commit.
+		ConsoleKeyInfo[] keys =
+		[
+			ScriptedConsole.Key(ConsoleKey.DownArrow),
+			ScriptedConsole.Key(ConsoleKey.DownArrow),
+			ScriptedConsole.Key(ConsoleKey.Enter),
+			ScriptedConsole.Char('y'),
+			ScriptedConsole.Key(ConsoleKey.Enter),
+		];
+
+		string output = await ScriptedConsole.RunAsync(keys, async () =>
+			exit = await new SyncService(fake)
+				.RunAsync(workspace.Root, ["shared.txt"], autoPush: true, CancellationToken.None)
+				.ConfigureAwait(false)).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit, output);
+		Assert.AreEqual(editedTip, TestGit.HeadSha(editedRepo), "A copy in a skipped group must not be committed.");
+		Assert.AreEqual(otherTip, TestGit.HeadSha(otherRepo), "Nothing was copied, so nothing is committed anywhere.");
+		Assert.AreEqual("work in progress", await File.ReadAllTextAsync(Path.Join(editedRepo, "shared.txt")).ConfigureAwait(false), "The user's edit must stay in their working tree.");
+		Assert.AreEqual(0, fake.Calls.Count, "Nothing was committed, so there is nothing to push.");
+		Assert.DoesNotContain("has outstanding changes", output, "A file sync never wrote must not be offered for commit.");
+	}
+
+	[TestMethod]
+	public async Task FindChangedFilesReportsOnlyTheFilesTheSyncWrote()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string nested = Path.Join(repo.Root, "nested");
+		Directory.CreateDirectory(nested);
+		await File.WriteAllTextAsync(Path.Join(nested, "shared.txt"), "original content").ConfigureAwait(false);
+		_ = TestGit.Commit(repo.Root, "nested/shared.txt", "Add nested copy", "A Human");
+
+		// Both copies are modified, but only the nested one was written by the sync; the root copy
+		// holds the user's own edit.
+		repo.Write("shared.txt", "the user's edit");
+		string written = Path.Join(nested, "shared.txt");
+		await File.WriteAllTextAsync(written, "synced content").ConfigureAwait(false);
+
+		Collection<string> changed = await SyncGit.FindChangedFilesAsync([written]).ConfigureAwait(false);
+
+		CollectionAssert.AreEqual(new[] { written }, changed.ToArray(), "Only a file the sync overwrote may be committed.");
+	}
+
+	[TestMethod]
 	public async Task RunAsyncRejectsPullRequestsWithoutABranchBeforeScanningAnything()
 	{
 		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a");
@@ -894,6 +989,38 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void FindMatchingFilesIgnoresAnExcludedNameAboveTheScanRoot()
+	{
+		using TempTree tree = TempTree.New();
+		string root = Path.GetDirectoryName(tree.WriteFile(Path.Join("build", "workspace"), "marker.txt"))!;
+		string repoA = tree.WriteFile(Path.Join("build", "workspace", "RepoA"), ".editorconfig");
+		string repoB = tree.WriteFile(Path.Join("build", "workspace", "RepoB"), ".editorconfig");
+		_ = tree.WriteFile(Path.Join("build", "workspace", "RepoB", "build"), ".editorconfig");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles(
+			[root],
+			[".editorconfig"],
+			SyncService.NormalizeExclusions(["build"]));
+
+		CollectionAssert.AreEquivalent(
+			new[] { repoA, repoB },
+			matches.ToArray(),
+			"A bare name must only match directories inside the scan root, not the folders above it.");
+	}
+
+	[TestMethod]
+	public void IsExcludedMatchesABareNameOnlyBelowTheRoot()
+	{
+		string root = Path.Join(Path.GetTempPath(), "build", "workspace");
+		string kept = Path.Join(root, "RepoA", ".editorconfig");
+		string excluded = Path.Join(root, "RepoB", "build", ".editorconfig");
+		IReadOnlyList<string> exclusions = SyncService.NormalizeExclusions(["build"]);
+
+		Assert.IsFalse(SyncService.IsExcluded(kept, root, exclusions));
+		Assert.IsTrue(SyncService.IsExcluded(excluded, root, exclusions));
+	}
+
+	[TestMethod]
 	public void FindMatchingFilesExcludesOnlyTheNamedDirectoryWhenGivenAPath()
 	{
 		using TempTree tree = TempTree.New();
@@ -912,17 +1039,19 @@ public class SyncServiceTests
 	[TestMethod]
 	public void IsExcludedIgnoresATrailingSeparatorOnABareName()
 	{
-		string file = Path.Join(Path.GetTempPath(), "workspace", "node_modules", "pkg", "shared.txt");
+		string root = Path.Join(Path.GetTempPath(), "workspace");
+		string file = Path.Join(root, "node_modules", "pkg", "shared.txt");
 
-		Assert.IsTrue(SyncService.IsExcluded(file, SyncService.NormalizeExclusions([$"node_modules{Path.DirectorySeparatorChar}"])));
+		Assert.IsTrue(SyncService.IsExcluded(file, root, SyncService.NormalizeExclusions([$"node_modules{Path.DirectorySeparatorChar}"])));
 	}
 
 	[TestMethod]
 	public void IsExcludedDoesNotMatchTheFileNameItself()
 	{
-		string file = Path.Join(Path.GetTempPath(), "workspace", "repo-a", "shared.txt");
+		string root = Path.Join(Path.GetTempPath(), "workspace");
+		string file = Path.Join(root, "repo-a", "shared.txt");
 
-		Assert.IsFalse(SyncService.IsExcluded(file, SyncService.NormalizeExclusions(["shared.txt"])));
+		Assert.IsFalse(SyncService.IsExcluded(file, root, SyncService.NormalizeExclusions(["shared.txt"])));
 	}
 
 	[TestMethod]

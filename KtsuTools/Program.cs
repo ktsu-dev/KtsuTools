@@ -6,6 +6,7 @@ using KtsuTools.BuildMonitor;
 using KtsuTools.CodeGen;
 using KtsuTools.Commands;
 using KtsuTools.Core.Services;
+using KtsuTools.Core.Services.Process;
 using KtsuTools.FileDedupe;
 using KtsuTools.FileExplorer;
 using KtsuTools.Infrastructure;
@@ -19,6 +20,7 @@ using KtsuTools.Repo;
 using KtsuTools.SvnMigrate;
 using KtsuTools.Sync;
 using Microsoft.Extensions.DependencyInjection;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 internal static class Program
@@ -65,9 +67,40 @@ internal static class Program
 		TypeRegistrar registrar = new(services);
 		CommandApp app = new(registrar);
 
-		app.Configure(ConfigureCommands);
+		app.Configure(config =>
+		{
+			ConfigureCommands(config);
+			config.SetExceptionHandler((ex, _) => HandleException(ex));
+		});
 
 		return app.Run(cliArgs);
+	}
+
+	/// <summary>
+	/// Reports an exception that escaped a command. A missing executable such as git exits 1 with a
+	/// message naming it; anything else is rendered and exits -1, as Spectre's own handler does.
+	/// </summary>
+	/// <param name="exception">The exception the command raised.</param>
+	/// <returns>The process exit code.</returns>
+	internal static int HandleException(Exception exception)
+	{
+		for (Exception? current = exception; current is not null; current = current.InnerException)
+		{
+			if (current is ExecutableNotFoundException notFound)
+			{
+				AnsiConsole.MarkupLine($"[red]Error:[/] {notFound.Message.EscapeMarkup()}");
+				return 1;
+			}
+		}
+
+		if (exception is CommandAppException { Pretty: { } pretty })
+		{
+			AnsiConsole.Write(pretty);
+			return -1;
+		}
+
+		AnsiConsole.MarkupLine($"[red]Error:[/] {exception.Message.EscapeMarkup()}");
+		return -1;
 	}
 
 	/// <summary>
@@ -86,7 +119,7 @@ internal static class Program
 
 		config.AddCommand<MergeCommand>("merge")
 			.WithDescription("N-way iterative file merge with interactive conflict resolution")
-			.WithExample("merge", "./repos", "*.yml")
+			.WithExample("merge", "./repos", ".editorconfig")
 			.WithExample("merge", "--batch", "editorconfig-sync");
 
 		config.AddBranch("merge-batch", batch =>
@@ -230,7 +263,7 @@ internal static class Program
 
 		config.AddCommand<SvnMigrateCommand>("svn-migrate")
 			.WithDescription("Migrate SVN repository to Git")
-			.WithExample("svn-migrate", "--svn-url", "svn://...", "--target", "./repo");
+			.WithExample("svn-migrate", "--svn-url", "svn://svn.example.com/repo", "--target", "./repo");
 
 		config.AddCommand<SyncCommand>("sync")
 			.WithDescription("Synchronize file contents across repositories")

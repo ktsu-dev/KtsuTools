@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 namespace KtsuTools.MemFrag;
 
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
@@ -85,6 +86,7 @@ public class MemFragService
 
 			IRenderable initial = new Text("Loading...");
 			Process processCapture = process;
+			bool processExited = false;
 			await AnsiConsole.Live(initial)
 				.AutoClear(true)
 				.StartAsync(async ctx =>
@@ -92,17 +94,32 @@ public class MemFragService
 					using CancellationTokenSource exitedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 					TimeSpan interval = TimeSpan.FromMilliseconds(refreshIntervalMs);
 
+					void MarkExited()
+					{
+						Volatile.Write(ref processExited, true);
+						exitedCts.Cancel();
+					}
+
 					void Tick()
 					{
 						try
 						{
 							processCapture.Refresh();
+
+							// Asked explicitly, because reading the memory figures of a process that has
+							// exited does not throw on every platform: on macOS it can keep returning
+							// figures, so the monitor would never notice the exit.
+							if (processCapture.HasExited)
+							{
+								MarkExited();
+								return;
+							}
+
 							ctx.UpdateTarget(BuildMemoryTable(processCapture));
 						}
-						catch (InvalidOperationException)
+						catch (Exception ex) when (IsExitFailure(ex, processCapture))
 						{
-							ctx.UpdateTarget(new Markup("[red]Process has exited.[/]"));
-							exitedCts.Cancel();
+							MarkExited();
 						}
 					}
 
@@ -125,9 +142,41 @@ public class MemFragService
 
 					ticker.Stop();
 				}).ConfigureAwait(false);
+
+			// The live region clears itself when it ends, so the reason the monitor stopped is
+			// written after it, where it stays on screen.
+			if (Volatile.Read(ref processExited))
+			{
+				AnsiConsole.MarkupLine("[red]Error: Process has exited.[/]");
+				return 1;
+			}
 		}
 
 		return 0;
+	}
+
+	/// <summary>
+	/// Tells whether a failure reading a monitored process means the process has gone. .NET reports
+	/// that as <see cref="InvalidOperationException"/>; some platforms raise
+	/// <see cref="Win32Exception"/> instead, which only counts when the process has in fact exited.
+	/// </summary>
+	internal static bool IsExitFailure(Exception exception, Process process) =>
+		exception is InvalidOperationException
+		|| (exception is Win32Exception && HasExited(process));
+
+	/// <summary>
+	/// Reports whether a process has exited, treating a process that can no longer be asked as exited.
+	/// </summary>
+	internal static bool HasExited(Process process)
+	{
+		try
+		{
+			return process.HasExited;
+		}
+		catch (InvalidOperationException)
+		{
+			return true;
+		}
 	}
 
 	private const string DimDash = "[dim]-[/]";
