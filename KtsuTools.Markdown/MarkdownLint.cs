@@ -330,23 +330,30 @@ internal static partial class MarkdownLint
 			return content;
 		}
 
-		int brSpaces = 0;
+		// markdownlint keeps a two-space hard line break unless br_spaces says otherwise, and treats a
+		// br_spaces below 2 as "no hard breaks allowed".
+		int brSpaces = 2;
 		if (config is not null && config.TryGetValue("MD009", out JsonElement md009) && md009.ValueKind == JsonValueKind.Object
-			&& md009.TryGetProperty("br_spaces", out JsonElement brProp))
+			&& md009.TryGetProperty("br_spaces", out JsonElement brProp) && brProp.ValueKind == JsonValueKind.Number)
 		{
-			if (brProp.ValueKind == JsonValueKind.Number)
-			{
-				brSpaces = brProp.GetInt32();
-			}
-			else if (brProp.ValueKind == JsonValueKind.True)
-			{
-				brSpaces = 2;
-			}
+			brSpaces = brProp.GetInt32();
+		}
+
+		if (brSpaces < 2)
+		{
+			brSpaces = 0;
 		}
 
 		string[] lines = content.Split(Environment.NewLine);
+		bool[] fenced = FindFencedLines(lines);
 		for (int i = 0; i < lines.Length; i++)
 		{
+			// Trailing white space is significant in code, such as a diff or a patch.
+			if (fenced[i])
+			{
+				continue;
+			}
+
 			string trimmed = lines[i].TrimEnd();
 			if (brSpaces > 0)
 			{
