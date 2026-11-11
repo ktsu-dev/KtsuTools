@@ -217,41 +217,50 @@ internal static partial class MarkdownLint
 		List<(int Indent, bool Ordered)> enclosing = [];
 		for (int i = 0; i < lines.Length; i++)
 		{
-			if (fenced[i])
+			if (!fenced[i])
 			{
-				continue;
-			}
-
-			string trimmed = lines[i].TrimStart();
-			int leadingSpaces = lines[i].Length - trimmed.Length;
-			bool bullet = trimmed.Length > 1 && trimmed[1] == ' ' && (trimmed[0] is '*' or '+' or '-')
-				&& !ThematicBreakRegex().IsMatch(lines[i]);
-			bool ordered = OrderedListItemRegex().IsMatch(trimmed);
-
-			if (!bullet && !ordered)
-			{
-				// A paragraph or heading at the left margin ends every list; blank and indented
-				// continuation lines stay inside the items around them.
-				if (trimmed.Length > 0 && leadingSpaces == 0)
-				{
-					enclosing.Clear();
-				}
-
-				continue;
-			}
-
-			enclosing.RemoveAll(item => item.Indent >= leadingSpaces);
-			bool underOrderedItem = enclosing.Exists(item => item.Ordered);
-			enclosing.Add((leadingSpaces, ordered));
-
-			if (bullet)
-			{
-				string newIndent = underOrderedItem ? lines[i][..leadingSpaces] : new(' ', leadingSpaces / indent * indent);
-				lines[i] = $"{newIndent}{marker} {trimmed[2..]}";
+				lines[i] = FixListMarker(lines[i], marker, indent, enclosing);
 			}
 		}
 
 		return string.Join(Environment.NewLine, lines);
+	}
+
+	/// <summary>
+	/// Normalises one line's bullet marker and, when every list item enclosing it is unordered, its
+	/// indentation, updating <paramref name="enclosing"/> for the lines that follow.
+	/// </summary>
+	private static string FixListMarker(string line, char marker, int indent, List<(int Indent, bool Ordered)> enclosing)
+	{
+		string trimmed = line.TrimStart();
+		int leadingSpaces = line.Length - trimmed.Length;
+		bool bullet = trimmed.Length > 1 && trimmed[1] == ' ' && (trimmed[0] is '*' or '+' or '-')
+			&& !ThematicBreakRegex().IsMatch(line);
+		bool ordered = OrderedListItemRegex().IsMatch(trimmed);
+
+		if (!bullet && !ordered)
+		{
+			// A paragraph or heading at the left margin ends every list; blank and indented
+			// continuation lines stay inside the items around them.
+			if (trimmed.Length > 0 && leadingSpaces == 0)
+			{
+				enclosing.Clear();
+			}
+
+			return line;
+		}
+
+		enclosing.RemoveAll(item => item.Indent >= leadingSpaces);
+		bool underOrderedItem = enclosing.Exists(item => item.Ordered);
+		enclosing.Add((leadingSpaces, ordered));
+
+		if (!bullet)
+		{
+			return line;
+		}
+
+		string newIndent = underOrderedItem ? line[..leadingSpaces] : new(' ', leadingSpaces / indent * indent);
+		return $"{newIndent}{marker} {trimmed[2..]}";
 	}
 
 	/// <summary>
