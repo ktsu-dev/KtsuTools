@@ -2,6 +2,7 @@
 
 namespace KtsuTools.Test;
 
+using System.ComponentModel;
 using System.Diagnostics;
 using KtsuTools.MemFrag;
 
@@ -79,5 +80,43 @@ public class MemFragServiceTests
 
 		Assert.AreEqual(0, exit, output);
 		Assert.IsFalse(output.Contains("Process has exited.", StringComparison.Ordinal), output);
+	}
+
+	[TestMethod]
+	public void HasExitedTellsARunningProcessFromAnExitedOne()
+	{
+		using Process child = StartIdleChild();
+		Assert.IsFalse(MemFragService.HasExited(child));
+
+		child.Kill();
+		child.WaitForExit();
+		Assert.IsTrue(MemFragService.HasExited(child));
+	}
+
+	[TestMethod]
+	public void HasExitedCountsAProcessThatCannotBeAskedAsExited()
+	{
+		using Process unstarted = new();
+
+		Assert.IsTrue(MemFragService.HasExited(unstarted));
+	}
+
+	[TestMethod]
+	public void OnlyFailuresFromAGoneProcessCountAsAnExit()
+	{
+		using Process child = StartIdleChild();
+		try
+		{
+			Assert.IsTrue(MemFragService.IsExitFailure(new InvalidOperationException(), child));
+			Assert.IsFalse(MemFragService.IsExitFailure(new Win32Exception(5), child), "A running process's Win32 error is not an exit.");
+			Assert.IsFalse(MemFragService.IsExitFailure(new FormatException(), child));
+		}
+		finally
+		{
+			child.Kill();
+			child.WaitForExit();
+		}
+
+		Assert.IsTrue(MemFragService.IsExitFailure(new Win32Exception(3), child), "A Win32 error from an exited process is an exit.");
 	}
 }

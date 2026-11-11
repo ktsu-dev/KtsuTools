@@ -117,11 +117,7 @@ public class MemFragService
 
 							ctx.UpdateTarget(BuildMemoryTable(processCapture));
 						}
-						catch (InvalidOperationException)
-						{
-							MarkExited();
-						}
-						catch (Win32Exception) when (HasExited(processCapture))
+						catch (Exception ex) when (IsExitFailure(ex, processCapture))
 						{
 							MarkExited();
 						}
@@ -160,9 +156,18 @@ public class MemFragService
 	}
 
 	/// <summary>
+	/// Tells whether a failure reading a monitored process means the process has gone. .NET reports
+	/// that as <see cref="InvalidOperationException"/>; some platforms raise
+	/// <see cref="Win32Exception"/> instead, which only counts when the process has in fact exited.
+	/// </summary>
+	internal static bool IsExitFailure(Exception exception, Process process) =>
+		exception is InvalidOperationException
+		|| (exception is Win32Exception && HasExited(process));
+
+	/// <summary>
 	/// Reports whether a process has exited, treating a process that can no longer be asked as exited.
 	/// </summary>
-	private static bool HasExited(Process process)
+	internal static bool HasExited(Process process)
 	{
 		try
 		{
