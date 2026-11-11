@@ -198,15 +198,13 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		AnsiConsole.MarkupLine($"[bold]Found matches:[/] {string.Join(", ", uniqueFilenames).EscapeMarkup()}");
 
 		HashSet<string> commitDirectories = [];
-		HashSet<string> expandedFilesToSync = [];
+		List<string> writtenFiles = [];
 		List<SyncedFile> syncedFiles = [];
-
-		expandedFilesToSync.UnionWith(uniqueFilenames);
 
 		foreach (string uniqueFilename in uniqueFilenames)
 		{
 			ct.ThrowIfCancellationRequested();
-			SyncedFile? synced = await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, ct).ConfigureAwait(false);
+			SyncedFile? synced = await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, writtenFiles, ct).ConfigureAwait(false);
 			if (synced is not null)
 			{
 				syncedFiles.Add(synced);
@@ -214,7 +212,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		}
 
 		IReadOnlyList<BranchSwitch> branchSwitches =
-			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, branchName).ConfigureAwait(false);
+			await CommitChangedFilesAsync(writtenFiles, branchName).ConfigureAwait(false);
 
 		PushResult push = PushResult.None;
 		try
@@ -600,6 +598,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		Collection<string> fileEnumeration,
 		IReadOnlyList<string> roots,
 		HashSet<string> commitDirectories,
+		List<string> writtenFiles,
 		CancellationToken ct)
 	{
 		IEnumerable<string> fileMatches = fileEnumeration.Where(f => Path.GetFileName(f) == uniqueFilename);
@@ -628,7 +627,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		if (results.Count > 1)
 		{
-			return await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, ct).ConfigureAwait(false);
+			return await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, writtenFiles, ct).ConfigureAwait(false);
 		}
 
 		if (results.Count == 1)
@@ -643,6 +642,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
 		IReadOnlyList<string> roots,
+		List<string> writtenFiles,
 		CancellationToken ct)
 	{
 		Dictionary<string, DateTime> oldestModificationDates = CalculateOldestModificationDates(results, uniqueFilename);
@@ -658,7 +658,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		return string.IsNullOrWhiteSpace(syncHash)
 			? null
-			: await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, ct).ConfigureAwait(false);
+			: await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, writtenFiles, ct).ConfigureAwait(false);
 	}
 
 	internal static Dictionary<string, DateTime> CalculateOldestModificationDates(
@@ -729,6 +729,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
 		IReadOnlyList<string> roots,
+		List<string> writtenFiles,
 		CancellationToken ct)
 	{
 		Collection<string> destinationDirectories = results
@@ -774,19 +775,24 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			string destinationFile = Path.Join(dir, fileName);
 			AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
 			File.Copy(sourceFile, destinationFile, overwrite: true);
+
+			// Recorded as each copy lands, so a copy that throws partway leaves only what was
+			// actually overwritten to be committed.
+			writtenFiles.Add(destinationFile);
 		}
 
 		return new SyncedFile(fileName, syncHash, sourceDir);
 	}
 
 	private static async Task<IReadOnlyList<BranchSwitch>> CommitChangedFilesAsync(
-		HashSet<string> commitDirectories,
-		HashSet<string> expandedFilesToSync,
+		IReadOnlyList<string> writtenFiles,
 		string branchName)
 	{
 		AnsiConsole.WriteLine();
 
-		Collection<string> commitFiles = await SyncGit.FindChangedFilesAsync(commitDirectories, expandedFilesToSync).ConfigureAwait(false);
+		// Only what the sync overwrote is committed. Every other scanned copy, in a group the user
+		// skipped or one already in sync, is left alone, since it may hold the user's own edit.
+		Collection<string> commitFiles = await SyncGit.FindChangedFilesAsync(writtenFiles).ConfigureAwait(false);
 
 		if (commitFiles.Count == 0)
 		{

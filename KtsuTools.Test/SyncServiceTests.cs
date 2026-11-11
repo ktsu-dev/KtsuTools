@@ -418,8 +418,7 @@ public class SyncServiceTests
 			repo.Write("shared.txt", "synced content");
 
 			Collection<string> changed = await SyncGit.FindChangedFilesAsync(
-				new HashSet<string>([linkedRoot], StringComparer.Ordinal),
-				new HashSet<string>(["shared.txt"], StringComparer.Ordinal)).ConfigureAwait(false);
+				[Path.Join(linkedRoot, "shared.txt")]).ConfigureAwait(false);
 
 			CollectionAssert.AreEqual(
 				new[] { Path.Join(linkedRoot, "shared.txt") },
@@ -755,6 +754,64 @@ public class SyncServiceTests
 				TempGitRepo.BranchOf(repoRoot),
 				"A run that commits nothing must leave every repo on its own branch.");
 		}
+	}
+
+	[TestMethod]
+	public async Task RunAsyncCommitsNothingWhenTheUserSkipsTheDifference()
+	{
+		using TempWorkspace workspace = TempWorkspace.WithIdenticalFileInRepos("shared.txt", "same content", "repo-a", "repo-b");
+		string editedRepo = workspace.RepoRoots[0];
+		string otherRepo = workspace.RepoRoots[1];
+		string editedTip = TestGit.HeadSha(editedRepo);
+		string otherTip = TestGit.HeadSha(otherRepo);
+
+		// The user's unfinished edit is what makes the two copies differ.
+		await File.WriteAllTextAsync(Path.Join(editedRepo, "shared.txt"), "work in progress").ConfigureAwait(false);
+		RecordingProcessService fake = new();
+		int exit = -1;
+
+		// Two hash groups, then "(skip)" last: down twice and Enter. The "y" and Enter answer the
+		// commit prompt, which only appears if sync wrongly finds the skipped copy to commit.
+		ConsoleKeyInfo[] keys =
+		[
+			ScriptedConsole.Key(ConsoleKey.DownArrow),
+			ScriptedConsole.Key(ConsoleKey.DownArrow),
+			ScriptedConsole.Key(ConsoleKey.Enter),
+			ScriptedConsole.Char('y'),
+			ScriptedConsole.Key(ConsoleKey.Enter),
+		];
+
+		string output = await ScriptedConsole.RunAsync(keys, async () =>
+			exit = await new SyncService(fake)
+				.RunAsync(workspace.Root, ["shared.txt"], autoPush: true, CancellationToken.None)
+				.ConfigureAwait(false)).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exit, output);
+		Assert.AreEqual(editedTip, TestGit.HeadSha(editedRepo), "A copy in a skipped group must not be committed.");
+		Assert.AreEqual(otherTip, TestGit.HeadSha(otherRepo), "Nothing was copied, so nothing is committed anywhere.");
+		Assert.AreEqual("work in progress", await File.ReadAllTextAsync(Path.Join(editedRepo, "shared.txt")).ConfigureAwait(false), "The user's edit must stay in their working tree.");
+		Assert.AreEqual(0, fake.Calls.Count, "Nothing was committed, so there is nothing to push.");
+		Assert.DoesNotContain("has outstanding changes", output, "A file sync never wrote must not be offered for commit.");
+	}
+
+	[TestMethod]
+	public async Task FindChangedFilesReportsOnlyTheFilesTheSyncWrote()
+	{
+		using TempGitRepo repo = TempGitRepo.WithInitialCommit();
+		string nested = Path.Join(repo.Root, "nested");
+		Directory.CreateDirectory(nested);
+		await File.WriteAllTextAsync(Path.Join(nested, "shared.txt"), "original content").ConfigureAwait(false);
+		_ = TestGit.Commit(repo.Root, "nested/shared.txt", "Add nested copy", "A Human");
+
+		// Both copies are modified, but only the nested one was written by the sync; the root copy
+		// holds the user's own edit.
+		repo.Write("shared.txt", "the user's edit");
+		string written = Path.Join(nested, "shared.txt");
+		await File.WriteAllTextAsync(written, "synced content").ConfigureAwait(false);
+
+		Collection<string> changed = await SyncGit.FindChangedFilesAsync([written]).ConfigureAwait(false);
+
+		CollectionAssert.AreEqual(new[] { written }, changed.ToArray(), "Only a file the sync overwrote may be committed.");
 	}
 
 	[TestMethod]
