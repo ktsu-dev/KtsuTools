@@ -44,6 +44,12 @@ public sealed record UnusedPackageReport
 	/// </summary>
 	public IReadOnlyList<string> OrphanedPackageVersions { get; init; } = [];
 
+	/// <summary>
+	/// Whether the <c>Directory.Packages.props</c> check was skipped because a single project was
+	/// scanned, which can't show that the repository's other projects leave an entry unused.
+	/// </summary>
+	public bool OrphanCheckSkipped { get; init; }
+
 	/// <summary>How many project files were scanned.</summary>
 	public int ProjectsScanned { get; init; }
 

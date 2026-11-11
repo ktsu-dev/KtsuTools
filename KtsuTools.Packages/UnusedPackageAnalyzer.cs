@@ -19,6 +19,7 @@ using System.Xml.Linq;
 internal static partial class UnusedPackageAnalyzer
 {
 	private const string IncludeAttribute = "Include";
+	private const string PackagesPropsFileName = "Directory.Packages.props";
 
 	/// <summary>
 	/// Identifier fragments that mark a package as build-time-only. Matched as a substring
@@ -113,12 +114,24 @@ internal static partial class UnusedPackageAnalyzer
 			findings.AddRange(AnalyzeProject(projectFile));
 		}
 
-		string? searchRoot = Directory.Exists(rootPath) ? rootPath : Path.GetDirectoryName(rootPath);
+		// A PackageVersion is only orphaned if no project it governs uses it, which a scan of one
+		// project can't tell: the repository's other projects were never read.
+		if (!Directory.Exists(rootPath))
+		{
+			string? projectDirectory = Path.GetDirectoryName(rootPath);
+
+			return new UnusedPackageReport
+			{
+				Findings = findings,
+				OrphanCheckSkipped = projectDirectory is not null && File.Exists(Path.Combine(projectDirectory, PackagesPropsFileName)),
+				ProjectsScanned = projectFiles.Count,
+			};
+		}
 
 		return new UnusedPackageReport
 		{
 			Findings = findings,
-			OrphanedPackageVersions = searchRoot is null ? [] : FindOrphanedPackageVersions(searchRoot, projectFiles),
+			OrphanedPackageVersions = FindOrphanedPackageVersions(rootPath),
 			ProjectsScanned = projectFiles.Count,
 		};
 	}
@@ -207,9 +220,9 @@ internal static partial class UnusedPackageAnalyzer
 	/// Finds <c>PackageVersion</c> entries under Central Package Management that no project
 	/// and no directory-level props/targets file references.
 	/// </summary>
-	private static List<string> FindOrphanedPackageVersions(string searchRoot, List<string> projectFiles)
+	private static List<string> FindOrphanedPackageVersions(string searchRoot)
 	{
-		string propsPath = Path.Combine(searchRoot, "Directory.Packages.props");
+		string propsPath = Path.Combine(searchRoot, PackagesPropsFileName);
 
 		if (!File.Exists(propsPath))
 		{
@@ -225,9 +238,12 @@ internal static partial class UnusedPackageAnalyzer
 
 		HashSet<string> referenced = new(StringComparer.OrdinalIgnoreCase);
 
+		// Every MSBuild project under the props file can consume its PackageVersions, not only the
+		// .csproj files the source analysis reads: an .fsproj or .vbproj counts as a user too.
 		// Directory.Build.props/.targets add references to every project beneath them, so a
-		// PackageVersion they consume is not orphaned even though no .csproj names it.
-		List<string> referencingFiles = [.. projectFiles];
+		// PackageVersion they consume is not orphaned even though no project names it.
+		List<string> referencingFiles = [.. Directory.EnumerateFiles(searchRoot, "*.*proj", SearchOption.AllDirectories)
+			.Where(file => file.EndsWith("proj", StringComparison.OrdinalIgnoreCase))];
 		referencingFiles.AddRange(Directory.EnumerateFiles(searchRoot, "Directory.Build.*", SearchOption.AllDirectories));
 
 		foreach (string file in referencingFiles)
