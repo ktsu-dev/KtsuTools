@@ -2,8 +2,11 @@
 
 namespace KtsuTools.Test;
 
+using ktsu.Semantics.Paths;
+
 using KtsuTools.FileExplorer;
 
+using Spectre.Console;
 using Spectre.Console.Testing;
 
 /// <summary>
@@ -66,6 +69,56 @@ public class FileExplorerPromptTests
 
 		Assert.AreEqual(NavigationKind.Directory, choice.Kind);
 		Assert.AreEqual("[Q] Quit", choice.Name);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task RunAsync_EntersGoesBackPicksADriveGoesUpAndQuits()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "ktsu-explorer-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(Path.Combine(root, "[old]"));
+		IAnsiConsole original = AnsiConsole.Console;
+
+		using TestConsole console = new();
+		console.Profile.Capabilities.Interactive = true;
+		console.Profile.Width = 200;
+
+		// root: [DIR] [old], [..] Go up, [D] Select drive, [Q] Quit
+		console.Input.PushKey(ConsoleKey.Enter); // enter [old]
+
+		// [old]: [..] Go up, [<] Back, [D] Select drive, [Q] Quit
+		console.Input.PushKey(ConsoleKey.DownArrow);
+		console.Input.PushKey(ConsoleKey.Enter); // back to root
+
+		// root again: select drive, then Cancel, which is the last drive choice
+		console.Input.PushKey(ConsoleKey.DownArrow);
+		console.Input.PushKey(ConsoleKey.DownArrow);
+		console.Input.PushKey(ConsoleKey.Enter);
+		console.Input.PushKey(ConsoleKey.End);
+		console.Input.PushKey(ConsoleKey.Enter);
+
+		// root again: go up, then quit from the parent, where Quit is the last choice
+		console.Input.PushKey(ConsoleKey.DownArrow);
+		console.Input.PushKey(ConsoleKey.Enter);
+		console.Input.PushKey(ConsoleKey.End);
+		console.Input.PushKey(ConsoleKey.Enter);
+
+		try
+		{
+			AnsiConsole.Console = console;
+			int exitCode = await new FileExplorerService().RunAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root)).ConfigureAwait(false);
+
+			Assert.AreEqual(0, exitCode);
+			StringAssert.Contains(console.Output, "[DIR] [old]");
+			StringAssert.Contains(console.Output, "[<] Back");
+			StringAssert.Contains(console.Output, "[Cancel]");
+			StringAssert.Contains(console.Output, Path.GetFileName(Path.GetDirectoryName(root)!));
+		}
+		finally
+		{
+			AnsiConsole.Console = original;
+			Directory.Delete(root, recursive: true);
+		}
 	}
 
 	[TestMethod]
