@@ -4,7 +4,6 @@ namespace KtsuTools.Merge;
 
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
-using System.Text;
 using DiffPlex;
 using DiffPlex.DiffBuilder;
 using DiffPlex.DiffBuilder.Model;
@@ -67,6 +66,18 @@ public class MergeService
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
 	public async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, DiffStyle diffStyle = DiffStyle.SideBySide, CancellationToken ct = default)
 #pragma warning restore CA1822
+		=> await RunMergeAsync(directory, filename, diffStyle, chooseBlock: null, ct).ConfigureAwait(false);
+
+	/// <summary>
+	/// Runs the merge operation, resolving each conflicting block with <paramref name="chooseBlock"/>.
+	/// </summary>
+	/// <param name="directory">Absolute root directory under which to search.</param>
+	/// <param name="filename">Glob pattern to match against filenames.</param>
+	/// <param name="diffStyle">How to render conflict diffs.</param>
+	/// <param name="chooseBlock">Picks the resolution for a block. <see langword="null"/> asks the user.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>Exit code (0 for success).</returns>
+	internal static async Task<int> RunMergeAsync(AbsoluteDirectoryPath directory, string filename, DiffStyle diffStyle, Func<string[], string[], BlockChoice>? chooseBlock, CancellationToken ct)
 	{
 		Ensure.NotNull(directory);
 		Ensure.NotNull(filename);
@@ -119,15 +130,15 @@ public class MergeService
 			FileSimilarity bestPair = FindMostSimilarPair(versions);
 			AnsiConsole.MarkupLine($"[blue]Merging most similar pair (similarity: {bestPair.SimilarityScore:P1})[/]");
 
-			// Read both files
-			string content1 = await File.ReadAllTextAsync(bestPair.FilePath1, ct).ConfigureAwait(false);
-			string content2 = await File.ReadAllTextAsync(bestPair.FilePath2, ct).ConfigureAwait(false);
+			// Read both files, keeping their encodings so nothing is lost on write-back
+			string content1 = (await EncodedText.ReadAsync(bestPair.FilePath1, ct).ConfigureAwait(false)).Text;
+			string content2 = (await EncodedText.ReadAsync(bestPair.FilePath2, ct).ConfigureAwait(false)).Text;
 
 			// Show diff
 			ShowDiff(content1, content2, bestPair.FilePath1, bestPair.FilePath2, diffStyle);
 
 			// Interactive merge
-			string mergedContent = InteractiveMerge(content1, content2);
+			string mergedContent = InteractiveMerge(content1, content2, chooseBlock);
 
 			// Update all files in both groups
 			FileGroup? group1 = versions.Find(g => g.FilePaths.Contains(bestPair.FilePath1));
@@ -137,9 +148,28 @@ public class MergeService
 			{
 				Collection<string> allPaths = [.. group1.FilePaths, .. group2.FilePaths];
 
+				// Encode the merged text for every file before writing any of them, each in its own
+				// encoding and with its own byte order mark, so a file that can't hold the result
+				// stops the merge instead of being half-written or silently corrupted.
+				List<(string Path, byte[] Bytes)> writes = [];
+
 				foreach (string filePath in allPaths)
 				{
-					await File.WriteAllTextAsync(filePath, mergedContent, ct).ConfigureAwait(false);
+					EncodedText stored = await EncodedText.ReadAsync(filePath, ct).ConfigureAwait(false);
+
+					if (!stored.TryEncode(mergedContent, out byte[] bytes))
+					{
+						string relativePath = Path.GetRelativePath(fullPath, filePath);
+						AnsiConsole.MarkupLine($"[red]Error: the merged content has characters that can't be written in the encoding of '{relativePath.EscapeMarkup()}' ({stored.Encoding.WebName.EscapeMarkup()}). No files were changed in this round.[/]");
+						return 1;
+					}
+
+					writes.Add((filePath, bytes));
+				}
+
+				foreach ((string filePath, byte[] bytes) in writes)
+				{
+					await File.WriteAllBytesAsync(filePath, bytes, ct).ConfigureAwait(false);
 					string relativePath = Path.GetRelativePath(fullPath, filePath);
 					AnsiConsole.MarkupLine($"  [green]Updated:[/] {relativePath.EscapeMarkup()}");
 				}
@@ -147,7 +177,7 @@ public class MergeService
 				versions.Remove(group1);
 				versions.Remove(group2);
 
-				string mergedHash = ComputeHash(mergedContent);
+				string mergedHash = ComputeHash(writes[0].Bytes);
 				versions.Add(new FileGroup(mergedHash, allPaths));
 			}
 		}
@@ -176,8 +206,14 @@ public class MergeService
 		foreach (string file in files)
 		{
 			ct.ThrowIfCancellationRequested();
-			string content = await File.ReadAllTextAsync(file, ct).ConfigureAwait(false);
-			string hash = ComputeHash(content);
+			// Hash the raw bytes, so files that differ only by byte order mark or encoding are told apart.
+			byte[] bytes = await File.ReadAllBytesAsync(file, ct).ConfigureAwait(false);
+			string hash = ComputeHash(bytes);
+
+			if (EncodedText.Decode(bytes).IsLegacy)
+			{
+				AnsiConsole.MarkupLine($"[yellow]Warning: '{file.EscapeMarkup()}' is not valid UTF-8. It is read as Latin-1 and written back in Latin-1.[/]");
+			}
 
 			if (groups.TryGetValue(hash, out FileGroup? group))
 			{
@@ -192,9 +228,8 @@ public class MergeService
 		return groups;
 	}
 
-	private static string ComputeHash(string content)
+	private static string ComputeHash(byte[] bytes)
 	{
-		byte[] bytes = Encoding.UTF8.GetBytes(content);
 		byte[] hashBytes = SHA256.HashData(bytes);
 		return Convert.ToHexString(hashBytes);
 	}
@@ -210,8 +245,8 @@ public class MergeService
 				string file1 = versions[i].FilePaths[0];
 				string file2 = versions[j].FilePaths[0];
 				double similarity = CalculateSimilarity(
-					File.ReadAllText(file1),
-					File.ReadAllText(file2));
+					EncodedText.Decode(File.ReadAllBytes(file1)).Text,
+					EncodedText.Decode(File.ReadAllBytes(file2)).Text);
 
 				if (best is null || similarity > best.SimilarityScore)
 				{
