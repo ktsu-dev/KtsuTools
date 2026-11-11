@@ -108,6 +108,55 @@ public class MemFragPidTests
 		Assert.Contains("Process has exited.", output);
 	}
 
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task ScanOfALiveProcessReportsItsMemoryAndReturnsZero()
+	{
+		int exitCode = -1;
+		string output = await ConsoleCapture.CaptureAsync(async () =>
+			exitCode = await new MemFragService().ScanAsync(Environment.ProcessId).ConfigureAwait(false)).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exitCode, output);
+		Assert.Contains($"PID {Environment.ProcessId}", output);
+		Assert.Contains("Working Set", output);
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task MonitorOfALiveProcessRunsUntilCancelledAndReturnsZero()
+	{
+		// Spectre's live display needs an ANSI console with a known height to redraw in place, which the
+		// plain capture console in ConsoleCapture doesn't provide.
+		using StringWriter writer = new();
+		IAnsiConsole originalConsole = AnsiConsole.Console;
+		IAnsiConsole console = AnsiConsole.Create(new AnsiConsoleSettings
+		{
+			Ansi = AnsiSupport.Yes,
+			ColorSystem = ColorSystemSupport.NoColors,
+			Interactive = InteractionSupport.No,
+			Out = new AnsiConsoleOutput(writer),
+		});
+		console.Profile.Width = 200;
+		console.Profile.Height = 200;
+
+		int exitCode = -1;
+		try
+		{
+			AnsiConsole.Console = console;
+			using CancellationTokenSource cts = new(TimeSpan.FromMilliseconds(300));
+			exitCode = await new MemFragService().MonitorAsync(Environment.ProcessId, 50, cts.Token).ConfigureAwait(false);
+		}
+		finally
+		{
+			AnsiConsole.Console = originalConsole;
+		}
+
+		string output = writer.ToString();
+		Assert.AreEqual(0, exitCode, output);
+		Assert.Contains("Memory Fragmentation Monitor", output);
+		Assert.Contains($"PID {Environment.ProcessId}", output);
+	}
+
 	private static void AssertRejectsPid(ValidationResult result)
 	{
 		Assert.IsFalse(result.Successful, "A PID of zero or below cannot name another process.");
