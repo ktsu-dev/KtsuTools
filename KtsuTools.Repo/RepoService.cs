@@ -552,43 +552,11 @@ public class RepoService(IGitService gitService, IProcessService processService,
 				{
 					ct.ThrowIfCancellationRequested();
 
-					string repoName = Path.GetFileName(repo);
-					task.Description = $"[green]Pulling {repoName.EscapeMarkup()}[/]";
+					task.Description = $"[green]Pulling {Path.GetFileName(repo).EscapeMarkup()}[/]";
 
-					// A local-only branch, a detached HEAD and a repository with no remote have nothing to
-					// pull from. git pull exits 1 for all three, which is not a pull failure, so skip them as
-					// repo fetch does.
-					ProcessResult upstream = await processService.RunAsync(GitCommand, "rev-parse --abbrev-ref --symbolic-full-name @{upstream}", repo, ct).ConfigureAwait(false);
-
-					if (upstream.ExitCode != 0)
+					if (!await PullRepositoryAsync(repo, ct).ConfigureAwait(false))
 					{
-						AnsiConsole.MarkupLine($"  [yellow]SKIP[/] {repoName.EscapeMarkup()} (no upstream)");
-						task.Increment(1);
-						continue;
-					}
-
-					ProcessResult result = await processService.RunAsync(GitCommand, "pull --all --autostash", repo, ct).ConfigureAwait(false);
-
-					bool hasError = result.Errors.Any(line =>
-						line.Contains("error:", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("fatal:", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("CONFLICT", StringComparison.Ordinal));
-
-					if (result.ExitCode != 0 || hasError)
-					{
-						AnsiConsole.MarkupLine($"  [red]FAIL[/] {repoName.EscapeMarkup()}");
-
-						// Show why, so the user doesn't have to cd into the repository to find out.
-						foreach (string line in result.Errors.Where(line => !string.IsNullOrWhiteSpace(line)).Take(2))
-						{
-							AnsiConsole.MarkupLine($"       [dim]{line.Trim().EscapeMarkup()}[/]");
-						}
-
 						failCount++;
-					}
-					else
-					{
-						AnsiConsole.MarkupLine($"  [green]OK[/]   {repoName.EscapeMarkup()}");
 					}
 
 					task.Increment(1);
@@ -600,6 +568,49 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			: "[green]Done. All repositories pulled successfully.[/]");
 
 		return failCount > 0 ? 1 : 0;
+	}
+
+	/// <summary>
+	/// Pulls one repository and prints its OK, SKIP or FAIL line.
+	/// </summary>
+	/// <returns>False only when a repository with an upstream failed to pull.</returns>
+	private async Task<bool> PullRepositoryAsync(string repo, CancellationToken ct)
+	{
+		string repoName = Path.GetFileName(repo);
+
+		// A local-only branch, a detached HEAD and a repository with no remote have nothing to
+		// pull from. git pull exits 1 for all three, which is not a pull failure, so skip them as
+		// repo fetch does.
+		ProcessResult upstream = await processService.RunAsync(GitCommand, "rev-parse --abbrev-ref --symbolic-full-name @{upstream}", repo, ct).ConfigureAwait(false);
+
+		if (upstream.ExitCode != 0)
+		{
+			AnsiConsole.MarkupLine($"  [yellow]SKIP[/] {repoName.EscapeMarkup()} (no upstream)");
+			return true;
+		}
+
+		ProcessResult result = await processService.RunAsync(GitCommand, "pull --all --autostash", repo, ct).ConfigureAwait(false);
+
+		bool hasError = result.Errors.Any(line =>
+			line.Contains("error:", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("fatal:", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("CONFLICT", StringComparison.Ordinal));
+
+		if (result.ExitCode == 0 && !hasError)
+		{
+			AnsiConsole.MarkupLine($"  [green]OK[/]   {repoName.EscapeMarkup()}");
+			return true;
+		}
+
+		AnsiConsole.MarkupLine($"  [red]FAIL[/] {repoName.EscapeMarkup()}");
+
+		// Show why, so the user doesn't have to cd into the repository to find out.
+		foreach (string line in result.Errors.Where(line => !string.IsNullOrWhiteSpace(line)).Take(2))
+		{
+			AnsiConsole.MarkupLine($"       [dim]{line.Trim().EscapeMarkup()}[/]");
+		}
+
+		return false;
 	}
 
 	/// <summary>
