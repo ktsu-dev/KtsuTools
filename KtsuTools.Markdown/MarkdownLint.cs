@@ -81,7 +81,7 @@ internal static partial class MarkdownLint
 				return true;
 			}
 
-			WarnConfigIgnored(configPath, "it holds null rather than an object");
+			WarnConfigIgnored(configPath, "it holds null rather than an object.");
 		}
 		catch (JsonException ex)
 		{

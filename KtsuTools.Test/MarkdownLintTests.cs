@@ -178,7 +178,7 @@ public class MarkdownLintTests
 			return Task.CompletedTask;
 		}).ConfigureAwait(false);
 
-		StringAssert.Contains(output, "holds null rather than an object");
+		StringAssert.Contains(output.ReplaceLineEndings(string.Empty), "holds null rather than an object.");
 	}
 
 	[TestMethod]
@@ -194,7 +194,7 @@ public class MarkdownLintTests
 			return Task.CompletedTask;
 		}).ConfigureAwait(false);
 
-		StringAssert.Contains(output, "ignoring markdownlint config");
+		StringAssert.Contains(output.ReplaceLineEndings(string.Empty), "ignoring markdownlint config");
 	}
 
 	private static string WriteConfig(string fileName, string content)
