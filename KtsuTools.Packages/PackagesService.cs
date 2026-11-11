@@ -120,25 +120,26 @@ public class PackagesService
 			AnsiConsole.MarkupLine("[yellow]Running in what-if mode. No changes will be made.[/]");
 		}
 
-		int updatedCount = 0;
-		int failedCount = 0;
-
-		await AnsiConsole.Progress()
+		(int updatedCount, int failedCount) = await AnsiConsole.Progress()
 			.AutoClear(false)
 			.HideCompleted(false)
 			.StartAsync(async progressContext =>
 			{
 				ProgressTask task = progressContext.AddTask("[green]Updating packages[/]", maxValue: projectFiles.Count);
+				int updatedTotal = 0;
+				int failedTotal = 0;
 
 				foreach (string projectFile in projectFiles)
 				{
 					ct.ThrowIfCancellationRequested();
 					string relativePath = Path.GetRelativePath(fullPath, projectFile);
 					(int updated, int failed) = await UpdateProjectPackagesAsync(projectFile, relativePath, whatIf, includePrerelease, ct).ConfigureAwait(false);
-					updatedCount += updated;
-					failedCount += failed;
+					updatedTotal += updated;
+					failedTotal += failed;
 					task.Increment(1);
 				}
+
+				return (updatedTotal, failedTotal);
 			}).ConfigureAwait(false);
 
 		AnsiConsole.MarkupLine($"[green]Done. {updatedCount} package(s) updated across {projectFiles.Count} project(s).[/]");
