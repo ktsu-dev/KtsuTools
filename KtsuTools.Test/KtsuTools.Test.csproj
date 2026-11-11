@@ -13,7 +13,7 @@
     <PackageReference Include="FluentAssertions" />
     <PackageReference Include="ktsu.Semantics.Paths" />
     <PackageReference Include="ktsu.Semantics.Strings" />
-    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="ktsu.Imaging" />
     <PackageReference Include="Spectre.Console.Testing" />
     <PackageReference Remove="Polyfill" />
   </ItemGroup>
