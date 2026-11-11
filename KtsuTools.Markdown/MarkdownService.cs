@@ -11,6 +11,14 @@ using Spectre.Console;
 /// </summary>
 public class MarkdownService
 {
+	private static readonly HashSet<string> SkippedDirectoryNames = new(StringComparer.OrdinalIgnoreCase)
+	{
+		".git",
+		"node_modules",
+		"bin",
+		"obj",
+	};
+
 	/// <summary>
 	/// Recursively finds and cleans all markdown files in the specified directory.
 	/// </summary>
@@ -24,50 +32,13 @@ public class MarkdownService
 #pragma warning restore CA1822, S2325
 	{
 		Ensure.NotNull(directoryPath);
-		string fullPath = directoryPath.ToString();
-
-		if (!Directory.Exists(fullPath))
-		{
-			AnsiConsole.MarkupLine($"[red]Error: Directory '{fullPath.EscapeMarkup()}' does not exist.[/]");
-			return 0;
-		}
-
-		string[] markdownFiles = Directory.GetFiles(fullPath, "*.md", SearchOption.AllDirectories);
-
-		if (markdownFiles.Length == 0)
-		{
-			AnsiConsole.MarkupLine("[yellow]No markdown files found.[/]");
-			return 0;
-		}
-
-		int modifiedCount = 0;
-
-		await AnsiConsole.Progress()
-			.AutoClear(false)
-			.HideCompleted(false)
-			.StartAsync(async progressContext =>
-			{
-				ProgressTask task = progressContext.AddTask("[green]Cleaning markdown files[/]", maxValue: markdownFiles.Length);
-
-				foreach (string filePath in markdownFiles)
-				{
-					ct.ThrowIfCancellationRequested();
-
-					bool changed = await ProcessFileForCleanAsync(filePath, applyLinting, standardizeLineEndings, ct).ConfigureAwait(false);
-
-					if (changed)
-					{
-						modifiedCount++;
-						string relativePath = Path.GetRelativePath(fullPath, filePath);
-						AnsiConsole.MarkupLine($"  [blue]Updated:[/] {relativePath.EscapeMarkup()}");
-					}
-
-					task.Increment(1);
-				}
-			}).ConfigureAwait(false);
-
-		AnsiConsole.MarkupLine($"[green]Cleaned {modifiedCount} of {markdownFiles.Length} files.[/]");
-		return modifiedCount;
+		return await ProcessMarkdownFilesAsync(
+			directoryPath.ToString(),
+			"Cleaning",
+			"Updated",
+			"Cleaned",
+			(filePath, token) => ProcessFileForCleanAsync(filePath, applyLinting, standardizeLineEndings, token),
+			ct).ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -81,17 +52,37 @@ public class MarkdownService
 #pragma warning restore CA1822, S2325
 	{
 		Ensure.NotNull(directoryPath);
-		string fullPath = directoryPath.ToString();
+		return await ProcessMarkdownFilesAsync(directoryPath.ToString(), "Linting", "Linted", "Linted", LintFileAsync, ct).ConfigureAwait(false);
+	}
 
+	/// <summary>
+	/// Runs <paramref name="processFile"/> over every markdown file <see cref="FindMarkdownFiles"/> finds
+	/// below <paramref name="fullPath"/>, with a progress bar, and reports each file it changed.
+	/// </summary>
+	/// <param name="fullPath">The root directory to scan.</param>
+	/// <param name="taskVerb">The progress bar's verb, such as "Linting".</param>
+	/// <param name="changedLabel">The label for each changed file, such as "Linted".</param>
+	/// <param name="summaryVerb">The summary's verb, such as "Linted".</param>
+	/// <param name="processFile">Processes one file and returns whether it changed.</param>
+	/// <param name="ct">Cancellation token.</param>
+	/// <returns>The number of files that were modified.</returns>
+	private static async Task<int> ProcessMarkdownFilesAsync(
+		string fullPath,
+		string taskVerb,
+		string changedLabel,
+		string summaryVerb,
+		Func<string, CancellationToken, Task<bool>> processFile,
+		CancellationToken ct)
+	{
 		if (!Directory.Exists(fullPath))
 		{
 			AnsiConsole.MarkupLine($"[red]Error: Directory '{fullPath.EscapeMarkup()}' does not exist.[/]");
 			return 0;
 		}
 
-		string[] markdownFiles = Directory.GetFiles(fullPath, "*.md", SearchOption.AllDirectories);
+		List<string> markdownFiles = FindMarkdownFiles(fullPath);
 
-		if (markdownFiles.Length == 0)
+		if (markdownFiles.Count == 0)
 		{
 			AnsiConsole.MarkupLine("[yellow]No markdown files found.[/]");
 			return 0;
@@ -104,27 +95,73 @@ public class MarkdownService
 			.HideCompleted(false)
 			.StartAsync(async progressContext =>
 			{
-				ProgressTask task = progressContext.AddTask("[green]Linting markdown files[/]", maxValue: markdownFiles.Length);
+				ProgressTask task = progressContext.AddTask($"[green]{taskVerb} markdown files[/]", maxValue: markdownFiles.Count);
 
 				foreach (string filePath in markdownFiles)
 				{
 					ct.ThrowIfCancellationRequested();
 
-					bool changed = await LintFileAsync(filePath, ct).ConfigureAwait(false);
+					bool changed = await processFile(filePath, ct).ConfigureAwait(false);
 
 					if (changed)
 					{
 						modifiedCount++;
 						string relativePath = Path.GetRelativePath(fullPath, filePath);
-						AnsiConsole.MarkupLine($"  [blue]Linted:[/] {relativePath.EscapeMarkup()}");
+						AnsiConsole.MarkupLine($"  [blue]{changedLabel}:[/] {relativePath.EscapeMarkup()}");
 					}
 
 					task.Increment(1);
 				}
 			}).ConfigureAwait(false);
 
-		AnsiConsole.MarkupLine($"[green]Linted {modifiedCount} of {markdownFiles.Length} files.[/]");
+		AnsiConsole.MarkupLine($"[green]{summaryVerb} {modifiedCount} of {markdownFiles.Count} files.[/]");
 		return modifiedCount;
+	}
+
+	/// <summary>
+	/// Finds the markdown files below <paramref name="root"/> that belong to it. Skips <c>.git</c>,
+	/// <c>node_modules</c>, <c>bin</c> and <c>obj</c>, and any subdirectory holding a <c>.git</c>
+	/// entry, which is a nested repository or a submodule. Directories that can't be read are skipped.
+	/// </summary>
+	/// <param name="root">The directory to search.</param>
+	/// <returns>The full paths of the markdown files, in ordinal order.</returns>
+	internal static List<string> FindMarkdownFiles(string root)
+	{
+		EnumerationOptions options = new()
+		{
+			IgnoreInaccessible = true,
+			RecurseSubdirectories = false,
+			AttributesToSkip = 0,
+		};
+
+		List<string> files = [];
+		Stack<string> pending = new();
+		pending.Push(root);
+
+		while (pending.Count > 0)
+		{
+			string directory = pending.Pop();
+			files.AddRange(Directory.EnumerateFiles(directory, "*.md", options));
+
+			foreach (string subdirectory in Directory.EnumerateDirectories(directory, "*", options))
+			{
+				if (!IsSkippedDirectory(subdirectory))
+				{
+					pending.Push(subdirectory);
+				}
+			}
+		}
+
+		files.Sort(StringComparer.Ordinal);
+		return files;
+	}
+
+	private static bool IsSkippedDirectory(string directory)
+	{
+		string name = Path.GetFileName(directory);
+		return SkippedDirectoryNames.Contains(name)
+			|| Directory.Exists(Path.Combine(directory, ".git"))
+			|| File.Exists(Path.Combine(directory, ".git"));
 	}
 
 	/// <summary>
