@@ -488,7 +488,9 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			task.Description = $"[green]Building {slnName.EscapeMarkup()}[/]";
 		}
 
-		ProcessResult buildResult = await processService.RunAsync(DotnetCommand, "build --nologo -v q", slnDir, ct).ConfigureAwait(false);
+		// Name the solution: dotnet stops with MSB1011 in a folder holding more than one project or
+		// solution file, such as a Foo.sln left beside the Foo.slnx that replaced it.
+		ProcessResult buildResult = await processService.RunAsync(DotnetCommand, ["build", sln, "--nologo", "-v", "q"], slnDir, ct).ConfigureAwait(false);
 
 		if (buildResult.ExitCode != 0)
 		{
@@ -502,7 +504,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			return;
 		}
 
-		ProcessResult testResult = await processService.RunAsync(DotnetCommand, "test --nologo --no-build -v q", slnDir, ct).ConfigureAwait(false);
+		ProcessResult testResult = await processService.RunAsync(DotnetCommand, ["test", sln, "--nologo", "--no-build", "-v", "q"], slnDir, ct).ConfigureAwait(false);
 
 		lock (consoleLock)
 		{
@@ -552,24 +554,11 @@ public class RepoService(IGitService gitService, IProcessService processService,
 				{
 					ct.ThrowIfCancellationRequested();
 
-					string repoName = Path.GetFileName(repo);
-					task.Description = $"[green]Pulling {repoName.EscapeMarkup()}[/]";
+					task.Description = $"[green]Pulling {Path.GetFileName(repo).EscapeMarkup()}[/]";
 
-					ProcessResult result = await processService.RunAsync(GitCommand, "pull --all --autostash", repo, ct).ConfigureAwait(false);
-
-					bool hasError = result.Errors.Any(line =>
-						line.Contains("error:", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("fatal:", StringComparison.OrdinalIgnoreCase) ||
-						line.Contains("CONFLICT", StringComparison.Ordinal));
-
-					if (result.ExitCode != 0 || hasError)
+					if (!await PullRepositoryAsync(repo, ct).ConfigureAwait(false))
 					{
-						AnsiConsole.MarkupLine($"  [red]FAIL[/] {repoName.EscapeMarkup()}");
 						failCount++;
-					}
-					else
-					{
-						AnsiConsole.MarkupLine($"  [green]OK[/]   {repoName.EscapeMarkup()}");
 					}
 
 					task.Increment(1);
@@ -581,6 +570,49 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			: "[green]Done. All repositories pulled successfully.[/]");
 
 		return failCount > 0 ? 1 : 0;
+	}
+
+	/// <summary>
+	/// Pulls one repository and prints its OK, SKIP or FAIL line.
+	/// </summary>
+	/// <returns>False only when a repository with an upstream failed to pull.</returns>
+	private async Task<bool> PullRepositoryAsync(string repo, CancellationToken ct)
+	{
+		string repoName = Path.GetFileName(repo);
+
+		// A local-only branch, a detached HEAD and a repository with no remote have nothing to
+		// pull from. git pull exits 1 for all three, which is not a pull failure, so skip them as
+		// repo fetch does.
+		ProcessResult upstream = await processService.RunAsync(GitCommand, "rev-parse --abbrev-ref --symbolic-full-name @{upstream}", repo, ct).ConfigureAwait(false);
+
+		if (upstream.ExitCode != 0)
+		{
+			AnsiConsole.MarkupLine($"  [yellow]SKIP[/] {repoName.EscapeMarkup()} (no upstream)");
+			return true;
+		}
+
+		ProcessResult result = await processService.RunAsync(GitCommand, "pull --all --autostash", repo, ct).ConfigureAwait(false);
+
+		bool hasError = result.Errors.Any(line =>
+			line.Contains("error:", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("fatal:", StringComparison.OrdinalIgnoreCase) ||
+			line.Contains("CONFLICT", StringComparison.Ordinal));
+
+		if (result.ExitCode == 0 && !hasError)
+		{
+			AnsiConsole.MarkupLine($"  [green]OK[/]   {repoName.EscapeMarkup()}");
+			return true;
+		}
+
+		AnsiConsole.MarkupLine($"  [red]FAIL[/] {repoName.EscapeMarkup()}");
+
+		// Show why, so the user doesn't have to cd into the repository to find out.
+		foreach (string line in result.Errors.Where(line => !string.IsNullOrWhiteSpace(line)).Take(2))
+		{
+			AnsiConsole.MarkupLine($"       [dim]{line.Trim().EscapeMarkup()}[/]");
+		}
+
+		return false;
 	}
 
 	/// <summary>
@@ -989,7 +1021,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 	/// </param>
 	/// <param name="args">
 	/// The git command line, already split into arguments, such as <c>["fetch", "--prune"]</c>.
-	/// Arguments containing spaces are quoted before they reach git.
+	/// Each element reaches git as exactly one argument, whatever spaces, quotes or backslashes it holds.
 	/// </param>
 	/// <param name="color">
 	/// When true, forces git to colorize even though its output is redirected. Pass false for output
@@ -1009,7 +1041,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 		if (args.Count == 0)
 		{
-			ErrorDisplay.ShowError("Specify a git command, for example: ktsu git status");
+			ErrorDisplay.ShowError("Specify a git command to run, for example 'status'.");
 			return 1;
 		}
 
@@ -1018,7 +1050,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			return nothingToRun;
 		}
 
-		string arguments = BuildGitArguments(args, color);
+		IReadOnlyList<string> arguments = BuildGitArguments(args, color);
 		int failCount = 0;
 
 		foreach (string repo in sortedRepos)
@@ -1039,7 +1071,7 @@ public class RepoService(IGitService gitService, IProcessService processService,
 		return failCount > 0 ? 1 : 0;
 	}
 
-	private static string BuildGitArguments(IReadOnlyList<string> args, bool color)
+	private static List<string> BuildGitArguments(IReadOnlyList<string> args, bool color)
 	{
 		List<string> parts = [];
 
@@ -1053,16 +1085,10 @@ public class RepoService(IGitService gitService, IProcessService processService,
 
 		parts.AddRange(args);
 
-		return string.Join(' ', parts.Select(QuoteIfNeeded));
-	}
-
-	private static string QuoteIfNeeded(string arg)
-	{
-		bool needsQuotes = arg.Length == 0 || arg.Any(char.IsWhiteSpace) || arg.Contains('"', StringComparison.Ordinal);
-
-		return needsQuotes
-			? $"\"{arg.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
-			: arg;
+		// Passed as a list so each element reaches git as exactly one argument. Hand-quoting into a
+		// single string didn't double the backslashes before a closing quote, so `.\My Folder\`
+		// escaped its own quote and merged with the arguments after it.
+		return parts;
 	}
 
 	private static void WriteRepoOutput(string repoName, ProcessResult result)
@@ -1265,7 +1291,8 @@ public class RepoService(IGitService gitService, IProcessService processService,
 			List<string> allSlnFiles = [.. Directory.EnumerateFiles(directory, "*.sln*", SearchOption.AllDirectories)
 				.Where(IsSolutionFile)];
 
-			// 'dotnet build' in a folder with two solutions is ambiguous, so keep one per folder, preferring .slnx.
+			// A folder's .sln and .slnx usually list the same projects, so keep one per folder, preferring
+			// .slnx, rather than build and test those projects twice.
 			List<string> onePerDirectory = [.. allSlnFiles
 				.GroupBy(sln => Path.GetDirectoryName(sln) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
 				.Select(group => group

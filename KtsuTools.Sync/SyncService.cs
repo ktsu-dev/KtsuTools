@@ -198,15 +198,13 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		AnsiConsole.MarkupLine($"[bold]Found matches:[/] {string.Join(", ", uniqueFilenames).EscapeMarkup()}");
 
 		HashSet<string> commitDirectories = [];
-		HashSet<string> expandedFilesToSync = [];
+		List<string> writtenFiles = [];
 		List<SyncedFile> syncedFiles = [];
-
-		expandedFilesToSync.UnionWith(uniqueFilenames);
 
 		foreach (string uniqueFilename in uniqueFilenames)
 		{
 			ct.ThrowIfCancellationRequested();
-			SyncedFile? synced = await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, ct).ConfigureAwait(false);
+			SyncedFile? synced = await ProcessUniqueFilenameAsync(uniqueFilename, fileEnumeration, scanRoots, commitDirectories, writtenFiles, ct).ConfigureAwait(false);
 			if (synced is not null)
 			{
 				syncedFiles.Add(synced);
@@ -214,12 +212,12 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		}
 
 		IReadOnlyList<BranchSwitch> branchSwitches =
-			await CommitChangedFilesAsync(commitDirectories, expandedFilesToSync, branchName).ConfigureAwait(false);
+			await CommitChangedFilesAsync(writtenFiles, branchName).ConfigureAwait(false);
 
-		IReadOnlyList<string> pushed = [];
+		PushResult push = PushResult.None;
 		try
 		{
-			pushed = await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
+			push = await PushToRemoteAsync(commitDirectories, autoPush, branchName, branchSwitches, ct).ConfigureAwait(false);
 		}
 		finally
 		{
@@ -228,12 +226,46 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		// Opened after the branches are restored, since it only reads the remote and the working
 		// tree should be back where the user left it regardless of how the pull requests go.
+		int failedPullRequests = 0;
 		if (openPullRequest)
 		{
-			await OpenPullRequestsAsync(pushed, branchName, branchSwitches, syncedFiles, ct).ConfigureAwait(false);
+			failedPullRequests = await OpenPullRequestsAsync(push.Pushed, branchName, branchSwitches, syncedFiles, ct).ConfigureAwait(false);
+		}
+
+		// Unattended runs (--auto-push, saved configs) rely on the exit code, so a push or pull
+		// request that failed must not be reported as success after the commits were made.
+		if (push.Failed.Count > 0 || failedPullRequests > 0)
+		{
+			AnsiConsole.WriteLine();
+			if (push.Failed.Count > 0)
+			{
+				AnsiConsole.MarkupLine($"[red]Failed to push {push.Failed.Count} repo(s); their commits are still local:[/]");
+				foreach (string failed in push.Failed)
+				{
+					AnsiConsole.MarkupLine($"  [red]{failed.EscapeMarkup()}[/]");
+				}
+			}
+
+			if (failedPullRequests > 0)
+			{
+				AnsiConsole.MarkupLine($"[red]Failed to open {failedPullRequests} pull request(s).[/]");
+			}
+
+			return 1;
 		}
 
 		return 0;
+	}
+
+	/// <summary>
+	/// The repositories a push phase pushed, and those it tried to push and could not.
+	/// </summary>
+	/// <param name="Pushed">Working directories of the repositories that were pushed.</param>
+	/// <param name="Failed">Working directories of the repositories whose pull or push failed.</param>
+	internal sealed record PushResult(IReadOnlyList<string> Pushed, IReadOnlyList<string> Failed)
+	{
+		/// <summary>Gets the result of a push phase that pushed nothing.</summary>
+		public static PushResult None { get; } = new([], []);
 	}
 
 	/// <summary>
@@ -244,7 +276,8 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// <param name="branchSwitches">The recorded switches, which carry the branch each repo was on before the sync.</param>
 	/// <param name="syncedFiles">The files the sync copied.</param>
 	/// <param name="ct">Cancellation token.</param>
-	internal async Task OpenPullRequestsAsync(
+	/// <returns>The number of repositories in which a pull request could not be opened.</returns>
+	internal async Task<int> OpenPullRequestsAsync(
 		IReadOnlyList<string> pushedRepoRoots,
 		string branchName,
 		IReadOnlyList<BranchSwitch> branchSwitches,
@@ -253,19 +286,19 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	{
 		if (pushedRepoRoots.Count == 0)
 		{
-			return;
+			return 0;
 		}
 
 		if (gitHubService is null)
 		{
 			AnsiConsole.MarkupLine("[yellow]Skipping pull requests: no GitHub service is available.[/]");
-			return;
+			return 0;
 		}
 
 		Dictionary<string, string> baseBranchByRepoRoot = BaseBranchesFor(branchSwitches);
 
 		SyncPullRequestOpener opener = new(processService, gitHubService);
-		await opener.OpenAsync(pushedRepoRoots, branchName, baseBranchByRepoRoot, syncedFiles, ct).ConfigureAwait(false);
+		return await opener.OpenAsync(pushedRepoRoots, branchName, baseBranchByRepoRoot, syncedFiles, ct).ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -411,11 +444,18 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// Whether a matched file sits under an excluded directory. An exclusion naming a path excludes
 	/// that directory alone; one naming a bare directory excludes every directory of that name.
 	/// </summary>
+	/// <remarks>
+	/// A bare name is matched only against the directories between the scan root and the file, so a
+	/// folder of that name above the workspace (<c>/x/build/workspace</c> with <c>--exclude build</c>)
+	/// doesn't exclude everything in it.
+	/// </remarks>
 	/// <param name="filePath">Absolute path of the matched file.</param>
+	/// <param name="root">The scan root the file was found under.</param>
 	/// <param name="exclusions">The normalized exclusion entries.</param>
 	/// <returns>True when the file is excluded.</returns>
-	internal static bool IsExcluded(string filePath, IReadOnlyList<string> exclusions)
+	internal static bool IsExcluded(string filePath, string root, IReadOnlyList<string> exclusions)
 	{
+		Ensure.NotNull(root);
 		Ensure.NotNull(exclusions);
 
 		if (exclusions.Count == 0)
@@ -424,7 +464,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		}
 
 		string fullPath = Path.GetFullPath(filePath);
-		string[] directorySegments = DirectorySegmentsOf(fullPath);
+		string[] directorySegments = DirectorySegmentsBelow(NormalizeRoot(root), fullPath);
 
 		foreach (string trimmed in exclusions.Select(Path.TrimEndingDirectorySeparator))
 		{
@@ -498,7 +538,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	/// <param name="exclusions">The normalized exclusion entries.</param>
 	/// <returns>True when the file belongs in the scan.</returns>
 	private static bool IsScannable(string file, string root, IReadOnlyList<string> exclusions) =>
-		!IsExcluded(file, exclusions)
+		!IsExcluded(file, root, exclusions)
 		&& !IsRepoNested(AbsoluteFilePath.Create<AbsoluteFilePath>(file).AbsoluteDirectoryPath, root);
 
 	/// <summary>
@@ -537,12 +577,18 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	private static bool HasDirectorySeparator(string value) =>
 		value.Contains(Path.DirectorySeparatorChar) || value.Contains(Path.AltDirectorySeparatorChar);
 
-	private static string[] DirectorySegmentsOf(string filePath)
+	private static string[] DirectorySegmentsBelow(string root, string filePath)
 	{
 		string? directory = Path.GetDirectoryName(filePath);
-		return string.IsNullOrEmpty(directory)
+		if (string.IsNullOrEmpty(directory))
+		{
+			return [];
+		}
+
+		string relative = Path.GetRelativePath(root, directory);
+		return relative == "."
 			? []
-			: directory.Split(
+			: relative.Split(
 				[Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
 				StringSplitOptions.RemoveEmptyEntries);
 	}
@@ -552,6 +598,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		Collection<string> fileEnumeration,
 		IReadOnlyList<string> roots,
 		HashSet<string> commitDirectories,
+		List<string> writtenFiles,
 		CancellationToken ct)
 	{
 		IEnumerable<string> fileMatches = fileEnumeration.Where(f => Path.GetFileName(f) == uniqueFilename);
@@ -580,7 +627,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		if (results.Count > 1)
 		{
-			return await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, ct).ConfigureAwait(false);
+			return await HandleMultipleHashGroupsAsync(results, uniqueFilename, roots, writtenFiles, ct).ConfigureAwait(false);
 		}
 
 		if (results.Count == 1)
@@ -595,6 +642,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
 		IReadOnlyList<string> roots,
+		List<string> writtenFiles,
 		CancellationToken ct)
 	{
 		Dictionary<string, DateTime> oldestModificationDates = CalculateOldestModificationDates(results, uniqueFilename);
@@ -610,7 +658,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		return string.IsNullOrWhiteSpace(syncHash)
 			? null
-			: await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, ct).ConfigureAwait(false);
+			: await SyncFilesToHashAsync(syncHash, sortedResults, uniqueFilename, roots, writtenFiles, ct).ConfigureAwait(false);
 	}
 
 	internal static Dictionary<string, DateTime> CalculateOldestModificationDates(
@@ -681,6 +729,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 		Dictionary<string, Collection<string>> results,
 		string uniqueFilename,
 		IReadOnlyList<string> roots,
+		List<string> writtenFiles,
 		CancellationToken ct)
 	{
 		Collection<string> destinationDirectories = results
@@ -726,19 +775,24 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			string destinationFile = Path.Join(dir, fileName);
 			AnsiConsole.MarkupLine($"[green]Copying:[/] {DisplayPath(sourceDir, roots).EscapeMarkup()} -> {DisplayPath(dir, roots).EscapeMarkup()}");
 			File.Copy(sourceFile, destinationFile, overwrite: true);
+
+			// Recorded as each copy lands, so a copy that throws partway leaves only what was
+			// actually overwritten to be committed.
+			writtenFiles.Add(destinationFile);
 		}
 
 		return new SyncedFile(fileName, syncHash, sourceDir);
 	}
 
 	private static async Task<IReadOnlyList<BranchSwitch>> CommitChangedFilesAsync(
-		HashSet<string> commitDirectories,
-		HashSet<string> expandedFilesToSync,
+		IReadOnlyList<string> writtenFiles,
 		string branchName)
 	{
 		AnsiConsole.WriteLine();
 
-		Collection<string> commitFiles = await SyncGit.FindChangedFilesAsync(commitDirectories, expandedFilesToSync).ConfigureAwait(false);
+		// Only what the sync overwrote is committed. Every other scanned copy, in a group the user
+		// skipped or one already in sync, is left alone, since it may hold the user's own edit.
+		Collection<string> commitFiles = await SyncGit.FindChangedFilesAsync(writtenFiles).ConfigureAwait(false);
 
 		if (commitFiles.Count == 0)
 		{
@@ -801,13 +855,22 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 	internal static async Task<IReadOnlyList<BranchSwitch>> SwitchReposToBranchAsync(IEnumerable<string> commitFiles, string branchName)
 	{
 		List<BranchSwitch> branchSwitches = [];
-
-		foreach (string repoRoot in await SyncGit.RepoRootsForAsync(commitFiles).ConfigureAwait(false))
+		List<(string File, string? Root)> fileRoots = [];
+		foreach (string filePath in commitFiles)
 		{
+			fileRoots.Add((filePath, await SyncGit.RepoRootForAsync(filePath).ConfigureAwait(false)));
+		}
+
+		foreach (string repoRoot in await SyncGit.RepoRootsForAsync(fileRoots.Select(f => f.File)).ConfigureAwait(false))
+		{
+			List<string> repoFiles = [.. fileRoots
+				.Where(f => string.Equals(f.Root, repoRoot, StringComparison.Ordinal))
+				.Select(f => f.File)];
+
 			BranchSwitch? branchSwitch;
 			try
 			{
-				branchSwitch = await SyncGit.SwitchToSyncBranchAsync(repoRoot, branchName).ConfigureAwait(false);
+				branchSwitch = await SyncGit.SwitchToSyncBranchAsync(repoRoot, branchName, repoFiles).ConfigureAwait(false);
 			}
 			catch (GitException ex)
 			{
@@ -863,7 +926,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			? "push"
 			: $"push --set-upstream origin {branchName}";
 
-	internal async Task<IReadOnlyList<string>> PushToRemoteAsync(
+	internal async Task<PushResult> PushToRemoteAsync(
 		HashSet<string> commitDirectories,
 		bool autoPush,
 		string branchName,
@@ -878,7 +941,7 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		if (pushDirectories.Count == 0)
 		{
-			return [];
+			return PushResult.None;
 		}
 
 		AnsiConsole.WriteLine();
@@ -895,11 +958,12 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 
 		if (!confirmed)
 		{
-			return [];
+			return PushResult.None;
 		}
 
 		AnsiConsole.WriteLine();
 		List<string> pushed = [];
+		List<string> failed = [];
 		foreach (string dir in pushDirectories)
 		{
 			ct.ThrowIfCancellationRequested();
@@ -907,9 +971,13 @@ public class SyncService(IProcessService processService, IGitHubService? gitHubS
 			{
 				pushed.Add(dir);
 			}
+			else
+			{
+				failed.Add(dir);
+			}
 		}
 
-		return pushed;
+		return new PushResult(pushed, failed);
 	}
 
 	internal static async Task<Collection<string>> FindPushableBranchDirectoriesAsync(IReadOnlyList<BranchSwitch> branchSwitches)

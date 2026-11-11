@@ -47,6 +47,53 @@ public record FileSystemEntry
 	};
 }
 
+/// <summary>What a navigation choice does.</summary>
+internal enum NavigationKind
+{
+	/// <summary>Enter the named subdirectory.</summary>
+	Directory,
+
+	/// <summary>Go to the parent directory.</summary>
+	GoUp,
+
+	/// <summary>Go back in the navigation history.</summary>
+	Back,
+
+	/// <summary>Pick a drive.</summary>
+	SelectDrive,
+
+	/// <summary>Leave the explorer.</summary>
+	Quit,
+}
+
+/// <summary>
+/// One entry in the navigation prompt. The prompt dispatches on <see cref="Kind"/>, so a directory
+/// whose name looks like a command (for example <c>[Q] Quit</c>) is still entered, not obeyed.
+/// </summary>
+/// <param name="Kind">What the choice does.</param>
+/// <param name="Name">The directory name, for <see cref="NavigationKind.Directory"/>.</param>
+internal sealed record NavigationChoice(NavigationKind Kind, string? Name = null)
+{
+	/// <summary>Gets the text shown in the prompt, escaped so Spectre does not read it as markup.</summary>
+	internal string Display => (Kind switch
+	{
+		NavigationKind.Directory => $"[DIR] {Name}",
+		NavigationKind.GoUp => "[..] Go up",
+		NavigationKind.Back => "[<] Back",
+		NavigationKind.SelectDrive => "[D] Select drive",
+		_ => "[Q] Quit",
+	}).EscapeMarkup();
+}
+
+/// <summary>One entry in the drive prompt; a null <paramref name="RootPath"/> is Cancel.</summary>
+/// <param name="RootPath">The drive's root directory, or null for Cancel.</param>
+/// <param name="Label">The drive's volume label.</param>
+internal sealed record DriveChoice(string? RootPath, string Label)
+{
+	/// <summary>Gets the text shown in the prompt, escaped so Spectre does not read it as markup.</summary>
+	internal string Display => (RootPath is null ? "[Cancel]" : $"{RootPath} ({Label})").EscapeMarkup();
+}
+
 /// <summary>
 /// TUI file explorer service.
 /// </summary>
@@ -88,9 +135,9 @@ public class FileExplorerService
 			List<FileSystemEntry> entries = GetDirectoryContents(currentPath, showHidden);
 			RenderDirectoryTable(entries, showSizes);
 
-			string choice = PromptNavigation(entries);
+			NavigationChoice choice = PromptNavigation(AnsiConsole.Console, entries);
 
-			if (choice == "[Q] Quit")
+			if (choice.Kind == NavigationKind.Quit)
 			{
 				break;
 			}
@@ -137,30 +184,31 @@ public class FileExplorerService
 		AnsiConsole.MarkupLine($"[dim]{entries.Count(e => e.IsDirectory)} dir(s), {entries.Count(e => !e.IsDirectory)} file(s)[/]");
 	}
 
-	private string PromptNavigation(List<FileSystemEntry> entries)
+	internal NavigationChoice PromptNavigation(IAnsiConsole console, List<FileSystemEntry> entries)
 	{
-		List<string> choices = [.. entries.Where(e => e.IsDirectory).Select(e => $"[DIR] {e.Name}")];
+		List<NavigationChoice> choices = [.. entries.Where(e => e.IsDirectory).Select(e => new NavigationChoice(NavigationKind.Directory, e.Name))];
 
-		choices.Add("[..] Go up");
+		choices.Add(new(NavigationKind.GoUp));
 
 		if (historyIndex > 0)
 		{
-			choices.Add("[<] Back");
+			choices.Add(new(NavigationKind.Back));
 		}
 
-		choices.Add("[D] Select drive");
-		choices.Add("[Q] Quit");
+		choices.Add(new(NavigationKind.SelectDrive));
+		choices.Add(new(NavigationKind.Quit));
 
-		return AnsiConsole.Prompt(
-			new SelectionPrompt<string>()
+		return console.Prompt(
+			new SelectionPrompt<NavigationChoice>()
 				.Title("Navigate:")
 				.PageSize(20)
+				.UseConverter(c => c.Display)
 				.AddChoices(choices));
 	}
 
-	private string HandleNavigationChoice(string choice, string currentPath)
+	private string HandleNavigationChoice(NavigationChoice choice, string currentPath)
 	{
-		if (choice == "[..] Go up")
+		if (choice.Kind == NavigationKind.GoUp)
 		{
 			string? parent = Directory.GetParent(currentPath)?.FullName;
 			if (parent is not null)
@@ -169,12 +217,12 @@ public class FileExplorerService
 				return parent;
 			}
 		}
-		else if (choice == "[<] Back" && historyIndex > 0)
+		else if (choice.Kind == NavigationKind.Back && historyIndex > 0)
 		{
 			historyIndex--;
 			return navigationHistory[historyIndex];
 		}
-		else if (choice == "[D] Select drive")
+		else if (choice.Kind == NavigationKind.SelectDrive)
 		{
 			string? drivePath = SelectDrive();
 			if (drivePath is not null)
@@ -183,9 +231,8 @@ public class FileExplorerService
 				return drivePath;
 			}
 		}
-		else if (choice.StartsWith("[DIR] ", StringComparison.Ordinal))
+		else if (choice is { Kind: NavigationKind.Directory, Name: string dirName })
 		{
-			string dirName = choice[6..];
 			string newPath = Path.Combine(currentPath, dirName);
 			if (Directory.Exists(newPath))
 			{
@@ -289,43 +336,40 @@ public class FileExplorerService
 	{
 		try
 		{
-			List<string> choices = [];
-			DriveInfo[] drives = DriveInfo.GetDrives();
+			List<DriveChoice> drives = [];
 
-			foreach (DriveInfo drive in drives)
+			foreach (DriveInfo drive in DriveInfo.GetDrives())
 			{
 				if (drive.IsReady)
 				{
 					string label = string.IsNullOrEmpty(drive.VolumeLabel) ? "Local Disk" : drive.VolumeLabel;
-					choices.Add($"{drive.Name} ({label})");
+					drives.Add(new DriveChoice(drive.Name, label));
 				}
 			}
 
-			if (choices.Count == 0)
+			if (drives.Count == 0)
 			{
 				AnsiConsole.MarkupLine("[yellow]No drives available.[/]");
 				return null;
 			}
 
-			choices.Add("[Cancel]");
-
-			string selection = AnsiConsole.Prompt(
-				new SelectionPrompt<string>()
-					.Title("Select drive:")
-					.AddChoices(choices));
-
-			if (selection == "[Cancel]")
-			{
-				return null;
-			}
-
-			int parenIndex = selection.IndexOf('(', StringComparison.Ordinal);
-			return parenIndex > 0 ? selection[..(parenIndex - 1)] : selection;
+			return PromptDrive(AnsiConsole.Console, drives);
 		}
 		catch (IOException)
 		{
 			AnsiConsole.MarkupLine("[red]Error accessing drives.[/]");
 			return null;
 		}
+	}
+
+	internal static string? PromptDrive(IAnsiConsole console, List<DriveChoice> drives)
+	{
+		List<DriveChoice> choices = [.. drives, new DriveChoice(null, string.Empty)];
+
+		return console.Prompt(
+			new SelectionPrompt<DriveChoice>()
+				.Title("Select drive:")
+				.UseConverter(c => c.Display)
+				.AddChoices(choices)).RootPath;
 	}
 }

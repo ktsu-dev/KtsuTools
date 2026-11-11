@@ -11,9 +11,10 @@ using KtsuTools.Core.UI;
 using KtsuTools.Repo;
 using Spectre.Console.Cli;
 
-public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitCommand.Settings>
+public sealed class GitCommand(RepoService repoService, GitPassThrough passThrough) : AsyncCommand<GitCommand.Settings>
 {
 	private readonly RepoService repoService = repoService;
+	private readonly GitPassThrough passThrough = passThrough;
 
 	public sealed class Settings : CommandSettings
 	{
@@ -41,9 +42,11 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 		// Spectre claims any option it doesn't recognize, such as --short, and parks it in
 		// Remaining.Parsed with its position and short-or-long form lost, so rebuilding the git
 		// command line from Parsed would silently run something other than what was typed. Only a
-		// literal '--' preserves the flags, coming back verbatim and in order through Remaining.Raw.
-		// Spectre mirrors those into Parsed too, so a flag is genuinely lost only when it shows up
-		// in Parsed without showing up in Raw, which is exactly the forgotten-separator case.
+		// literal '--' preserves the flags. Program splits those off before Spectre sees them (see
+		// GitPassThrough), since Spectre mangles short flags such as -1 even after a '--'. A host
+		// that hands Spectre the separator instead gets them back through Remaining.Raw, which
+		// Spectre mirrors into Parsed too, so a flag is genuinely lost only when it shows up in
+		// Parsed without showing up in Raw, which is exactly the forgotten-separator case.
 		HashSet<string> rawTokens = new(StringComparer.Ordinal);
 		foreach (string token in context.Remaining.Raw)
 		{
@@ -62,12 +65,18 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 		if (dropped.Length > 0)
 		{
 			ErrorDisplay.ShowError(
-				$"{string.Join(", ", dropped)} would be parsed as a ktsu option, not passed to git. " +
-				$"Put git flags after a '--' separator, for example: ktsu git -- {string.Join(' ', settings.Args)} {string.Join(' ', dropped)}");
+				$"{string.Join(", ", dropped)} would be parsed as a {CliIdentity.Name} option, not passed to git. " +
+				$"Put git flags after a '--' separator, for example: {BuildSeparatorSuggestion(settings, dropped)}");
 			return 1;
 		}
 
-		string[] args = [.. settings.Args, .. context.Remaining.Raw];
+		string[] args = [.. settings.Args, .. context.Remaining.Raw, .. passThrough.Arguments];
+
+		if (args.Length == 0)
+		{
+			ErrorDisplay.ShowError($"Specify a git command, for example: {CliIdentity.Name} git status");
+			return 1;
+		}
 
 		AbsoluteDirectoryPath path = AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(Path.GetFullPath(settings.Path));
 
@@ -79,4 +88,42 @@ public sealed class GitCommand(RepoService repoService) : AsyncCommand<GitComman
 			color: !settings.NoColor && !Console.IsOutputRedirected,
 			scope.Token).ConfigureAwait(false);
 	}
+
+	/// <summary>
+	/// Builds the command line to suggest when git flags were typed without a '--' separator: the
+	/// same invocation, with this tool's own options kept ahead of the separator so that pasting it
+	/// runs git in the same place, and the git command with its flags after it.
+	/// </summary>
+	/// <param name="settings">The options and positional arguments the user typed.</param>
+	/// <param name="dropped">The flags Spectre claimed, which belong to git.</param>
+	/// <returns>A command line that can be pasted and run as-is.</returns>
+	internal static string BuildSeparatorSuggestion(Settings settings, IEnumerable<string> dropped)
+	{
+		Ensure.NotNull(settings);
+		Ensure.NotNull(dropped);
+
+		List<string> tokens = [CliIdentity.Name, "git"];
+
+		if (settings.Path != ".")
+		{
+			tokens.Add("--path");
+			tokens.Add(QuoteIfNeeded(settings.Path));
+		}
+
+		if (settings.NoColor)
+		{
+			tokens.Add("--no-color");
+		}
+
+		tokens.Add("--");
+		tokens.AddRange(settings.Args.Select(QuoteIfNeeded));
+		tokens.AddRange(dropped.Select(QuoteIfNeeded));
+
+		return string.Join(' ', tokens);
+	}
+
+	private static string QuoteIfNeeded(string token) =>
+		token.Length > 0 && !token.Any(c => char.IsWhiteSpace(c) || c is '"' or '\'' or '`' or '$')
+			? token
+			: $"\"{token.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 }

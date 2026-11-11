@@ -11,6 +11,7 @@ namespace KtsuTools.FileDedupe;
 
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.IO.Enumeration;
 using System.Security.Cryptography;
 using ktsu.Semantics.Paths;
 using Spectre.Console;
@@ -41,6 +42,12 @@ public sealed record DedupePlan(
 		return total;
 	}
 }
+
+/// <summary>
+/// Outcome of applying a <see cref="DedupePlan"/>: how many removals were planned, how many
+/// were deleted, and which paths could not be.
+/// </summary>
+public sealed record DedupeDeletion(int Planned, int Deleted, IReadOnlyList<string> Failed);
 
 public sealed record DedupeStats(
 	int FilesScanned,
@@ -103,9 +110,26 @@ public class FileDedupeService
 	}
 
 	/// <summary>
+	/// Version-control metadata names the scan never touches: directories with these names are not
+	/// descended into, and a <c>.git</c> file (the pointer a worktree or submodule leaves) is not listed.
+	/// </summary>
+	/// <remarks>
+	/// Inside <c>.git</c>, every branch ref pointing at the same commit has identical content, as do
+	/// the reflogs of branches created together, so scanning it deleted branches (#222).
+	/// </remarks>
+	private static readonly HashSet<string> VersionControlNames = new(StringComparer.OrdinalIgnoreCase)
+	{
+		".git",
+		".svn",
+		".hg",
+		".bzr",
+	};
+
+	/// <summary>
 	/// Lists the regular files under <paramref name="root"/>. Symbolic links and other reparse
 	/// points are skipped, and directory links are not descended into: a link hashes the same as
 	/// its target, so keeping it in the scan would put the only real copy of a file up for deletion.
+	/// Version-control metadata (<c>.git</c>, <c>.svn</c>, <c>.hg</c>, <c>.bzr</c>) is skipped too.
 	/// </summary>
 	/// <param name="root">The directory to scan.</param>
 	/// <returns>The full paths of the regular files found.</returns>
@@ -118,7 +142,13 @@ public class FileDedupeService
 			IgnoreInaccessible = true,
 		};
 
-		return new([.. Directory.EnumerateFiles(root, "*", options).Where(file => new FileInfo(file).LinkTarget is null)]);
+		FileSystemEnumerable<string> walk = new(root, (ref entry) => entry.ToFullPath(), options)
+		{
+			ShouldIncludePredicate = (ref entry) => !entry.IsDirectory && !VersionControlNames.Contains(entry.FileName.ToString()),
+			ShouldRecursePredicate = (ref entry) => !VersionControlNames.Contains(entry.FileName.ToString()),
+		};
+
+		return new([.. walk.Where(file => new FileInfo(file).LinkTarget is null)]);
 	}
 
 	/// <summary>
@@ -187,12 +217,13 @@ public class FileDedupeService
 	}
 
 #pragma warning disable CA1822
-	public int DeleteRedundant(DedupePlan plan)
+	public DedupeDeletion DeleteRedundant(DedupePlan plan)
 #pragma warning restore CA1822
 	{
 		Ensure.NotNull(plan);
 
 		int deleted = 0;
+		List<string> failed = [];
 		foreach (string path in plan.Removals)
 		{
 			try
@@ -202,14 +233,16 @@ public class FileDedupeService
 			}
 			catch (IOException ex)
 			{
+				failed.Add(path);
 				AnsiConsole.MarkupLine($"  [yellow]skip[/] {path.EscapeMarkup()}: {ex.Message.EscapeMarkup()}");
 			}
 			catch (UnauthorizedAccessException ex)
 			{
+				failed.Add(path);
 				AnsiConsole.MarkupLine($"  [yellow]skip[/] {path.EscapeMarkup()}: {ex.Message.EscapeMarkup()}");
 			}
 		}
 
-		return deleted;
+		return new DedupeDeletion(plan.Removals.Count, deleted, failed);
 	}
 }

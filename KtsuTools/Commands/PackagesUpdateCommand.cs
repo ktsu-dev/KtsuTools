@@ -7,6 +7,7 @@ using System.IO;
 using ktsu.Semantics.Paths;
 using KtsuTools.Core.UI;
 using KtsuTools.Packages;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 public sealed class PackagesUpdateCommand(PackagesService packagesService) : AsyncCommand<PackagesUpdateCommand.Settings>
@@ -30,9 +31,14 @@ public sealed class PackagesUpdateCommand(PackagesService packagesService) : Asy
 		public bool IncludePrerelease { get; init; }
 
 		[CommandOption("--source <SOURCE>")]
-		[Description("Package source to use")]
-		[DefaultValue("nuget")]
-		public string Source { get; init; } = "nuget";
+		[Description("Package source to use. Only 'nuget' (nuget.org) is supported")]
+		[DefaultValue(PackagesService.NuGetSource)]
+		public string Source { get; init; } = PackagesService.NuGetSource;
+
+		public override ValidationResult Validate() =>
+			PackagesService.IsSupportedSource(Source)
+				? ValidationResult.Success()
+				: ValidationResult.Error($"Unsupported --source '{Source}'. Only '{PackagesService.NuGetSource}' (nuget.org) is supported.");
 	}
 
 	public override async Task<int> ExecuteAsync(CommandContext context, Settings settings, CancellationToken cancellationToken)

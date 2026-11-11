@@ -50,8 +50,14 @@ public sealed class DedupDeleteCommand(FileDedupeService dedupeService) : AsyncC
 			}
 		}
 
-		int deleted = dedupeService.DeleteRedundant(plan);
-		AnsiConsole.MarkupLine($"[green]Deleted {deleted} file(s).[/]");
-		return 0;
+		DedupeDeletion result = dedupeService.DeleteRedundant(plan);
+		if (result.Failed.Count == 0)
+		{
+			AnsiConsole.MarkupLine($"[green]Deleted {result.Deleted} file(s).[/]");
+			return 0;
+		}
+
+		AnsiConsole.MarkupLine($"[red]Deleted {result.Deleted} of {result.Planned} file(s); {result.Failed.Count} could not be deleted.[/]");
+		return 1;
 	}
 }
