@@ -894,6 +894,38 @@ public class SyncServiceTests
 	}
 
 	[TestMethod]
+	public void FindMatchingFilesIgnoresAnExcludedNameAboveTheScanRoot()
+	{
+		using TempTree tree = TempTree.New();
+		string root = Path.GetDirectoryName(tree.WriteFile(Path.Join("build", "workspace"), "marker.txt"))!;
+		string repoA = tree.WriteFile(Path.Join("build", "workspace", "RepoA"), ".editorconfig");
+		string repoB = tree.WriteFile(Path.Join("build", "workspace", "RepoB"), ".editorconfig");
+		_ = tree.WriteFile(Path.Join("build", "workspace", "RepoB", "build"), ".editorconfig");
+
+		IReadOnlyList<string> matches = SyncService.FindMatchingFiles(
+			[root],
+			[".editorconfig"],
+			SyncService.NormalizeExclusions(["build"]));
+
+		CollectionAssert.AreEquivalent(
+			new[] { repoA, repoB },
+			matches.ToArray(),
+			"A bare name must only match directories inside the scan root, not the folders above it.");
+	}
+
+	[TestMethod]
+	public void IsExcludedMatchesABareNameOnlyBelowTheRoot()
+	{
+		string root = Path.Join(Path.GetTempPath(), "build", "workspace");
+		string kept = Path.Join(root, "RepoA", ".editorconfig");
+		string excluded = Path.Join(root, "RepoB", "build", ".editorconfig");
+		IReadOnlyList<string> exclusions = SyncService.NormalizeExclusions(["build"]);
+
+		Assert.IsFalse(SyncService.IsExcluded(kept, root, exclusions));
+		Assert.IsTrue(SyncService.IsExcluded(excluded, root, exclusions));
+	}
+
+	[TestMethod]
 	public void FindMatchingFilesExcludesOnlyTheNamedDirectoryWhenGivenAPath()
 	{
 		using TempTree tree = TempTree.New();
@@ -912,17 +944,19 @@ public class SyncServiceTests
 	[TestMethod]
 	public void IsExcludedIgnoresATrailingSeparatorOnABareName()
 	{
-		string file = Path.Join(Path.GetTempPath(), "workspace", "node_modules", "pkg", "shared.txt");
+		string root = Path.Join(Path.GetTempPath(), "workspace");
+		string file = Path.Join(root, "node_modules", "pkg", "shared.txt");
 
-		Assert.IsTrue(SyncService.IsExcluded(file, SyncService.NormalizeExclusions([$"node_modules{Path.DirectorySeparatorChar}"])));
+		Assert.IsTrue(SyncService.IsExcluded(file, root, SyncService.NormalizeExclusions([$"node_modules{Path.DirectorySeparatorChar}"])));
 	}
 
 	[TestMethod]
 	public void IsExcludedDoesNotMatchTheFileNameItself()
 	{
-		string file = Path.Join(Path.GetTempPath(), "workspace", "repo-a", "shared.txt");
+		string root = Path.Join(Path.GetTempPath(), "workspace");
+		string file = Path.Join(root, "repo-a", "shared.txt");
 
-		Assert.IsFalse(SyncService.IsExcluded(file, SyncService.NormalizeExclusions(["shared.txt"])));
+		Assert.IsFalse(SyncService.IsExcluded(file, root, SyncService.NormalizeExclusions(["shared.txt"])));
 	}
 
 	[TestMethod]
