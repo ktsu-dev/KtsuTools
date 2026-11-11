@@ -438,7 +438,7 @@ public class PackagesService
 			foreach (XElement packageRef in packageRefs)
 			{
 				string? name = packageRef.Attribute("Include")?.Value;
-				string? version = packageRef.Attribute(VersionAttribute)?.Value;
+				string? version = ReadVersion(packageRef);
 
 				if (name is not null && version is not null)
 				{
@@ -666,20 +666,50 @@ public class PackagesService
 		parent.Add(new XText(parentIndent + "  "), child, new XText(parentIndent));
 	}
 
+	/// <summary>
+	/// The version a <c>PackageReference</c> asks for, from its <c>Version</c> attribute or, when it has
+	/// none, from a <c>&lt;Version&gt;</c> child element.
+	/// </summary>
+	private static string? ReadVersion(XElement packageRef) =>
+		packageRef.Attribute(VersionAttribute)?.Value
+		?? packageRef.Element(packageRef.Name.Namespace + VersionAttribute)?.Value.Trim();
+
+	/// <summary>
+	/// Removes the version from every <c>PackageReference</c>, whether it is an attribute or a
+	/// <c>&lt;Version&gt;</c> child element, and writes the project back with its declaration, line
+	/// endings and byte order mark as they were, so the diff shows only the removed versions.
+	/// </summary>
 	private static async Task RemoveVersionsFromProjectAsync(string projectFile, CancellationToken ct)
 	{
 		try
 		{
-			string content = await File.ReadAllTextAsync(projectFile, ct).ConfigureAwait(false);
+			(string content, Encoding encoding) = await ReadWithEncodingAsync(projectFile, ct).ConfigureAwait(false);
 			XDocument doc = XDocument.Parse(content, LoadOptions.PreserveWhitespace);
-			IEnumerable<XElement> packageRefs = ProjectXml.PackageReferences(doc);
+			List<XElement> packageRefs = [.. ProjectXml.PackageReferences(doc)];
 
 			foreach (XElement packageRef in packageRefs)
 			{
 				packageRef.Attribute(VersionAttribute)?.Remove();
+
+				foreach (XElement versionElement in packageRef.Elements(packageRef.Name.Namespace + VersionAttribute).ToList())
+				{
+					if (versionElement.PreviousNode is XText { Value: string before } indent && string.IsNullOrWhiteSpace(before))
+					{
+						indent.Remove();
+					}
+
+					versionElement.Remove();
+				}
+
+				// A reference whose only child was its version is left holding just the whitespace that
+				// closed it, so collapse it to a self-closing element like the attribute form.
+				if (!packageRef.HasElements && packageRef.Nodes().All(n => n is XText { Value: string text } && string.IsNullOrWhiteSpace(text)))
+				{
+					packageRef.RemoveNodes();
+				}
 			}
 
-			await File.WriteAllTextAsync(projectFile, doc.ToString(), ct).ConfigureAwait(false);
+			await File.WriteAllTextAsync(projectFile, SerializeLikeOriginal(doc, content), encoding, ct).ConfigureAwait(false);
 		}
 		catch (Exception ex) when (ex is IOException or System.Xml.XmlException)
 		{

@@ -84,4 +84,32 @@ public class PackagesEncodingTests
 		Assert.AreEqual(0, exitCode);
 		CollectionAssert.AreEqual(Encode(Props("8.1.0"), bom), await File.ReadAllBytesAsync(propsPath).ConfigureAwait(false));
 	}
+
+	[TestMethod]
+	[DataRow(true)]
+	[DataRow(false)]
+	public async Task MigrateCpmRewritesOnlyTheProjectVersionsAndKeepsDeclarationLineEndingsAndByteOrderMark(bool bom)
+	{
+		static string Csproj(string pollyVersion, string jsonVersion) =>
+			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n" +
+			"<Project Sdk=\"Microsoft.NET.Sdk\">\r\n" +
+			"  <ItemGroup>\r\n" +
+			$"    <PackageReference Include=\"Polly\"{pollyVersion} />\r\n" +
+			$"    <PackageReference Include=\"Newtonsoft.Json\"{jsonVersion}\r\n" +
+			"  </ItemGroup>\r\n" +
+			"</Project>\r\n";
+
+		string projectDirectory = Path.Combine(root, "A");
+		Directory.CreateDirectory(projectDirectory);
+		string projectPath = Path.Combine(projectDirectory, "A.csproj");
+		string before = Csproj(" Version=\"8.1.0\"", ">\r\n      <Version>13.0.1</Version>\r\n    </PackageReference>");
+		await File.WriteAllBytesAsync(projectPath, Encode(before, bom)).ConfigureAwait(false);
+
+		int exitCode = await new PackagesService(Mock.Of<IProcessService>())
+			.MigrateToCpmAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root))
+			.ConfigureAwait(false);
+
+		Assert.AreEqual(0, exitCode);
+		CollectionAssert.AreEqual(Encode(Csproj(string.Empty, " />"), bom), await File.ReadAllBytesAsync(projectPath).ConfigureAwait(false));
+	}
 }

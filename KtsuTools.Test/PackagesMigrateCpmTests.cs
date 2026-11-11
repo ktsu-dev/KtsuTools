@@ -186,4 +186,34 @@ public class PackagesMigrateCpmTests
 		Assert.AreEqual("Newtonsoft.Json", reference.Attribute("Include")?.Value);
 		Assert.IsNull(reference.Attribute("Version"), "A centrally managed reference keeps its Version, so restore fails with NU1008.");
 	}
+
+	[TestMethod]
+	public async Task MigratesAVersionWrittenAsAChildElement()
+	{
+		WriteProject("A", """
+			    <PackageReference Include="Newtonsoft.Json">
+			      <Version>13.0.1</Version>
+			    </PackageReference>
+			    <PackageReference Include="Polly">
+			      <Version> 8.2.0 </Version>
+			      <PrivateAssets>all</PrivateAssets>
+			    </PackageReference>
+			""");
+
+		int exitCode = await BuildService().MigrateToCpmAsync(RootPath).ConfigureAwait(false);
+
+		Assert.AreEqual(0, exitCode);
+		Dictionary<string, string?> versions = ReadPackageVersions();
+		Assert.AreEqual("13.0.1", versions["Newtonsoft.Json"]);
+		Assert.AreEqual("8.2.0", versions["Polly"]);
+
+		string projectPath = Path.Combine(root, "A", "A.csproj");
+		XDocument project = XDocument.Load(projectPath);
+		Assert.IsFalse(project.Descendants("Version").Any(), "A centrally managed reference keeps its <Version>, so restore fails with NU1008.");
+		Assert.AreEqual("all", project.Descendants("PackageReference").Single(e => e.Attribute("Include")!.Value == "Polly").Element("PrivateAssets")?.Value);
+
+		string text = (await File.ReadAllTextAsync(projectPath).ConfigureAwait(false)).ReplaceLineEndings("\n");
+		StringAssert.Contains(text, "<PackageReference Include=\"Newtonsoft.Json\" />");
+		StringAssert.Contains(text, "<PackageReference Include=\"Polly\">\n      <PrivateAssets>all</PrivateAssets>\n    </PackageReference>");
+	}
 }
