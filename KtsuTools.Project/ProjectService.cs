@@ -125,7 +125,7 @@ public class ProjectService(IGitService gitService, IGitHubService gitHubService
 			runsTable.AddColumn("Workflow");
 			runsTable.AddColumn("Status");
 			runsTable.AddColumn("Branch");
-			runsTable.AddColumn("Created");
+			runsTable.AddColumn("Started");
 
 			foreach (GitHubWorkflowRun run in runs.Take(10))
 			{
@@ -134,7 +134,7 @@ public class ProjectService(IGitService gitService, IGitHubService gitHubService
 					run.Name.EscapeMarkup(),
 					statusMarkup,
 					run.Branch.EscapeMarkup(),
-					run.CreatedAt.ToString("g", CultureInfo.InvariantCulture).EscapeMarkup());
+					run.StartedAt.ToString("g", CultureInfo.InvariantCulture).EscapeMarkup());
 			}
 
 			AnsiConsole.Write(runsTable);

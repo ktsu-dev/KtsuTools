@@ -9,6 +9,17 @@ using System.Threading.Tasks;
 
 public record GitHubRateLimitInfo(int Remaining, int Limit, DateTimeOffset ResetAt);
 
+/// <summary>A workflow run, as of its latest attempt.</summary>
+/// <param name="Id">The run id, which a re-run keeps.</param>
+/// <param name="Name">The workflow name.</param>
+/// <param name="Status">The run's status.</param>
+/// <param name="Conclusion">The run's conclusion, or <c>pending</c>.</param>
+/// <param name="Branch">The head branch.</param>
+/// <param name="Url">The run's page.</param>
+/// <param name="CreatedAt">When the first attempt was created. A re-run does not change it.</param>
+/// <param name="StartedAt">When the latest attempt started. A re-run resets it.</param>
+/// <param name="Attempt">Which attempt this is, starting at 1.</param>
+/// <param name="CompletedAt">When the latest attempt finished, or <see langword="null"/> while it runs.</param>
 public record GitHubWorkflowRun(
 	long Id,
 	string Name,
@@ -17,6 +28,8 @@ public record GitHubWorkflowRun(
 	string Branch,
 	Uri Url,
 	DateTimeOffset CreatedAt,
+	DateTimeOffset StartedAt,
+	long Attempt,
 	DateTimeOffset? CompletedAt);
 
 public record GitHubRepository(

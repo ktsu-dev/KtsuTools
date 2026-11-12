@@ -153,6 +153,44 @@ public class BuildMonitorServiceTests
 	}
 
 	[TestMethod]
+	public async Task GetWorkflowRunsReadsTheLatestAttemptsStart()
+	{
+		Mock<IGitHubClient> client = new() { DefaultValue = DefaultValue.Mock };
+		WorkflowRunsResponse response = new SimpleJsonSerializer().Deserialize<WorkflowRunsResponse>(
+			"""
+			{"total_count":2,"workflow_runs":[
+			{"id":1,"name":"CI","status":"completed","conclusion":"success","head_branch":"main","html_url":"https://github.com/ktsu-dev/a/actions/runs/1","created_at":"2026-11-02T09:00:00Z","run_started_at":"2026-11-04T14:00:00Z","run_attempt":2,"updated_at":"2026-11-04T14:03:00Z"},
+			{"id":2,"name":"CI","status":"completed","conclusion":"success","head_branch":"main","html_url":"https://github.com/ktsu-dev/a/actions/runs/2","created_at":"2026-11-02T08:00:00Z","updated_at":"2026-11-02T08:04:00Z"}]}
+			""");
+		client.Setup(c => c.Actions.Workflows.Runs.List("ktsu-dev", "a")).ReturnsAsync(response);
+
+		IReadOnlyList<GitHubWorkflowRun> runs = await new GitHubService(client.Object).GetWorkflowRunsAsync("ktsu-dev", "a").ConfigureAwait(false);
+
+		Assert.AreEqual(DateTimeOffset.Parse("2026-11-04T14:00:00Z", CultureInfo.InvariantCulture), runs[0].StartedAt, "A re-run starts at run_started_at, not at the first attempt's created_at.");
+		Assert.AreEqual(2, runs[0].Attempt);
+		Assert.AreEqual(DateTimeOffset.Parse("2026-11-02T08:00:00Z", CultureInfo.InvariantCulture), runs[1].StartedAt, "Without run_started_at the run started when it was created.");
+		Assert.AreEqual(1, runs[1].Attempt);
+	}
+
+	[TestMethod]
+	public async Task RenderDashboardTimesARerunFromItsLatestAttempt()
+	{
+		DateTimeOffset now = DateTimeOffset.UtcNow;
+		GitHubWorkflowRun rerun = new(1, "CI", "completed", "success", "main", new Uri("https://github.com/ktsu-dev/a/actions/runs/1"),
+			CreatedAt: now.AddDays(-2), StartedAt: now.AddMinutes(-6), Attempt: 2, CompletedAt: now.AddMinutes(-3));
+		Mock<IGitHubService> api = AuthenticatedApi();
+		api.Setup(s => s.GetRepositoriesAsync("ktsu-dev", It.IsAny<CancellationToken>())).ReturnsAsync([RepoA]);
+		api.Setup(s => s.GetWorkflowRunsAsync("ktsu-dev", "a", It.IsAny<CancellationToken>())).ReturnsAsync([rerun]);
+
+		string output = await RenderAsync(api.Object).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "3 minutes", "The duration is the latest attempt's, not the time since the first.");
+		StringAssert.Contains(output, "6 minutes ago");
+		StringAssert.Contains(output, "attempt 2");
+		Assert.IsFalse(output.Contains("days", StringComparison.Ordinal), "Nothing about this attempt took or started days ago.");
+	}
+
+	[TestMethod]
 	public async Task GetRateLimitReadsTheCoreLimit()
 	{
 		Mock<IGitHubClient> client = new() { DefaultValue = DefaultValue.Mock };
@@ -187,8 +225,11 @@ public class BuildMonitorServiceTests
 		return api;
 	}
 
-	private static GitHubWorkflowRun Run(string status, DateTimeOffset? completedAt) =>
-		new(1, "CI", status, "pending", "main", new Uri("https://github.com/ktsu-dev/b/actions/runs/1"), DateTimeOffset.UtcNow.AddMinutes(-5), completedAt);
+	private static GitHubWorkflowRun Run(string status, DateTimeOffset? completedAt)
+	{
+		DateTimeOffset created = DateTimeOffset.UtcNow.AddMinutes(-5);
+		return new(1, "CI", status, "pending", "main", new Uri("https://github.com/ktsu-dev/b/actions/runs/1"), created, created, 1, completedAt);
+	}
 
 	private static IResponse Response(HttpStatusCode status, bool rateLimited = false)
 	{
