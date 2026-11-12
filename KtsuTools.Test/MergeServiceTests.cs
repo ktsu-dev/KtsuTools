@@ -10,6 +10,8 @@ using KtsuTools.Merge;
 [TestClass]
 public class MergeServiceTests
 {
+	private static readonly string[] FilesBesideLinks = ["a/x.cfg", "x.cfg"];
+
 	[TestMethod]
 	public async Task RunMergeAsyncMissingDirectoryReturnsErrorCode()
 	{
@@ -330,5 +332,32 @@ public class MergeServiceTests
 	{
 		Assert.AreEqual("side-by-side", DiffStyleParser.ToCanonicalString(DiffStyle.SideBySide));
 		Assert.AreEqual("git", DiffStyleParser.ToCanonicalString(DiffStyle.Git));
+	}
+
+	[TestMethod]
+	public void FindFilesDoesNotFollowLinkedDirectories()
+	{
+		string root = Path.Join(Path.GetTempPath(), $"ktsu_merge_{Guid.NewGuid():N}");
+		string outside = root + "-outside";
+		Directory.CreateDirectory(Path.Join(root, "a"));
+		Directory.CreateDirectory(outside);
+		try
+		{
+			File.WriteAllText(Path.Join(root, "x.cfg"), "one");
+			File.WriteAllText(Path.Join(root, "a", "x.cfg"), "two");
+			File.WriteAllText(Path.Join(outside, "x.cfg"), "three");
+			Directory.CreateSymbolicLink(Path.Join(root, "a", "up"), "..");
+			Directory.CreateSymbolicLink(Path.Join(root, "link"), outside);
+
+			List<string> files = MergeService.FindFiles(root, "x.cfg");
+
+			string[] relative = [.. files.Select(f => Path.GetRelativePath(root, f).Replace('\\', '/')).Order(StringComparer.Ordinal)];
+			CollectionAssert.AreEqual(FilesBesideLinks, relative);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+			Directory.Delete(outside, recursive: true);
+		}
 	}
 }

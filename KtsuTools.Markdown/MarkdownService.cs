@@ -121,7 +121,9 @@ public class MarkdownService
 	/// <summary>
 	/// Finds the markdown files below <paramref name="root"/> that belong to it. Skips <c>.git</c>,
 	/// <c>node_modules</c>, <c>bin</c> and <c>obj</c>, and any subdirectory holding a <c>.git</c>
-	/// entry, which is a nested repository or a submodule. Directories that can't be read are skipped.
+	/// entry, which is a nested repository or a submodule. Directories that can't be read are skipped,
+	/// and so are linked directories (symlinks and junctions): a link back up the tree would list every
+	/// file again at each level, and one pointing elsewhere would reach files outside the root.
 	/// </summary>
 	/// <param name="root">The directory to search.</param>
 	/// <returns>The full paths of the markdown files, in ordinal order.</returns>
@@ -160,8 +162,15 @@ public class MarkdownService
 	{
 		string name = Path.GetFileName(directory);
 		return SkippedDirectoryNames.Contains(name)
+			|| IsLinkedDirectory(directory)
 			|| Directory.Exists(Path.Combine(directory, ".git"))
 			|| File.Exists(Path.Combine(directory, ".git"));
+	}
+
+	private static bool IsLinkedDirectory(string directory)
+	{
+		DirectoryInfo info = new(directory);
+		return info.LinkTarget is not null || info.Attributes.HasFlag(FileAttributes.ReparsePoint);
 	}
 
 	/// <summary>
