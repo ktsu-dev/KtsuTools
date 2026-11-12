@@ -191,6 +191,21 @@ public class BuildMonitorServiceTests
 	}
 
 	[TestMethod]
+	public async Task ProjectRunsTableShowsWhenTheLatestAttemptStarted()
+	{
+		DateTimeOffset created = DateTimeOffset.Parse("2026-11-02T09:00:00Z", CultureInfo.InvariantCulture);
+		DateTimeOffset started = DateTimeOffset.Parse("2026-11-04T14:00:00Z", CultureInfo.InvariantCulture);
+		GitHubWorkflowRun rerun = new(1, "CI", "completed", "success", "main", new Uri("https://github.com/ktsu-dev/a/actions/runs/1"),
+			CreatedAt: created, StartedAt: started, Attempt: 2, CompletedAt: started.AddMinutes(3));
+
+		string output = await RenderAsync(KtsuTools.Project.ProjectService.BuildRunsTable([rerun])).ConfigureAwait(false);
+
+		StringAssert.Contains(output, "Started");
+		StringAssert.Contains(output, started.ToString("g", CultureInfo.InvariantCulture));
+		Assert.IsFalse(output.Contains(created.ToString("g", CultureInfo.InvariantCulture), StringComparison.Ordinal), "A re-run is listed by its latest attempt, not by the first.");
+	}
+
+	[TestMethod]
 	public async Task GetRateLimitReadsTheCoreLimit()
 	{
 		Mock<IGitHubClient> client = new() { DefaultValue = DefaultValue.Mock };
