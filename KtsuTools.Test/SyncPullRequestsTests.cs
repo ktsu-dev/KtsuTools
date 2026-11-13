@@ -571,7 +571,9 @@ public class SyncPullRequestsTests
 			RunAsync(command, arguments, workingDirectory, null, ct);
 
 		public Task<ProcessResult> RunAsync(string command, string arguments, string? workingDirectory, IDictionary<string, string>? environmentVariables, CancellationToken ct = default) =>
-			throw new System.ComponentModel.Win32Exception(2, "No such file or directory");
+			// Launch a command that does not exist through the real ProcessService, so the test sees
+			// exactly what a machine without gh on its PATH produces.
+			new ProcessService().RunAsync("ktools-test-no-such-" + command, arguments, workingDirectory, environmentVariables, ct);
 	}
 
 	/// <summary>
