@@ -25,6 +25,8 @@ public class MarkdownServiceTests
 
 	private static readonly string[] OwnFiles = ["README.md", "docs/guide.md", ".github/CONTRIBUTING.md"];
 
+	private static readonly string[] OwnFileBesideLinks = ["docs/a.md"];
+
 	private static string CreateTree()
 	{
 		string root = Path.Combine(Path.GetTempPath(), "ktsu-markdown-" + Guid.NewGuid().ToString("N"));
@@ -80,6 +82,61 @@ public class MarkdownServiceTests
 		finally
 		{
 			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	/// <summary>
+	/// Builds <c>md/docs/a.md</c> with a <c>docs/up -&gt; ..</c> loop and an <c>ext</c> link to a directory
+	/// outside the tree that holds <c>o.md</c>.
+	/// </summary>
+	private static (string Root, string Outside) CreateLinkedTree()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "ktsu-markdown-" + Guid.NewGuid().ToString("N"));
+		string outside = root + "-outside";
+		Directory.CreateDirectory(Path.Combine(root, "docs"));
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(root, "docs", "a.md"), Unlinted);
+		File.WriteAllText(Path.Combine(outside, "o.md"), Unlinted);
+		Directory.CreateSymbolicLink(Path.Combine(root, "docs", "up"), "..");
+		Directory.CreateSymbolicLink(Path.Combine(root, "ext"), outside);
+		return (root, outside);
+	}
+
+	[TestMethod]
+	public void FindMarkdownFilesDoesNotFollowLinkedDirectories()
+	{
+		(string root, string outside) = CreateLinkedTree();
+		try
+		{
+			List<string> files = MarkdownService.FindMarkdownFiles(root);
+
+			string[] relative = [.. files.Select(f => Path.GetRelativePath(root, f).Replace('\\', '/'))];
+			CollectionAssert.AreEqual(OwnFileBesideLinks, relative);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+			Directory.Delete(outside, recursive: true);
+		}
+	}
+
+	[TestMethod]
+	[DoNotParallelize]
+	public async Task LintAsyncLeavesFilesBehindALinkOutsideThePathUntouched()
+	{
+		(string root, string outside) = CreateLinkedTree();
+		try
+		{
+			_ = await ConsoleCapture.CaptureAsync(() =>
+				new MarkdownService().LintAsync(AbsoluteDirectoryPath.Create<AbsoluteDirectoryPath>(root), CancellationToken.None)).ConfigureAwait(false);
+
+			Assert.AreEqual(Unlinted, await File.ReadAllTextAsync(Path.Combine(outside, "o.md")).ConfigureAwait(false));
+			Assert.AreNotEqual(Unlinted, await File.ReadAllTextAsync(Path.Combine(root, "docs", "a.md")).ConfigureAwait(false));
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+			Directory.Delete(outside, recursive: true);
 		}
 	}
 }

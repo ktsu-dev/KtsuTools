@@ -232,11 +232,35 @@ public class MergeService
 		return 0;
 	}
 
-	private static List<string> FindFiles(string directory, string pattern)
+	/// <summary>
+	/// Finds the files matching <paramref name="pattern"/> below <paramref name="directory"/>. Linked
+	/// directories (symlinks and junctions) are not followed: a link pointing outside the merge directory
+	/// would have the merge rewrite files there, and a link back up the tree would list each file again.
+	/// </summary>
+	internal static List<string> FindFiles(string directory, string pattern)
 	{
 		try
 		{
-			return [.. Directory.GetFiles(directory, pattern, SearchOption.AllDirectories)];
+			List<string> files = [];
+			Stack<string> pending = new();
+			pending.Push(directory);
+
+			while (pending.Count > 0)
+			{
+				string current = pending.Pop();
+				files.AddRange(Directory.GetFiles(current, pattern));
+
+				foreach (string subdirectory in Directory.GetDirectories(current))
+				{
+					DirectoryInfo info = new(subdirectory);
+					if (info.LinkTarget is null && !info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+					{
+						pending.Push(subdirectory);
+					}
+				}
+			}
+
+			return files;
 		}
 		catch (UnauthorizedAccessException)
 		{
