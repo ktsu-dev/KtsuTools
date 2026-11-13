@@ -166,9 +166,14 @@ public class SyncPullRequestOpener(IProcessService processService, IGitHubServic
 			ProcessResult probe = await processService.RunAsync("gh", "--version", null, ct).ConfigureAwait(false);
 			return probe.ExitCode == 0;
 		}
+		catch (ExecutableNotFoundException)
+		{
+			// gh is not on PATH at all. ProcessService reports that as ExecutableNotFoundException.
+			return false;
+		}
 		catch (System.ComponentModel.Win32Exception)
 		{
-			// gh is not on PATH at all.
+			// gh exists but could not be started (e.g. not executable).
 			return false;
 		}
 	}
