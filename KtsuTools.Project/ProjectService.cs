@@ -116,28 +116,7 @@ public class ProjectService(IGitService gitService, IGitHubService gitHubService
 
 		if (runs.Count > 0)
 		{
-			Table runsTable = new()
-			{
-				Border = TableBorder.Rounded,
-				Title = new TableTitle("[bold]Recent Workflow Runs[/]"),
-			};
-
-			runsTable.AddColumn("Workflow");
-			runsTable.AddColumn("Status");
-			runsTable.AddColumn("Branch");
-			runsTable.AddColumn("Created");
-
-			foreach (GitHubWorkflowRun run in runs.Take(10))
-			{
-				string statusMarkup = FormatRunStatus(run.Status, run.Conclusion);
-				runsTable.AddRow(
-					run.Name.EscapeMarkup(),
-					statusMarkup,
-					run.Branch.EscapeMarkup(),
-					run.CreatedAt.ToString("g", CultureInfo.InvariantCulture).EscapeMarkup());
-			}
-
-			AnsiConsole.Write(runsTable);
+			AnsiConsole.Write(BuildRunsTable(runs));
 		}
 		else
 		{
@@ -245,6 +224,38 @@ public class ProjectService(IGitService gitService, IGitHubService gitHubService
 			ChangeType.Imaginary => "[dim]~[/]",
 			_ => line.Text?.EscapeMarkup() ?? string.Empty,
 		};
+
+	/// <summary>
+	/// Builds the "Recent Workflow Runs" table. Started is the latest attempt's start, so a re-run
+	/// shows when it began rather than when the run was first created.
+	/// </summary>
+	/// <param name="runs">The runs, newest first.</param>
+	/// <returns>A table of up to the ten newest runs.</returns>
+	internal static Table BuildRunsTable(IEnumerable<GitHubWorkflowRun> runs)
+	{
+		Table runsTable = new()
+		{
+			Border = TableBorder.Rounded,
+			Title = new TableTitle("[bold]Recent Workflow Runs[/]"),
+		};
+
+		runsTable.AddColumn("Workflow");
+		runsTable.AddColumn("Status");
+		runsTable.AddColumn("Branch");
+		runsTable.AddColumn("Started");
+
+		foreach (GitHubWorkflowRun run in runs.Take(10))
+		{
+			string statusMarkup = FormatRunStatus(run.Status, run.Conclusion);
+			runsTable.AddRow(
+				run.Name.EscapeMarkup(),
+				statusMarkup,
+				run.Branch.EscapeMarkup(),
+				run.StartedAt.ToString("g", CultureInfo.InvariantCulture).EscapeMarkup());
+		}
+
+		return runsTable;
+	}
 
 	private static string FormatRunStatus(string status, string conclusion)
 	{

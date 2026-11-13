@@ -152,7 +152,7 @@ public class BuildMonitorService(IGitHubService gitHubService)
 				GitHubWorkflowRun latestRun = runs[0];
 				string statusMarkup = FormatStatus(latestRun.Status, latestRun.Conclusion);
 				string duration = latestRun.CompletedAt.HasValue
-					? (latestRun.CompletedAt.Value - latestRun.CreatedAt).Humanize(2)
+					? (latestRun.CompletedAt.Value - latestRun.StartedAt).Humanize(2)
 					: "[blue]In progress...[/]";
 
 				table.AddRow(
@@ -160,7 +160,9 @@ public class BuildMonitorService(IGitHubService gitHubService)
 					latestRun.Name.EscapeMarkup(),
 					statusMarkup,
 					latestRun.Branch.EscapeMarkup(),
-					latestRun.CreatedAt.Humanize(),
+					latestRun.Attempt > 1
+						? $"{latestRun.StartedAt.Humanize()} (attempt {latestRun.Attempt})"
+						: latestRun.StartedAt.Humanize(),
 					duration);
 			}
 			catch (RateLimitExceededException)

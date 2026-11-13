@@ -68,6 +68,8 @@ public class GitHubService : IGitHubService
 				r.HeadBranch,
 				new Uri(r.HtmlUrl),
 				r.CreatedAt,
+				StartedAtOf(r.CreatedAt, r.RunStartedAt),
+				Math.Max(r.RunAttempt, 1),
 				CompletedAtOf(r.Status, r.UpdatedAt))),
 		];
 	}
@@ -81,6 +83,17 @@ public class GitHubService : IGitHubService
 	/// <returns>The completion time, or <see langword="null"/> when the run has not completed.</returns>
 	internal static DateTimeOffset? CompletedAtOf(StringEnum<WorkflowRunStatus> status, DateTimeOffset updatedAt) =>
 		string.Equals(status.StringValue, "completed", StringComparison.OrdinalIgnoreCase) ? updatedAt : null;
+
+	/// <summary>
+	/// When a run's latest attempt started. A re-run keeps the run's id and creation time and resets
+	/// only <c>run_started_at</c>, so that is the start of the attempt being shown. A response without
+	/// it (from an older GitHub Enterprise Server) falls back to the creation time.
+	/// </summary>
+	/// <param name="createdAt">When the run was created.</param>
+	/// <param name="runStartedAt">When the latest attempt started, or the default value when not reported.</param>
+	/// <returns>The start of the latest attempt.</returns>
+	internal static DateTimeOffset StartedAtOf(DateTimeOffset createdAt, DateTimeOffset runStartedAt) =>
+		runStartedAt == default ? createdAt : runStartedAt;
 
 	public async Task<GitHubRateLimitInfo> GetRateLimitAsync(CancellationToken ct = default)
 	{
