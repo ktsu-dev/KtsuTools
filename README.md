@@ -156,7 +156,7 @@ configuration for the quieter run.
 | `image` | `KtsuTools.Image` | Batch image processing and icon normalization |
 | `explorer` | `KtsuTools.FileExplorer` | Interactive file browsing |
 | `build-monitor` | `KtsuTools.BuildMonitor` | CI/CD build status monitoring |
-| `machine-monitor` | `KtsuTools.Machine` | Local machine resource monitoring |
+| `machine-monitor` | `KtsuTools.Machine` | Local machine resource monitoring (Windows only) |
 | `svn-migrate` | `KtsuTools.SvnMigrate` | Guided Subversion to Git migration |
 
 ## Related Tools

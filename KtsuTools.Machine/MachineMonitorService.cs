@@ -13,6 +13,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 using System.Threading;
 using System.Threading.Tasks;
 using ktsu.IntervalAction;
@@ -22,9 +24,34 @@ using Spectre.Console.Rendering;
 
 public class MachineMonitorService
 {
+	internal const string WindowsOnlyMessage = "machine-monitor requires Windows: LibreHardwareMonitor, which reads the hardware sensors, only runs there.";
+
+	/// <summary>
+	/// Shows the hardware dashboard until <paramref name="ct"/> is cancelled. Off Windows it prints that the
+	/// command needs Windows and returns 1.
+	/// </summary>
+	/// <remarks>
+	/// This method must not touch a LibreHardwareMonitor type itself. LibreHardwareMonitorLib only ships
+	/// Windows assets, so off Windows the assembly fails to load as soon as a method using one of its types
+	/// is compiled, before any guard inside that method can run.
+	/// </remarks>
 #pragma warning disable CA1822 // Mark members as static - instance method required for DI injection
-	public async Task<int> RunDashboardAsync(int refreshIntervalMs = 1000, CancellationToken ct = default)
+	public Task<int> RunDashboardAsync(int refreshIntervalMs = 1000, CancellationToken ct = default)
 #pragma warning restore CA1822
+	{
+		if (!OperatingSystem.IsWindows())
+		{
+			AnsiConsole.MarkupLine($"[red]{WindowsOnlyMessage.EscapeMarkup()}[/]");
+			return Task.FromResult(1);
+		}
+
+		return RunWindowsDashboardAsync(refreshIntervalMs, ct);
+	}
+
+	// NoInlining keeps the state machine, which holds a Computer, out of RunDashboardAsync's compiled body.
+	[SupportedOSPlatform("windows")]
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	private static async Task<int> RunWindowsDashboardAsync(int refreshIntervalMs, CancellationToken ct)
 	{
 		Computer computer = new()
 		{
@@ -91,6 +118,7 @@ public class MachineMonitorService
 		return 0;
 	}
 
+	[SupportedOSPlatform("windows")]
 	private static Table BuildDashboard(Computer computer)
 	{
 		Table table = new()
@@ -128,6 +156,7 @@ public class MachineMonitorService
 		return table;
 	}
 
+	[SupportedOSPlatform("windows")]
 	private static void AddHardwareSensors(Table table, IHardware hardware, string label)
 	{
 		IEnumerable<ISensor> sensors = hardware.Sensors
@@ -157,6 +186,7 @@ public class MachineMonitorService
 		}
 	}
 
+	[SupportedOSPlatform("windows")]
 	private static string FormatSensorType(SensorType type) =>
 		type switch
 		{
@@ -176,6 +206,7 @@ public class MachineMonitorService
 			_ => type.ToString(),
 		};
 
+	[SupportedOSPlatform("windows")]
 	private static string FormatSensorValue(ISensor sensor)
 	{
 		if (!sensor.Value.HasValue)
@@ -204,6 +235,7 @@ public class MachineMonitorService
 		};
 	}
 
+	[SupportedOSPlatform("windows")]
 	private static string FormatValue(float value, SensorType type) =>
 		type switch
 		{
